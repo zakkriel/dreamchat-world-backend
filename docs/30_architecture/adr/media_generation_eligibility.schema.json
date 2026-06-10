@@ -1,0 +1,48 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "MediaGenerationEligibility",
+  "type": "object",
+  "required": ["world_id", "visibility_mode", "media_type", "eligibility", "content_classes", "asset_visibility", "provider_capability_class"],
+  "properties": {
+    "world_id": { "type": "string" },
+    "visibility_mode": { "type": "string", "enum": ["private", "public"] },
+    "public_access_type": { "type": ["string", "null"] },
+    "media_type": { "type": "string", "enum": ["image", "video", "voice", "export", "thumbnail"] },
+    "eligibility": {
+      "type": "string",
+      "enum": ["eligible", "blocked", "review_required", "provider_route_required"]
+    },
+    "content_classes": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "general",
+          "mature_themes",
+          "adult_sexual_content",
+          "graphic_violence",
+          "gore",
+          "horror",
+          "coercive_society",
+          "slavery_or_ownership",
+          "abuse_of_power",
+          "sexual_violence_as_lore_or_event",
+          "explicit_sexual_violence_visual",
+          "real_person_sensitive",
+          "hard_prohibited"
+        ]
+      }
+    },
+    "asset_visibility": {
+      "type": "string",
+      "enum": ["private_only", "public_allowed", "public_blocked", "review_required"]
+    },
+    "age_rating": { "type": "string", "enum": ["general", "teen", "mature", "adult", "restricted"] },
+    "provider_capability_class": {
+      "type": "string",
+      "enum": ["standard", "mature", "raw_mature_visuals", "blocked"]
+    },
+    "audit_required": { "type": "boolean" },
+    "reason_code": { "type": "string" }
+  }
+}

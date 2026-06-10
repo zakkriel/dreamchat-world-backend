@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "WorldContentGovernance",
+  "type": "object",
+  "required": ["world_id", "world_visibility", "content_profile", "review_status"],
+  "properties": {
+    "world_id": { "type": "string" },
+    "world_visibility": { "type": "string", "enum": ["private", "public"] },
+    "public_access_type": {
+      "type": ["string", "null"],
+      "enum": ["unlisted_link", "invite_only", "collaborative", "discoverable", "marketplace_free", "marketplace_paid", null]
+    },
+    "content_profile": {
+      "type": "object",
+      "required": ["mature_content_enabled", "age_rating", "violence_level", "sexual_content_level", "horror_level"],
+      "properties": {
+        "mature_content_enabled": { "type": "boolean" },
+        "age_rating": { "type": "string", "enum": ["general", "teen", "mature", "adult", "restricted"] },
+        "violence_level": { "type": "string", "enum": ["none", "moderate", "graphic", "extreme"] },
+        "sexual_content_level": { "type": "string", "enum": ["none", "romance", "suggestive", "explicit"] },
+        "horror_level": { "type": "string", "enum": ["none", "dark", "graphic", "extreme"] },
+        "coercive_societies": { "type": "boolean" },
+        "slavery_or_ownership_themes": { "type": "boolean" },
+        "abuse_of_power_themes": { "type": "boolean" },
+        "sexual_violence_as_world_event": { "type": "boolean" },
+        "gore_enabled": { "type": "boolean" },
+        "hard_prohibited_detected": { "type": "boolean" }
+      },
+      "additionalProperties": true
+    },
+    "review_status": {
+      "type": "string",
+      "enum": ["not_required", "pending", "approved", "rejected", "restricted"]
+    },
+    "asset_visibility_default": {
+      "type": "string",
+      "enum": ["private_only", "public_allowed", "public_blocked", "review_required"]
+    }
+  }
+}
