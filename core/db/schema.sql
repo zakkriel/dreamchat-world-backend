@@ -101,6 +101,24 @@ CREATE TABLE public.canon_event (
 
 
 --
+-- Name: entity_registry; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.entity_registry (
+    entity_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    entity_kind text NOT NULL,
+    canonical_name text NOT NULL,
+    aliases text[] DEFAULT '{}'::text[] NOT NULL,
+    descriptor text,
+    current_scene_id uuid,
+    created_by_event uuid,
+    status text DEFAULT 'active'::text NOT NULL,
+    CONSTRAINT entity_registry_status_check CHECK ((status = ANY (ARRAY['active'::text, 'inactive'::text, 'merged'::text])))
+);
+
+
+--
 -- Name: event_participant; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -128,6 +146,14 @@ CREATE TABLE public.schema_migrations (
 
 ALTER TABLE ONLY public.canon_event
     ADD CONSTRAINT canon_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: entity_registry entity_registry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_registry
+    ADD CONSTRAINT entity_registry_pkey PRIMARY KEY (entity_id);
 
 
 --
@@ -189,6 +215,20 @@ CREATE INDEX idx_ep_entity ON public.event_participant USING btree (entity_id);
 
 
 --
+-- Name: idx_er_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_er_name ON public.entity_registry USING btree (world_id, canonical_name);
+
+
+--
+-- Name: idx_er_scene; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_er_scene ON public.entity_registry USING btree (world_id, current_scene_id);
+
+
+--
 -- Name: canon_event trg_canon_event_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -218,6 +258,14 @@ ALTER TABLE ONLY public.canon_event
 
 
 --
+-- Name: entity_registry entity_registry_created_by_event_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.entity_registry
+    ADD CONSTRAINT entity_registry_created_by_event_fkey FOREIGN KEY (created_by_event) REFERENCES public.canon_event(event_id);
+
+
+--
 -- Name: event_participant event_participant_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -236,4 +284,5 @@ ALTER TABLE ONLY public.event_participant
 
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090001'),
-    ('20260610090002');
+    ('20260610090002'),
+    ('20260610090003');

@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(10);
+SELECT plan(12);
 SELECT has_role('maintainer', 'maintainer role exists');
 SELECT has_role('app_reader', 'app_reader role exists');
 SELECT has_table('canon_event',       'canon_event exists');
@@ -14,5 +14,7 @@ SELECT columns_are('canon_event', ARRAY[
   'in_world_tick','in_world_label','beat_seq','temporal_uncertainty','recorded_at','accepted_at',
   'status','visibility_scope','confidence','origin','template_id','source_refs','superseded_by'],
   'canon_event columns match doc 03 §1.1 exactly (column-by-column)');
+SELECT has_table('entity_registry', 'entity_registry exists');
+SELECT col_is_pk('entity_registry', 'entity_id', 'entity_registry PK is entity_id');
 SELECT * FROM finish();
 ROLLBACK;
