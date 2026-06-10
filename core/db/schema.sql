@@ -70,6 +70,34 @@ SET default_tablespace = '';
 SET default_table_access_method = heap;
 
 --
+-- Name: actor_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.actor_state (
+    entity_id uuid NOT NULL,
+    world_id uuid NOT NULL,
+    attrs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    last_event_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: artifact_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.artifact_state (
+    entity_id uuid NOT NULL,
+    world_id uuid NOT NULL,
+    attrs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    last_event_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: canon_event; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -169,6 +197,20 @@ CREATE TABLE public.event_participant (
 
 
 --
+-- Name: location_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.location_state (
+    entity_id uuid NOT NULL,
+    world_id uuid NOT NULL,
+    attrs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    last_event_id uuid,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: perception_record; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -211,6 +253,20 @@ CREATE TABLE public.provenance_edge (
 
 
 --
+-- Name: relationship_state; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.relationship_state (
+    world_id uuid NOT NULL,
+    a_id uuid NOT NULL,
+    b_id uuid NOT NULL,
+    attrs jsonb DEFAULT '{}'::jsonb NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    last_event_id uuid
+);
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -237,6 +293,22 @@ CREATE TABLE public.state_mutation (
     status text DEFAULT 'applied'::text NOT NULL,
     CONSTRAINT state_mutation_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'reversed'::text, 'dirty'::text])))
 );
+
+
+--
+-- Name: actor_state actor_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.actor_state
+    ADD CONSTRAINT actor_state_pkey PRIMARY KEY (entity_id);
+
+
+--
+-- Name: artifact_state artifact_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.artifact_state
+    ADD CONSTRAINT artifact_state_pkey PRIMARY KEY (entity_id);
 
 
 --
@@ -280,6 +352,14 @@ ALTER TABLE ONLY public.event_participant
 
 
 --
+-- Name: location_state location_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.location_state
+    ADD CONSTRAINT location_state_pkey PRIMARY KEY (entity_id);
+
+
+--
 -- Name: perception_record perception_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -293,6 +373,14 @@ ALTER TABLE ONLY public.perception_record
 
 ALTER TABLE ONLY public.provenance_edge
     ADD CONSTRAINT provenance_edge_pkey PRIMARY KEY (derived_id, source_id, how_type);
+
+
+--
+-- Name: relationship_state relationship_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.relationship_state
+    ADD CONSTRAINT relationship_state_pkey PRIMARY KEY (world_id, a_id, b_id);
 
 
 --
@@ -519,4 +607,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090001'),
     ('20260610090002'),
     ('20260610090003'),
-    ('20260610090004');
+    ('20260610090004'),
+    ('20260610090005');

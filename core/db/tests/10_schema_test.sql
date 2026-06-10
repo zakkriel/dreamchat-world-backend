@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(18);
+SELECT plan(23);
 SELECT has_role('maintainer', 'maintainer role exists');
 SELECT has_role('app_reader', 'app_reader role exists');
 SELECT has_table('canon_event',       'canon_event exists');
@@ -22,5 +22,11 @@ SELECT has_table('perception_record',   'perception_record exists');
 SELECT has_table('causal_bundle',       'causal_bundle exists (schema-ready, unused — ADR-008)');
 SELECT has_table('causal_bundle_input', 'causal_bundle_input exists (schema-ready, unused — ADR-008)');
 SELECT col_type_is('perception_record', 'acquired_tick', 'bigint', 'perception acquired_tick is logical (ADR-030)');
+SELECT has_table('actor_state',        'actor_state exists');
+SELECT has_table('location_state',     'location_state exists');
+SELECT has_table('artifact_state',     'artifact_state exists');
+SELECT has_table('relationship_state', 'relationship_state exists');
+SELECT hasnt_column('relationship_state', 'updated_at',
+       'relationship_state has no updated_at (doc 03 §1.5) — no volatile col to exclude in I-1');
 SELECT * FROM finish();
 ROLLBACK;
