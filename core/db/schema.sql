@@ -23,6 +23,66 @@ CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA public;
 COMMENT ON EXTENSION pgtap IS 'Unit testing for PostgreSQL';
 
 
+SET default_tablespace = '';
+
+SET default_table_access_method = heap;
+
+--
+-- Name: state_mutation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.state_mutation (
+    mutation_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    entity_kind text NOT NULL,
+    attribute_path text NOT NULL,
+    old_value jsonb,
+    new_value jsonb NOT NULL,
+    valid_from_tick bigint NOT NULL,
+    valid_from_seq integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'applied'::text NOT NULL,
+    CONSTRAINT state_mutation_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'reversed'::text, 'dirty'::text])))
+);
+
+
+--
+-- Name: apply_mutation(public.state_mutation); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_mutation(m public.state_mutation) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  -- strip leading 'attrs.' (6 chars) -> single-key JSON path under attrs (0A convention, Rider B)
+  jpath text[] := string_to_array(substring(m.attribute_path from 7), '.');
+BEGIN
+  IF m.entity_kind = 'actor' THEN
+    INSERT INTO actor_state (entity_id, world_id, attrs, last_event_id, updated_at)
+    VALUES (m.entity_id, m.world_id, jsonb_set('{}'::jsonb, jpath, m.new_value, true), m.event_id, now())
+    ON CONFLICT (entity_id) DO UPDATE
+      SET attrs = jsonb_set(actor_state.attrs, jpath, m.new_value, true),
+          last_event_id = m.event_id, updated_at = now();
+  ELSIF m.entity_kind = 'location' THEN
+    INSERT INTO location_state (entity_id, world_id, attrs, last_event_id, updated_at)
+    VALUES (m.entity_id, m.world_id, jsonb_set('{}'::jsonb, jpath, m.new_value, true), m.event_id, now())
+    ON CONFLICT (entity_id) DO UPDATE
+      SET attrs = jsonb_set(location_state.attrs, jpath, m.new_value, true),
+          last_event_id = m.event_id, updated_at = now();
+  ELSIF m.entity_kind = 'artifact' THEN
+    INSERT INTO artifact_state (entity_id, world_id, attrs, last_event_id, updated_at)
+    VALUES (m.entity_id, m.world_id, jsonb_set('{}'::jsonb, jpath, m.new_value, true), m.event_id, now())
+    ON CONFLICT (entity_id) DO UPDATE
+      SET attrs = jsonb_set(artifact_state.attrs, jpath, m.new_value, true),
+          last_event_id = m.event_id, updated_at = now();
+  ELSIF m.entity_kind = 'relationship' THEN
+    -- SPEC-001: doc 03 does not define mutation->(a_id,b_id) addressing. NO-OP stub in 0A.
+    NULL;
+  END IF;
+END $$;
+
+
 --
 -- Name: canon_event_append_only(); Type: FUNCTION; Schema: public; Owner: -
 --
@@ -65,9 +125,77 @@ BEGIN
 END $$;
 
 
-SET default_tablespace = '';
+--
+-- Name: replay_0a(); Type: FUNCTION; Schema: public; Owner: -
+--
 
-SET default_table_access_method = heap;
+CREATE FUNCTION public.replay_0a() RETURNS boolean
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE ev RECORD; m RECORD; diff_count int;
+BEGIN
+  DROP TABLE IF EXISTS snap_actor, snap_location, snap_artifact, snap_rel;
+  CREATE TEMP TABLE snap_actor    ON COMMIT DROP AS SELECT * FROM actor_state;
+  CREATE TEMP TABLE snap_location ON COMMIT DROP AS SELECT * FROM location_state;
+  CREATE TEMP TABLE snap_artifact ON COMMIT DROP AS SELECT * FROM artifact_state;
+  CREATE TEMP TABLE snap_rel      ON COMMIT DROP AS SELECT * FROM relationship_state;
+
+  TRUNCATE actor_state, location_state, artifact_state, relationship_state;
+
+  -- Rider C: domain-only deterministic order. recorded_at (volatile) excluded.
+  FOR ev IN SELECT event_id FROM canon_event WHERE status='accepted'
+            ORDER BY world_id, in_world_tick, beat_seq LOOP
+    FOR m IN SELECT * FROM state_mutation WHERE event_id = ev.event_id
+             ORDER BY valid_from_tick, valid_from_seq LOOP
+      PERFORM apply_mutation(m);
+    END LOOP;
+  END LOOP;
+
+  -- §6.5.1 per-table domain diff (exclude volatile updated_at; identity = PK).
+  SELECT
+      (SELECT count(*) FROM (
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM actor_state
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_actor)
+        UNION ALL
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_actor
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM actor_state)) d)
+    + (SELECT count(*) FROM (
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM location_state
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_location)
+        UNION ALL
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_location
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM location_state)) d)
+    + (SELECT count(*) FROM (
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM artifact_state
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_artifact)
+        UNION ALL
+        (SELECT entity_id,world_id,attrs,last_event_id,dirty FROM snap_artifact
+         EXCEPT SELECT entity_id,world_id,attrs,last_event_id,dirty FROM artifact_state)) d)
+    + (SELECT count(*) FROM (
+        (SELECT world_id,a_id,b_id,attrs,last_event_id,dirty FROM relationship_state
+         EXCEPT SELECT world_id,a_id,b_id,attrs,last_event_id,dirty FROM snap_rel)
+        UNION ALL
+        (SELECT world_id,a_id,b_id,attrs,last_event_id,dirty FROM snap_rel
+         EXCEPT SELECT world_id,a_id,b_id,attrs,last_event_id,dirty FROM relationship_state)) d)
+  INTO diff_count;
+  RETURN diff_count = 0;
+END $$;
+
+
+--
+-- Name: sm_project(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sm_project() RETURNS trigger
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+BEGIN
+  IF (SELECT status FROM canon_event WHERE event_id = NEW.event_id) = 'accepted' THEN
+    PERFORM apply_mutation(NEW);
+  END IF;
+  RETURN NEW;
+END $$;
+
 
 --
 -- Name: actor_state; Type: TABLE; Schema: public; Owner: -
@@ -272,26 +400,6 @@ CREATE TABLE public.relationship_state (
 
 CREATE TABLE public.schema_migrations (
     version character varying(128) NOT NULL
-);
-
-
---
--- Name: state_mutation; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.state_mutation (
-    mutation_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    world_id uuid NOT NULL,
-    event_id uuid NOT NULL,
-    entity_id uuid NOT NULL,
-    entity_kind text NOT NULL,
-    attribute_path text NOT NULL,
-    old_value jsonb,
-    new_value jsonb NOT NULL,
-    valid_from_tick bigint NOT NULL,
-    valid_from_seq integer DEFAULT 0 NOT NULL,
-    status text DEFAULT 'applied'::text NOT NULL,
-    CONSTRAINT state_mutation_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'reversed'::text, 'dirty'::text])))
 );
 
 
@@ -540,6 +648,13 @@ CREATE TRIGGER trg_provenance_edge_no_delete BEFORE DELETE ON public.provenance_
 
 
 --
+-- Name: state_mutation trg_sm_project; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_sm_project AFTER INSERT ON public.state_mutation FOR EACH ROW EXECUTE FUNCTION public.sm_project();
+
+
+--
 -- Name: state_mutation trg_state_mutation_no_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -608,4 +723,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090002'),
     ('20260610090003'),
     ('20260610090004'),
-    ('20260610090005');
+    ('20260610090005'),
+    ('20260610090006');

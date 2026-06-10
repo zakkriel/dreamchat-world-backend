@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(2);
+SELECT plan(4);
 
 SET ROLE app_reader;
 SELECT throws_ok(
@@ -10,6 +10,13 @@ RESET ROLE;
 
 SET ROLE app_reader;
 SELECT lives_ok( $$ SELECT count(*) FROM actor_state $$, 'app_reader may SELECT projections');
+RESET ROLE;
+
+SET ROLE app_reader;
+SELECT throws_ok( $$ SELECT apply_mutation(NULL::state_mutation) $$, '42501', NULL,
+  'app_reader cannot EXECUTE apply_mutation (I-7 function hardening)');
+SELECT throws_ok( $$ SELECT replay_0A() $$, '42501', NULL,
+  'app_reader cannot EXECUTE replay_0A (I-7 function hardening)');
 RESET ROLE;
 
 SELECT * FROM finish();
