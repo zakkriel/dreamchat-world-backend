@@ -198,7 +198,8 @@ and event ids).
 
 ### 6.4 Guards (riders B/C, made explicit)
 - **Idempotency guard (Rider B):** apply the full seed mutation stream a second time via
-  `apply_mutation()`; assert projection state is byte-unchanged. Absolute-set ⇒ pass.
+  `apply_mutation()`; assert projection **domain state** is unchanged (compared over the §6.5.1 domain
+  columns, excluding volatile `updated_at`, which the re-apply legitimately re-stamps). Absolute-set ⇒ pass.
 - **Event total-order guard (Rider C):** assert `(world_id, in_world_tick, beat_seq)` is UNIQUE across
   accepted events.
 - **Mutation order guard (Rider C):** assert `(valid_from_tick, valid_from_seq)` is unique per
