@@ -1,0 +1,27 @@
+services:
+  db:
+    build: ./core/db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: dreamchat
+    ports: ["5432:5432"]
+    volumes:
+      - ./core/db:/work
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d dreamchat"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  dbmate:
+    image: ghcr.io/amacneil/dbmate:2.21.0
+    environment:
+      DATABASE_URL: postgres://postgres:postgres@db:5432/dreamchat?sslmode=disable
+    volumes:
+      - ./core/db:/db
+    working_dir: /
+    depends_on:
+      db:
+        condition: service_healthy
+    profiles: ["tools"]
