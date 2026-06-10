@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(12);
+SELECT plan(18);
 SELECT has_role('maintainer', 'maintainer role exists');
 SELECT has_role('app_reader', 'app_reader role exists');
 SELECT has_table('canon_event',       'canon_event exists');
@@ -16,5 +16,11 @@ SELECT columns_are('canon_event', ARRAY[
   'canon_event columns match doc 03 §1.1 exactly (column-by-column)');
 SELECT has_table('entity_registry', 'entity_registry exists');
 SELECT col_is_pk('entity_registry', 'entity_id', 'entity_registry PK is entity_id');
+SELECT has_table('state_mutation',      'state_mutation exists');
+SELECT has_table('provenance_edge',     'provenance_edge exists (deployed, unused in 0A — ADR-008)');
+SELECT has_table('perception_record',   'perception_record exists');
+SELECT has_table('causal_bundle',       'causal_bundle exists (schema-ready, unused — ADR-008)');
+SELECT has_table('causal_bundle_input', 'causal_bundle_input exists (schema-ready, unused — ADR-008)');
+SELECT col_type_is('perception_record', 'acquired_tick', 'bigint', 'perception acquired_tick is logical (ADR-030)');
 SELECT * FROM finish();
 ROLLBACK;

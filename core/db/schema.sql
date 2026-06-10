@@ -101,6 +101,43 @@ CREATE TABLE public.canon_event (
 
 
 --
+-- Name: causal_bundle; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.causal_bundle (
+    bundle_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    effect_ref uuid NOT NULL,
+    effect_kind text NOT NULL,
+    semantics text NOT NULL,
+    template_id text,
+    status text DEFAULT 'valid'::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT causal_bundle_effect_kind_check CHECK ((effect_kind = ANY (ARRAY['event'::text, 'mutation'::text]))),
+    CONSTRAINT causal_bundle_semantics_check CHECK ((semantics = ANY (ARRAY['conjunctive'::text, 'disjunctive_member'::text, 'probabilistic'::text]))),
+    CONSTRAINT causal_bundle_status_check CHECK ((status = ANY (ARRAY['valid'::text, 'invalidated'::text, 'pending_review'::text])))
+);
+
+
+--
+-- Name: causal_bundle_input; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.causal_bundle_input (
+    bundle_id uuid NOT NULL,
+    input_ref uuid NOT NULL,
+    input_kind text NOT NULL,
+    role text NOT NULL,
+    polarity smallint DEFAULT 1 NOT NULL,
+    weight real DEFAULT 1.0 NOT NULL,
+    necessity boolean DEFAULT true NOT NULL,
+    CONSTRAINT causal_bundle_input_input_kind_check CHECK ((input_kind = ANY (ARRAY['event'::text, 'mutation'::text, 'perception'::text]))),
+    CONSTRAINT causal_bundle_input_polarity_check CHECK ((polarity = ANY (ARRAY[1, '-1'::integer]))),
+    CONSTRAINT causal_bundle_input_role_check CHECK ((role = ANY (ARRAY['trigger'::text, 'enabler'::text, 'blocker'::text, 'influence'::text])))
+);
+
+
+--
 -- Name: entity_registry; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -132,6 +169,48 @@ CREATE TABLE public.event_participant (
 
 
 --
+-- Name: perception_record; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perception_record (
+    perception_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    holder_id uuid NOT NULL,
+    source_event_id uuid NOT NULL,
+    content text NOT NULL,
+    epistemic_type text NOT NULL,
+    sensory_mode text,
+    confidence real DEFAULT 1.0 NOT NULL,
+    distortion_level real DEFAULT 0 NOT NULL,
+    acquired_tick bigint NOT NULL,
+    valid_tick bigint NOT NULL,
+    invalid_tick bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expired_at timestamp with time zone,
+    visibility_scope text DEFAULT 'private'::text NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    importance real DEFAULT 5.0 NOT NULL,
+    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
+);
+
+
+--
+-- Name: provenance_edge; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.provenance_edge (
+    derived_id uuid NOT NULL,
+    derived_kind text NOT NULL,
+    source_id uuid NOT NULL,
+    source_kind text NOT NULL,
+    how_type text NOT NULL,
+    CONSTRAINT provenance_edge_derived_kind_check CHECK ((derived_kind = ANY (ARRAY['perception'::text, 'mutation'::text, 'event'::text, 'bundle'::text]))),
+    CONSTRAINT provenance_edge_how_type_check CHECK ((how_type = ANY (ARRAY['derived_from'::text, 'inferred_from'::text, 'reported_by'::text, 'witnessed_by'::text, 'compensates'::text, 'supersedes'::text]))),
+    CONSTRAINT provenance_edge_source_kind_check CHECK ((source_kind = ANY (ARRAY['perception'::text, 'mutation'::text, 'event'::text])))
+);
+
+
+--
 -- Name: schema_migrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -141,11 +220,47 @@ CREATE TABLE public.schema_migrations (
 
 
 --
+-- Name: state_mutation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.state_mutation (
+    mutation_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    entity_kind text NOT NULL,
+    attribute_path text NOT NULL,
+    old_value jsonb,
+    new_value jsonb NOT NULL,
+    valid_from_tick bigint NOT NULL,
+    valid_from_seq integer DEFAULT 0 NOT NULL,
+    status text DEFAULT 'applied'::text NOT NULL,
+    CONSTRAINT state_mutation_status_check CHECK ((status = ANY (ARRAY['applied'::text, 'reversed'::text, 'dirty'::text])))
+);
+
+
+--
 -- Name: canon_event canon_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.canon_event
     ADD CONSTRAINT canon_event_pkey PRIMARY KEY (event_id);
+
+
+--
+-- Name: causal_bundle_input causal_bundle_input_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.causal_bundle_input
+    ADD CONSTRAINT causal_bundle_input_pkey PRIMARY KEY (bundle_id, input_ref, role);
+
+
+--
+-- Name: causal_bundle causal_bundle_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.causal_bundle
+    ADD CONSTRAINT causal_bundle_pkey PRIMARY KEY (bundle_id);
 
 
 --
@@ -165,11 +280,42 @@ ALTER TABLE ONLY public.event_participant
 
 
 --
+-- Name: perception_record perception_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_record
+    ADD CONSTRAINT perception_record_pkey PRIMARY KEY (perception_id);
+
+
+--
+-- Name: provenance_edge provenance_edge_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.provenance_edge
+    ADD CONSTRAINT provenance_edge_pkey PRIMARY KEY (derived_id, source_id, how_type);
+
+
+--
 -- Name: schema_migrations schema_migrations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.schema_migrations
     ADD CONSTRAINT schema_migrations_pkey PRIMARY KEY (version);
+
+
+--
+-- Name: state_mutation state_mutation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.state_mutation
+    ADD CONSTRAINT state_mutation_pkey PRIMARY KEY (mutation_id);
+
+
+--
+-- Name: idx_cb_effect; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_cb_effect ON public.causal_bundle USING btree (effect_ref);
 
 
 --
@@ -229,6 +375,48 @@ CREATE INDEX idx_er_scene ON public.entity_registry USING btree (world_id, curre
 
 
 --
+-- Name: idx_pe_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pe_source ON public.provenance_edge USING btree (source_id);
+
+
+--
+-- Name: idx_pr_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pr_active ON public.perception_record USING btree (holder_id) WHERE ((invalid_tick IS NULL) AND (expired_at IS NULL));
+
+
+--
+-- Name: idx_pr_holder; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pr_holder ON public.perception_record USING btree (holder_id, acquired_tick);
+
+
+--
+-- Name: idx_pr_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_pr_source ON public.perception_record USING btree (source_event_id);
+
+
+--
+-- Name: idx_sm_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sm_entity ON public.state_mutation USING btree (entity_id, valid_from_tick, valid_from_seq);
+
+
+--
+-- Name: idx_sm_event; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_sm_event ON public.state_mutation USING btree (event_id);
+
+
+--
 -- Name: canon_event trg_canon_event_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -250,11 +438,40 @@ CREATE TRIGGER trg_event_participant_no_delete BEFORE DELETE ON public.event_par
 
 
 --
+-- Name: perception_record trg_perception_record_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_perception_record_no_delete BEFORE DELETE ON public.perception_record FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
+-- Name: provenance_edge trg_provenance_edge_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_provenance_edge_no_delete BEFORE DELETE ON public.provenance_edge FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
+-- Name: state_mutation trg_state_mutation_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_state_mutation_no_delete BEFORE DELETE ON public.state_mutation FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
 -- Name: canon_event canon_event_superseded_by_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.canon_event
     ADD CONSTRAINT canon_event_superseded_by_fkey FOREIGN KEY (superseded_by) REFERENCES public.canon_event(event_id);
+
+
+--
+-- Name: causal_bundle_input causal_bundle_input_bundle_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.causal_bundle_input
+    ADD CONSTRAINT causal_bundle_input_bundle_id_fkey FOREIGN KEY (bundle_id) REFERENCES public.causal_bundle(bundle_id);
 
 
 --
@@ -274,6 +491,22 @@ ALTER TABLE ONLY public.event_participant
 
 
 --
+-- Name: perception_record perception_record_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_record
+    ADD CONSTRAINT perception_record_source_event_id_fkey FOREIGN KEY (source_event_id) REFERENCES public.canon_event(event_id);
+
+
+--
+-- Name: state_mutation state_mutation_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.state_mutation
+    ADD CONSTRAINT state_mutation_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.canon_event(event_id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -285,4 +518,5 @@ ALTER TABLE ONLY public.event_participant
 INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090001'),
     ('20260610090002'),
-    ('20260610090003');
+    ('20260610090003'),
+    ('20260610090004');
