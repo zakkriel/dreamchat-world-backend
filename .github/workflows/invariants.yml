@@ -13,5 +13,13 @@ jobs:
         run: make reset
       - name: Run invariant suite (pgTAP: I-1/I-2/I-7 + guards + golden)
         run: make test
+      - name: Determinism (DoD §8.5) — fingerprint first deploy
+        run: make fingerprint > /tmp/deploy1.txt
+      - name: Determinism (DoD §8.5) — second fresh deploy
+        run: make reset
+      - name: Determinism (DoD §8.5) — identical projection data across deploys
+        run: |
+          make fingerprint > /tmp/deploy2.txt
+          diff /tmp/deploy1.txt /tmp/deploy2.txt
       - name: Schema audit (schema.sql matches committed)
         run: make schema-check
