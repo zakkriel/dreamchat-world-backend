@@ -49,3 +49,28 @@ still apply — same revisit.
 - **Owner:** the first Phase-1 chunk that introduces non-absolute mutations.
 - **Expected outcome:** mutation-id-keyed idempotency per doc 03 §3.2 + a `status` guard in
   `apply_mutation()`. No ADR needed — already specified in doc 03.
+
+## SPEC-006 — perception holder cardinality and invalidation tracking
+`perception_record` currently has a scalar `holder_id`. When multiple actors acquire identical
+knowledge identically (same `epistemic_type`, same `source_event`, same `acquired_tick`), should
+they share one perception row via a junction table `perception_holder(perception_id, actor_id,
+acquired_at, invalid_at)`, or write N identical rows?
+- **Junction table design:**
+  - One `perception_record` per unique knowledge (fact + how-learned + source-event).
+  - `perception_holder` tracks the (perception, actor) relationship with invalidation (ADR-006:
+    `invalid_at` stamp, never DELETE, so "what did X used to know" remains queryable).
+  - Satisfies B-1 (perception-bound), I-2 (perception traces source), B-6 (contradiction resolved
+    by latest accepted event — applies to invalidation too).
+  - Read-side assembles: `SELECT perception WHERE holder IN (...) AND invalid_at IS NULL` (current
+    knowledge) or `invalid_at IS NOT NULL` (historical).
+  - Satisfies the "world feels alive" constraint: knowledge relationships have lifecycle (acquired,
+    possibly invalidated), visible in audit trails and character memory.
+- **Constraints to verify:**
+  - Does the junction table play well with B-2 (valid perception paths)?
+  - Does invalidation order matter if multiple holders lose a perception at different ticks?
+  - Does the read-assembly logic (current + historical) break any epistemic rules (B-3 through B-10)?
+- **Owner:** Chunk 3 brainstorm (projection API assembly, when the read-side semantics become
+  concrete).
+- **Expected outcome:** a proposed ADR formalizing the junction table shape, invalidation semantics,
+  and read-assembly rules — informed by evidence from the first perception-bound page (Seren's Actor
+  page). Contract amendment waiting for evidence; no implementation yet.
