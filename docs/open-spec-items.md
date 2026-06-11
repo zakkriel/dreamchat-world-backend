@@ -18,11 +18,12 @@ total order via per-world `(in_world_tick, beat_seq)` uniqueness.
 - **Expected outcome:** a proposed new ADR in `canon_engine/02` (number assigned at proposal time).
 - **Proposal text:** "Canonical event ordering is `(in_world_tick, beat_seq)`, required UNIQUE per
   world; `recorded_at` is transaction-time (B-5) and excluded from domain ordering (ADR-026)."
-- **Status:** non-blocking for 0A. The "required UNIQUE" half is now enforced by schema, not by
-  seed-data shape: migration `20260610090007` adds partial unique index `uq_ce_accepted_order`
+- **Status:** Resolved → ADR-034 (proposed). The "required UNIQUE" half is now enforced by schema,
+  not by seed-data shape: migration `20260610090007` adds partial unique index `uq_ce_accepted_order`
   on `(world_id, in_world_tick, beat_seq) WHERE status='accepted'` (kept out of the verbatim
   doc 03 migrations 0002–0006), with positive/negative pgTAP guards in
-  `70_determinism_guards_test.sql`. The ADR proposal itself is still owed.
+  `70_determinism_guards_test.sql`. The owed ADR proposal is now filed as ADR-034 in
+  `canon_engine/02_world_state_adrs.md` (supersedes the doc 13 §6 / doc 03 §3.4 ordering text).
 
 ## SPEC-003 — projection on the proposed→accepted transition (doc 03 §3.1, second half)
 doc 03 §3 rule 1: projection triggers fire "on insert with `status='accepted'` **or transition to
