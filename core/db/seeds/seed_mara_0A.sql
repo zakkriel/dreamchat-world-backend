@@ -44,4 +44,40 @@ INSERT INTO perception_record (world_id, holder_id, source_event_id, content, ep
   'e0000000-0000-0000-0000-000000000001','P told me the mayor keeps a hidden ledger','told',100,100),
  ('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   'e0000000-0000-0000-0000-000000000001','I told Mara the mayor keeps a hidden ledger','shared',100,100);
+-- 100 noise events, ticks 101..200, beat_seq 0 (each tick unique => total order). FULLY DETERMINISTIC:
+-- event_id = 'e0000000-0000-0000-0000-9' + lpad(i,11,'0')  (collision-free vs E1 ...001 / E102 ...102).
+-- Rule (hand-verifiable): for i in 1..100, tick=100+i,
+--   actor    = (P,M,J,O1,O2,O3,O4,O5)[(i % 8)+1]   (1-based SQL arrays)
+--   location = ('tavern','square','market','road','dock')[(i % 5)+1]
+-- Each event: 'move', one ABSOLUTE attrs.location_id set, one 'direct' perception for the mover.
+DO $$
+DECLARE
+  i int; tick bigint; ev uuid; actor uuid; loc text;
+  actors uuid[] := ARRAY[
+    'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+    'cccccccc-cccc-cccc-cccc-cccccccccccc','00000000-0000-0000-0000-000000000001',
+    '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',
+    '00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000005']::uuid[];
+  locs text[] := ARRAY['tavern','square','market','road','dock'];
+BEGIN
+  FOR i IN 1..100 LOOP
+    tick  := 100 + i;
+    ev    := ('e0000000-0000-0000-0000-9' || lpad(i::text, 11, '0'))::uuid;
+    actor := actors[(i % 8) + 1];
+    loc   := locs[(i % 5) + 1];
+    INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                             status, accepted_at, visibility_scope, origin)
+    VALUES (ev,'11111111-1111-1111-1111-111111111111','move',
+            'noise move '||i, tick, 0, 'accepted', now(), 'public', 'fast_path');
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+    VALUES (ev, actor, 'actor', 'instigator');
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES ('11111111-1111-1111-1111-111111111111', ev, actor, 'actor', 'attrs.location_id',
+            to_jsonb(loc), tick, 0);
+    INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                   acquired_tick, valid_tick)
+    VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to '||loc, 'direct', tick, tick);
+  END LOOP;
+END $$;
 COMMIT;
