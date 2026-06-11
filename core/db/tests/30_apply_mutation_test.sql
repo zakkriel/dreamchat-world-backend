@@ -29,7 +29,8 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
                             new_value, valid_from_tick, valid_from_seq)
 VALUES ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000a1',
         '00000000-0000-0000-0000-0000000000f2','relationship','attrs.trust','0.5'::jsonb,5,1);
-SELECT is( (SELECT count(*) FROM relationship_state)::int, 0,
+SELECT is( (SELECT count(*) FROM relationship_state
+            WHERE world_id='11111111-1111-1111-1111-111111111111')::int, 0,
        'relationship mutation is a documented no-op (SPEC-001): zero rows');
 
 -- (4) mutation on a non-accepted parent does not project

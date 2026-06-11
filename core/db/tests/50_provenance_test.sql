@@ -6,7 +6,9 @@ SELECT is( (SELECT count(*) FROM state_mutation sm
 SELECT is( (SELECT count(*) FROM perception_record pr
             LEFT JOIN canon_event ce ON ce.event_id=pr.source_event_id AND ce.status='accepted'
             WHERE ce.event_id IS NULL)::int, 0, 'I-2: zero orphan perceptions');
-SELECT is( (SELECT count(*) FROM canon_event WHERE in_world_tick BETWEEN 101 AND 200)::int,
+SELECT is( (SELECT count(*) FROM canon_event
+            WHERE world_id='11111111-1111-1111-1111-111111111111'
+              AND in_world_tick BETWEEN 101 AND 200)::int,
        100, '100 noise events present');
 SELECT * FROM finish();
 ROLLBACK;
