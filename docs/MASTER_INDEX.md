@@ -93,6 +93,7 @@ The 8-doc architecture set (platform shape, world core, modules, memory/canon, A
 |---|---|---|
 | `ADR-P001_database_strategy_postgres_jsonb.md` | 🗄️ Superseded in part (bannered) | Postgres-first is reaffirmed by engine ADR-003; but its proposed core tables (`entity`, `relationship_edge`, …) conflict with the engine Master DDL (doc 03). **The engine DDL wins.** JSONB-for-module-state guidance remains valid. Needs a rewrite or formal supersession note. |
 | `ADR-P016_private_vs_public_world_governance.md` | ✅ Active | Platform-level; no engine conflict. JSON schemas included alongside. |
+| `ADR-P017_backend_application_language_go.md` | 🟡 Proposed | World backend application/transport tier = Go (Chunk 3 owns the decision). Does not touch frozen engine canon; perception filter stays in SQL (B-1, I-3). |
 
 > ⚠️ **Numbering rule (new):** the engine owns plain `ADR-001…033` inside `canon_engine/02_world_state_adrs.md`. All platform/product ADRs use the `ADR-P###` prefix. The old loose `ADR_001` and governance `ADR-016` collided with engine numbers — resolved by the P-prefix.
 
