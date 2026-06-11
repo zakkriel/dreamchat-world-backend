@@ -599,6 +599,13 @@ CREATE INDEX idx_sm_event ON public.state_mutation USING btree (event_id);
 
 
 --
+-- Name: uq_ce_accepted_order; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_ce_accepted_order ON public.canon_event USING btree (world_id, in_world_tick, beat_seq) WHERE (status = 'accepted'::text);
+
+
+--
 -- Name: canon_event trg_canon_event_append_only; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -710,4 +717,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090003'),
     ('20260610090004'),
     ('20260610090005'),
-    ('20260610090006');
+    ('20260610090006'),
+    ('20260610090007');
