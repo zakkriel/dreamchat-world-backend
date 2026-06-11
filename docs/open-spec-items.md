@@ -18,11 +18,12 @@ total order via per-world `(in_world_tick, beat_seq)` uniqueness.
 - **Expected outcome:** a proposed new ADR in `canon_engine/02` (number assigned at proposal time).
 - **Proposal text:** "Canonical event ordering is `(in_world_tick, beat_seq)`, required UNIQUE per
   world; `recorded_at` is transaction-time (B-5) and excluded from domain ordering (ADR-026)."
-- **Status:** non-blocking for 0A. The "required UNIQUE" half is now enforced by schema, not by
-  seed-data shape: migration `20260610090007` adds partial unique index `uq_ce_accepted_order`
+- **Status:** Resolved → ADR-034 (proposed). The "required UNIQUE" half is now enforced by schema,
+  not by seed-data shape: migration `20260610090007` adds partial unique index `uq_ce_accepted_order`
   on `(world_id, in_world_tick, beat_seq) WHERE status='accepted'` (kept out of the verbatim
   doc 03 migrations 0002–0006), with positive/negative pgTAP guards in
-  `70_determinism_guards_test.sql`. The ADR proposal itself is still owed.
+  `70_determinism_guards_test.sql`. The owed ADR proposal is now filed as ADR-034 in
+  `canon_engine/02_world_state_adrs.md` (supersedes the doc 13 §6 / doc 03 §3.4 ordering text).
 
 ## SPEC-003 — projection on the proposed→accepted transition (doc 03 §3.1, second half)
 doc 03 §3 rule 1: projection triggers fire "on insert with `status='accepted'` **or transition to
@@ -61,6 +62,31 @@ scheduled/operational jobs exist yet, and 0B's gate is satisfied by insert-time 
   (it raises a distinct "investigate" error on cap-hit), **not** a domain limit on causal-chain
   length. The future full-graph check must raise or remove this cap deliberately rather than
   inherit 64 as if it were a modeled bound.
+
+## SPEC-006 — perception holder cardinality and invalidation tracking
+`perception_record` currently has a scalar `holder_id`. When multiple actors acquire identical
+knowledge identically (same `epistemic_type`, same `source_event`, same `acquired_tick`), should
+they share one perception row via a junction table `perception_holder(perception_id, actor_id,
+acquired_at, invalid_at)`, or write N identical rows?
+- **Junction table design:**
+  - One `perception_record` per unique knowledge (fact + how-learned + source-event).
+  - `perception_holder` tracks the (perception, actor) relationship with invalidation (ADR-006:
+    `invalid_at` stamp, never DELETE, so "what did X used to know" remains queryable).
+  - Satisfies B-1 (perception-bound), I-2 (perception traces source), B-6 (contradiction resolved
+    by latest accepted event — applies to invalidation too).
+  - Read-side assembles: `SELECT perception WHERE holder IN (...) AND invalid_at IS NULL` (current
+    knowledge) or `invalid_at IS NOT NULL` (historical).
+  - Satisfies the "world feels alive" constraint: knowledge relationships have lifecycle (acquired,
+    possibly invalidated), visible in audit trails and character memory.
+- **Constraints to verify:**
+  - Does the junction table play well with B-2 (valid perception paths)?
+  - Does invalidation order matter if multiple holders lose a perception at different ticks?
+  - Does the read-assembly logic (current + historical) break any epistemic rules (B-3 through B-10)?
+- **Owner:** Chunk 3 brainstorm (projection API assembly, when the read-side semantics become
+  concrete).
+- **Expected outcome:** a proposed ADR formalizing the junction table shape, invalidation semantics,
+  and read-assembly rules — informed by evidence from the first perception-bound page (Seren's Actor
+  page). Contract amendment waiting for evidence; no implementation yet.
 
 ## SPEC-007 — CI invariant workflow never executed (two stacked causes)
 **Status:** Resolved — CI had **two independent reasons** it never ran, stacked so the first
