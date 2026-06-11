@@ -48,3 +48,16 @@ still apply — same revisit.
 - **Owner:** the first Phase-1 chunk that introduces non-absolute mutations.
 - **Expected outcome:** mutation-id-keyed idempotency per doc 03 §3.2 + a `status` guard in
   `apply_mutation()`. No ADR needed — already specified in doc 03.
+
+## SPEC-005 — nightly full acyclicity check (deferred half of I-4)
+Phase 0B implements the **insert-time** half of I-4 (doc 03 §1.4: bounded ancestor walk on
+`causal_bundle_input` insert; migration `20260611090001`). doc 07 I-4 also specifies a **nightly
+full check** (recursive CTE with depth cap; cap hit = investigation). Not built in 0B — no
+scheduled/operational jobs exist yet, and 0B's gate is satisfied by insert-time rejection.
+- **Owner:** the first chunk that introduces scheduled/operational jobs (per-world nightly sweeps).
+- **Expected outcome:** a nightly per-world recursive-CTE acyclicity sweep + alert on a positive
+  hit or a depth-cap hit. **No ADR needed** — already specified in doc 07 I-4.
+- **Note (depth cap):** the insert-time walk's depth cap of 64 is a Phase-0B fail-safe ceiling
+  (it raises a distinct "investigate" error on cap-hit), **not** a domain limit on causal-chain
+  length. The future full-graph check must raise or remove this cap deliberately rather than
+  inherit 64 as if it were a modeled bound.
