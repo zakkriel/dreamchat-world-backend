@@ -11,7 +11,7 @@ jobs:
         run: docker compose build db
       - name: Reset to a clean, migrated, seeded DB
         run: make reset
-      - name: Run invariant suite (pgTAP: I-1/I-2/I-7 + guards + golden)
+      - name: "Run invariant suite (pgTAP: I-1/I-2/I-7 + guards + golden)"
         run: make test
       - name: Determinism (DoD §8.5) — fingerprint first deploy
         run: make fingerprint > /tmp/deploy1.txt

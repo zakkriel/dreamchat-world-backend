@@ -100,6 +100,86 @@ END $$;
 
 
 --
+-- Name: causal_bundle_append_only(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.causal_bundle_append_only() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF ROW(NEW.bundle_id, NEW.world_id, NEW.effect_ref, NEW.effect_kind,
+         NEW.semantics, NEW.template_id, NEW.created_at)
+     IS DISTINCT FROM
+     ROW(OLD.bundle_id, OLD.world_id, OLD.effect_ref, OLD.effect_kind,
+         OLD.semantics, OLD.template_id, OLD.created_at)
+  THEN
+    RAISE EXCEPTION 'causal_bundle is append-only: only {status} may change (bundle %)', OLD.bundle_id;
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: causal_bundle_assert_acyclic(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.causal_bundle_assert_acyclic() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_effect_ref  uuid;
+  v_effect_kind text;
+  v_cycle       boolean;
+  v_maxdepth    int;
+BEGIN
+  SELECT effect_ref, effect_kind INTO v_effect_ref, v_effect_kind
+  FROM causal_bundle WHERE bundle_id = NEW.bundle_id;
+
+  WITH RECURSIVE anc(ref, kind, depth) AS (
+    SELECT NEW.input_ref, NEW.input_kind, 0
+    UNION ALL
+    SELECT cbi.input_ref, cbi.input_kind, anc.depth + 1
+    FROM anc
+    JOIN causal_bundle cb
+      ON cb.effect_ref = anc.ref AND cb.effect_kind = anc.kind
+    JOIN causal_bundle_input cbi
+      ON cbi.bundle_id = cb.bundle_id
+    WHERE anc.depth < 64
+  )
+  SELECT bool_or(ref = v_effect_ref AND kind = v_effect_kind), max(depth)
+  INTO v_cycle, v_maxdepth
+  FROM anc;
+
+  IF v_cycle THEN
+    RAISE EXCEPTION
+      'causal cycle rejected (I-4): effect %/% is already a causal ancestor of input %/% (bundle %)',
+      v_effect_kind, v_effect_ref, NEW.input_kind, NEW.input_ref, NEW.bundle_id;
+  END IF;
+
+  IF v_maxdepth >= 64 THEN
+    RAISE EXCEPTION
+      'causal acyclicity depth cap (64) exceeded walking ancestors of input %/% — investigate (I-4)',
+      NEW.input_kind, NEW.input_ref;
+  END IF;
+
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: causal_bundle_input_immutable(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.causal_bundle_input_immutable() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  RAISE EXCEPTION 'causal_bundle_input is immutable: UPDATE forbidden (bundle %, input %)',
+    OLD.bundle_id, OLD.input_ref;
+END $$;
+
+
+--
 -- Name: forbid_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -620,6 +700,41 @@ CREATE TRIGGER trg_canon_event_no_delete BEFORE DELETE ON public.canon_event FOR
 
 
 --
+-- Name: causal_bundle trg_causal_bundle_append_only; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_causal_bundle_append_only BEFORE UPDATE ON public.causal_bundle FOR EACH ROW EXECUTE FUNCTION public.causal_bundle_append_only();
+
+
+--
+-- Name: causal_bundle_input trg_causal_bundle_input_immutable; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_causal_bundle_input_immutable BEFORE UPDATE ON public.causal_bundle_input FOR EACH ROW EXECUTE FUNCTION public.causal_bundle_input_immutable();
+
+
+--
+-- Name: causal_bundle_input trg_causal_bundle_input_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_causal_bundle_input_no_delete BEFORE DELETE ON public.causal_bundle_input FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
+-- Name: causal_bundle trg_causal_bundle_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_causal_bundle_no_delete BEFORE DELETE ON public.causal_bundle FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
+-- Name: causal_bundle_input trg_cbi_assert_acyclic; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_cbi_assert_acyclic BEFORE INSERT ON public.causal_bundle_input FOR EACH ROW EXECUTE FUNCTION public.causal_bundle_assert_acyclic();
+
+
+--
 -- Name: event_participant trg_event_participant_no_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -718,4 +833,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090004'),
     ('20260610090005'),
     ('20260610090006'),
-    ('20260610090007');
+    ('20260610090007'),
+    ('20260611090001');

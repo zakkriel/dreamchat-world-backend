@@ -11,7 +11,7 @@ INSERT INTO expected VALUES
  ('00000000-0000-0000-0000-000000000004','dock'),
  ('00000000-0000-0000-0000-000000000005','tavern');
 SELECT set_eq(
-  'SELECT entity_id, attrs->>''location_id'' FROM actor_state',
+  'SELECT entity_id, attrs->>''location_id'' FROM actor_state WHERE world_id = ''11111111-1111-1111-1111-111111111111''',
   'SELECT entity_id, location_id FROM expected',
   'actor_state final locations match the hand-computed golden (doc 13 §5 spot-check)');
 SELECT * FROM finish();
