@@ -1,0 +1,9 @@
+entity_id,location_id
+aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa,square
+bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb,market
+cccccccc-cccc-cccc-cccc-cccccccccccc,road
+00000000-0000-0000-0000-000000000001,dock
+00000000-0000-0000-0000-000000000002,tavern
+00000000-0000-0000-0000-000000000003,road
+00000000-0000-0000-0000-000000000004,dock
+00000000-0000-0000-0000-000000000005,tavern
