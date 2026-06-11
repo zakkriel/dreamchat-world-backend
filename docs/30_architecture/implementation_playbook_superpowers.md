@@ -15,6 +15,7 @@
 3. **Custom skill: `dreamchat-rules`.** Superpowers supports project skills — create one SKILL.md that condenses the Rules Register (B/C/D/GA IDs + one-liners) and triggers on any feature work. This puts the law in context on every task without re-pasting docs.
 4. **Invariant harness = the test spine.** Engine doc 07 defines I-1…I-10 with pass/fail SQL; doc 13 §pass/fail is executable. Wire these into CI on day one — they are the permanent regression suite every chunk runs against. The TDD iron law (test first) starts here: the invariants are failing tests *by definition* until the spine exists.
 5. **Worktree discipline.** One chunk = one branch/worktree = one plan doc = one PR. Superpowers' worktree isolation maps 1:1 onto the chunk ladder.
+6. **Sanctioned toolchain.** One sanctioned environment per chunk family: the pinned Docker image (local == CI == deployed family). A `make doctor` preflight verifies the runtime and fails with install instructions. Fallbacks, where unavoidable, are documented as non-sanctioned emergency exceptions whose results are never gate-authoritative.
 
 ## 0.5 The Validation Ladder (principle)
 
@@ -23,7 +24,7 @@
 
 | After chunk | Product question | What a "no" looks like (falsification) |
 |---|---|---|
-| **1** | **Can world state replay deterministically?** | Replays diverge, or "determinism" only holds by excluding things that matter. If the spine can't replay, nothing above it is trustworthy — stop. |
+| **1** | **Can world state replay deterministically?** ✅ Answered YES 2026-06-11 (operator-verified: identical projection data across fresh DBs; §7 checks all true; replay true incl. negative control; gate tag chunk-1-0A-gate) | Replays diverge, or "determinism" only holds by excluding things that matter. If the spine can't replay, nothing above it is trustworthy — stop. |
 | **3** | **Can the user inspect a world and trust it?** | You open Seren's page and catch yourself checking the DB to see if it's right; the payload leaks the secret; sourcing reads as decoration instead of evidence. |
 | **5** | **Can the user play without transcript-dependence?** | Delete the transcript and the world gets dumber — the narrator loses facts, an NPC forgets, continuity quietly came from chat history instead of canon. This is the product promise's first live test. |
 | **8** | **Can the user fix the world without breaking immersion?** | Correcting feels like filing a ticket: approval UI appears, flow interrupts, or the fix doesn't visibly hold in subsequent play. C-11 exists precisely so the answer is yes. |
@@ -45,8 +46,14 @@ Gate check                →  Run the gate (SQL / scripted driver / your own ha
                              If the chunk carries a Validation Ladder question (§0.5), answer it
                              honestly — CI green + product "no" = chunk NOT done.
                              Green → merge → next chunk. Red → debug skill, never skip.
+                             Steps marked operator-run (every chunk's final gate task) are
+                             executed by the human, never by an executing agent — including the
+                             gate tag. An agent that completes a plan may prepare the gate; it
+                             does not run it or tag it.
 YOU test                  →  Every chunk ends with something you personally poke at.
 ```
+
+> **Note (review feedback applied outside the planning session):** verify after each revision that the count of changes matches the count of asks. A revision only contains what was actually pasted into its prompt.
 
 ## 2. The chunk ladder
 
@@ -54,9 +61,9 @@ Each chunk: **Build → You test → Gate**. Chunks 1–2 are the engine's own m
 
 | # | Chunk | Build | **You personally test** | Gate (CI/scripted) |
 |---|---|---|---|---|
-| **1** | **Deterministic spine (engine 0A)** 🪜Q1 | Master DDL (doc 03 §1) + append-only trigger + projection triggers + Mara scenario inserts + replay harness. *No LLM anywhere.* | Run the doc 13 pass/fail SQL yourself; drop projections, replay, watch identical domain state rebuild | **Green I-1** (replay invariance) + I-2 on Mara. The engine's own Phase 0A exit |
+| **1** | **Deterministic spine (engine 0A)** 🪜Q1 | doc 13 §2 schema subset + bundle/provenance tables (ADR-008 carve-out), append-only + DELETE guards on all canon tables, shared apply_mutation() write path, Mara seed, replay harness. *No LLM anywhere.* | Run the doc 13 pass/fail SQL yourself; drop projections, replay, watch identical domain state rebuild | **Green I-1** (replay invariance) + I-2 on Mara. The engine's own Phase 0A exit |
 | **2** | **Bundle regression (0B)** | Manual Seren inserts exercising bundle tables | Insert a cyclic bundle by hand → watch it get rejected | I-4 acyclicity; manual bundle regression |
-| **3** | **Projection API + first page** 🪜Q2 | Read-side endpoints (Bridge §4.1) over seeded data; FE shell + **Actor page** rendering Mara/Seren seed | Open Seren's page in a browser. Check: no relationship field, sourced knowledge, tick labels, **the planted secret is absent from the network payload** (DevTools, not UI) | I-3 audit on page payloads; Actors PRD ACs 1–2, 6–10 against seed data |
+| **3** | **Projection API + first page** 🪜Q2 | Read-side endpoints (Bridge §4.1) over seeded data; FE shell + **Actor page** rendering Mara/Seren seed. Brainstorm must resolve: (a) the backend language decision — deferred from Chunk 1's pure-SQL posture; either a language arrives here, or projections ship as Postgres JSON functions behind a thin reader (PostgREST-style) and the language decision moves to Chunk 5 — an explicit fork, not a drift; (b) SPEC-ledger check. | Open Seren's page in a browser. Check: no relationship field, sourced knowledge, tick labels, **the planted secret is absent from the network payload** (DevTools, not UI) | I-3 audit on page payloads; Actors PRD ACs 1–2, 6–10 against seed data |
 | **4** | **Full read-only Compendium** | Locations, Artifacts, Timeline, Carrying overlay pages + Graph Inspector (debug) | Browse all of Mara's world; click a timeline record → verify it shows a *perception version*; open the Graph Inspector on an event | All four PRDs' read-side ACs on seed; timeline-never-links-canon check |
 | **5** | **Fast-path play loop (engine Phase 1)** 🪜Q3 | Deterministic action handlers, perception fan-out, entity registry, context assembler v1, narrator (read-only LLM), minimal beat input + streaming | **Play the Mara slice yourself, end-to-end, in the UI.** Then delete the transcript and verify the world lost nothing | Engine Phase 1 gate (Mara slice, scripted driver) + Bridge S1 gate (human driver) |
 | **6** | **Play surface polish** | Scene canvas, participants strip, Aux Current+Known lenses, return-to-world flow | Leave mid-scene, come back tomorrow: do you land oriented? Does Aux answer "what matters now"? | C-1/C-3/C-6/C-10 review checklist; no new invariants |
@@ -77,6 +84,7 @@ Each chunk: **Build → You test → Gate**. Chunks 1–2 are the engine's own m
 - **PRD non-goals are the out-of-scope list** fed to every brainstorm/plan. "Wouldn't it be nice to add a relationship meter" already has its answer (B-3/B-4).
 - **Empirical findings flow back** to the three tuning logs (extraction, threshold, assembly audit — engine governance) and, where they change decisions, to register amendments. Docs change because code taught you something — never the other way around now (D-9).
 - **One chunk at a time.** Parallel worktrees are fine *within* a chunk (Superpowers' parallel subagents); chunks themselves are sequential because each gate is the next chunk's foundation.
+- **Open-Spec Ledger (`docs/open-spec-items.md`):** when a chunk discovers the frozen contract is silent or inconsistent on a mechanism, the gap gets a SPEC-### entry (description, owner chunk, expected ADR outcome) and the code ships an explicit, documented stub — never an invented mechanism. Every chunk brainstorm opens by checking the ledger for items it owns.
 
 ## 4. First session, concretely
 
