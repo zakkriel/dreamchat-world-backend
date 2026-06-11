@@ -28,8 +28,16 @@ seed:            ## load the deterministic Mara seed
 test: pgtap      ## run the pgTAP suite (run `make reset` first for seed-dependent tests)
 	docker compose exec -T db sh -c 'pg_prove -U postgres -d dreamchat --ext .sql /work/tests/*_test.sql'
 
-replay:          ## run I-1 replay by hand (boolean)
-	docker compose exec -T db psql -U postgres -d dreamchat -c 'SELECT replay_0A();'
+replay:          ## run I-1 replay by hand (boolean); ROLLBACK so the truncate/rebuild never commits
+	docker compose exec -T db psql -U postgres -d dreamchat -c 'BEGIN; SELECT replay_0A(); ROLLBACK;'
+
+fingerprint:     ## dump domain-only projection state (volatile updated_at excluded) for determinism diffs
+	@docker compose exec -T db psql -U postgres -d dreamchat -Atc " \
+	  SELECT 'actor',    entity_id, world_id, attrs, last_event_id, dirty FROM actor_state    \
+	  UNION ALL SELECT 'location', entity_id, world_id, attrs, last_event_id, dirty FROM location_state \
+	  UNION ALL SELECT 'artifact', entity_id, world_id, attrs, last_event_id, dirty FROM artifact_state \
+	  UNION ALL SELECT 'rel', a_id, world_id, attrs, last_event_id, dirty FROM relationship_state \
+	  ORDER BY 1, 2"
 
 reset: db-down db-up migrate seed ## clean DB from scratch (determinism check helper)
 
