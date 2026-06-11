@@ -9,20 +9,6 @@ SET xmloption = content;
 SET client_min_messages = warning;
 SET row_security = off;
 
---
--- Name: pgtap; Type: EXTENSION; Schema: -; Owner: -
---
-
-CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA public;
-
-
---
--- Name: EXTENSION pgtap; Type: COMMENT; Schema: -; Owner: -
---
-
-COMMENT ON EXTENSION pgtap IS 'Unit testing for PostgreSQL';
-
-
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;

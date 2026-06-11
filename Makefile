@@ -26,7 +26,7 @@ seed:            ## load the deterministic Mara seed
 	docker compose exec -T db psql -U postgres -d dreamchat -v ON_ERROR_STOP=1 -f /work/seeds/seed_mara_0A.sql
 
 test: pgtap      ## run the pgTAP suite (run `make reset` first for seed-dependent tests)
-	docker compose exec -T db pg_prove -U postgres -d dreamchat --ext .sql /work/tests
+	docker compose exec -T db sh -c 'pg_prove -U postgres -d dreamchat --ext .sql /work/tests/*_test.sql'
 
 replay:          ## run I-1 replay by hand (boolean)
 	docker compose exec -T db psql -U postgres -d dreamchat -c 'SELECT replay_0A();'
