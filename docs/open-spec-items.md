@@ -61,3 +61,14 @@ scheduled/operational jobs exist yet, and 0B's gate is satisfied by insert-time 
   (it raises a distinct "investigate" error on cap-hit), **not** a domain limit on causal-chain
   length. The future full-graph check must raise or remove this cap deliberately rather than
   inherit 64 as if it were a modeled bound.
+
+## SPEC-007 — CI invariant workflow never executed (Actions $0 stop-budget)
+**Status:** Resolved — root cause was a **$0 Actions stop-budget**, fixed from PR #4 onward
+(GitHub Free, $0 owed, 168/2000 free minutes; a $0 spending limit with stop-usage-on, **not** a
+real billing problem). Every `invariants.yml` run had 0s-failed at startup with **zero jobs** from
+chunk-1 onward, so CI had never actually executed here. A payment method / non-zero Actions budget
+now allows Actions to run.
+- **Consequence for the gate map:** `chunk-1-0A-gate` was cut on **local evidence only** (it
+  predated any CI execution). **chunk-2 gates on CI green + local** (PR #4 is the first real CI
+  execution in this repo).
+- **Owner:** chunk-2 (this chunk). No code change — operational/account fix.
