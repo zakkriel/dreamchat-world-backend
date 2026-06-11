@@ -49,7 +49,7 @@ CREATE TRIGGER trg_sm_project
 -- DROP TABLE IF EXISTS makes it re-entrant within one transaction (the negative-control test calls it 3x).
 CREATE FUNCTION replay_0A() RETURNS boolean
 LANGUAGE plpgsql SECURITY DEFINER AS $$
-DECLARE ev RECORD; m RECORD; diff_count int;
+DECLARE ev RECORD; m state_mutation; diff_count int;
 BEGIN
   DROP TABLE IF EXISTS snap_actor, snap_location, snap_artifact, snap_rel;
   CREATE TEMP TABLE snap_actor    ON COMMIT DROP AS SELECT * FROM actor_state;
