@@ -62,13 +62,21 @@ scheduled/operational jobs exist yet, and 0B's gate is satisfied by insert-time 
   length. The future full-graph check must raise or remove this cap deliberately rather than
   inherit 64 as if it were a modeled bound.
 
-## SPEC-007 — CI invariant workflow never executed (Actions $0 stop-budget)
-**Status:** Resolved — root cause was a **$0 Actions stop-budget**, fixed from PR #4 onward
-(GitHub Free, $0 owed, 168/2000 free minutes; a $0 spending limit with stop-usage-on, **not** a
-real billing problem). Every `invariants.yml` run had 0s-failed at startup with **zero jobs** from
-chunk-1 onward, so CI had never actually executed here. A payment method / non-zero Actions budget
-now allows Actions to run.
+## SPEC-007 — CI invariant workflow never executed (two stacked causes)
+**Status:** Resolved — CI had **two independent reasons** it never ran, stacked so the first
+masked the second; both fixed from PR #4 onward.
+1. **$0 Actions stop-budget.** GitHub Free with a $0 spending limit and stop-usage-on ($0 owed,
+   168/2000 free minutes — **not** a real billing problem) made every `invariants.yml` run 0s-fail
+   at startup with **zero jobs**, *before* the workflow file was ever parsed. Fixed by adding a
+   payment method / non-zero Actions budget.
+2. **Invalid workflow YAML (line 14).** Once Actions could start, GitHub surfaced
+   `Invalid workflow file …#L14 — YAML syntax error`: the step name
+   `Run invariant suite (pgTAP: I-1/I-2/I-7 + guards + golden)` was an unquoted plain scalar
+   containing a colon-space (`pgTAP: I-1`), which YAML reads as a nested mapping value ("mapping
+   values are not allowed here", col 41). Pre-existing since chunk-1, masked by cause 1. Fixed by
+   quoting the value (validated with pyyaml + ruby/psych).
 - **Consequence for the gate map:** `chunk-1-0A-gate` was cut on **local evidence only** (it
-  predated any CI execution). **chunk-2 gates on CI green + local** (PR #4 is the first real CI
-  execution in this repo).
-- **Owner:** chunk-2 (this chunk). No code change — operational/account fix.
+  predated any CI execution). **chunk-2 gates on CI green + local** — PR #4 is the first genuinely-
+  green CI run in this repo, after both causes were cleared.
+- **Owner:** chunk-2 (this chunk). No engine/code change — an operational/account fix plus a
+  one-line CI workflow-file fix.
