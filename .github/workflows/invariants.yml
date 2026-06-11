@@ -1,0 +1,17 @@
+name: invariants
+on:
+  push: { branches: ["**"] }
+  pull_request:
+jobs:
+  phase-0a:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build db image (pinned Postgres 16 + pgTAP + pg_prove)
+        run: docker compose build db
+      - name: Reset to a clean, migrated, seeded DB
+        run: make reset
+      - name: Run invariant suite (pgTAP: I-1/I-2/I-7 + guards + golden)
+        run: make test
+      - name: Schema audit (schema.sql matches committed)
+        run: make schema-check

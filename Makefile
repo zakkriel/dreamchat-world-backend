@@ -33,6 +33,5 @@ replay:          ## run I-1 replay by hand (boolean)
 
 reset: db-down db-up migrate seed ## clean DB from scratch (determinism check helper)
 
-schema-check:    ## fail if dbmate schema.sql has uncommitted drift
-	docker compose run --rm dbmate dump
+schema-check: db-down db-up migrate ## fail if dbmate schema.sql has uncommitted drift (always against a clean migrated DB)
 	git diff --exit-code core/db/schema.sql
