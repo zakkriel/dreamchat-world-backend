@@ -80,4 +80,19 @@ BEGIN
     VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to '||loc, 'direct', tick, tick);
   END LOOP;
 END $$;
+-- E102 @ tick 201: P publicizes the ledger. No state mutation. Present-forward (ADR-016):
+-- M's E1 perception untouched; public-knowledge record created (held by Common Knowledge);
+-- J is *eligible* but acquires nothing in 0A (Phase-1 fan-out, doc 13 §5).
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         in_world_label, status, accepted_at, visibility_scope, origin)
+VALUES ('e0000000-0000-0000-0000-000000000102','11111111-1111-1111-1111-111111111111',
+        'publicize','the hidden ledger becomes common knowledge',201,0,
+        'Day 2', 'accepted', now(), 'public', 'fast_path');
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+ ('e0000000-0000-0000-0000-000000000102','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator');
+INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                               acquired_tick, valid_tick, visibility_scope) VALUES
+ ('11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+  'e0000000-0000-0000-0000-000000000102','It is now common knowledge that the mayor keeps a hidden ledger',
+  'public',201,201,'public');
 COMMIT;
