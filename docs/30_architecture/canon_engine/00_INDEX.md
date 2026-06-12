@@ -10,7 +10,7 @@
 |---|---|---|---|
 | 00 | `00_INDEX.md` | Map, phase plan, final reconciliations | First |
 | 01 | `01_world_state_strategy.md` | The doctrine — why the system is shaped this way | First, everyone |
-| 02 | `02_world_state_adrs.md` | Frozen decisions, ADR-001…033. No architecture debate outside this file. | Before challenging anything |
+| 02 | `02_world_state_adrs.md` | Frozen decisions, ADR-001 onward. No architecture debate outside this file. | Before challenging anything |
 | 03 | `03_world_state_technical_reference.md` | Master DDL, lifecycle, projection rules, Traversal Matrix, propagation, snapshots, schema evolution | Phase 0 onward |
 | 04 | `04_canonization_pipeline_spec.md` | The central service: dual pipeline, correction-window state machine, template library, validation-gate API contract (proposal + error schemas), repair loop | Phase 2 build |
 | 05 | `05_entity_resolution_spec.md` | The concentrated-risk subsystem: registry, resolution algorithm, ambiguity rules, new-entity rules | Phase 1–2 build |

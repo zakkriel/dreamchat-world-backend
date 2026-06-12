@@ -79,7 +79,7 @@
 ## Layer 3 — Architecture (`30_architecture/`)
 
 ### `canon_engine/` — 🔒 **FROZEN BUILD CONTRACT (v4.1)**
-The 14-doc world-state set (00–13). Its own `00_INDEX.md` is authoritative for the engine: doctrine, ADR-001…033, master DDL, pipeline/resolution/assembly specs, invariants, phase plan 0A→4. **Per its own governance: no architecture debate outside doc 02; next artifact is a green I-1 on a deployed Phase 0A schema.** Nothing in this folder was touched.
+The 14-doc world-state set (00–13). Its own `00_INDEX.md` is authoritative for the engine: doctrine, ADR-001 onward, master DDL, pipeline/resolution/assembly specs, invariants, phase plan 0A→4. **Per its own governance: no architecture debate outside doc 02; next artifact is a green I-1 on a deployed Phase 0A schema.** Nothing in this folder was touched.
 
 ### `platform/` — 🟡 Directional (Jun 5 generation, pre-dates the frozen engine set)
 The 8-doc architecture set (platform shape, world core, modules, memory/canon, AI orchestration, frontend, image integration, marketplace) + its confidence README.
@@ -95,7 +95,7 @@ The 8-doc architecture set (platform shape, world core, modules, memory/canon, A
 | `ADR-P016_private_vs_public_world_governance.md` | ✅ Active | Platform-level; no engine conflict. JSON schemas included alongside. |
 | `ADR-P017_backend_application_language_go.md` | 🟡 Proposed | World backend application/transport tier = Go (Chunk 3 owns the decision). Does not touch frozen engine canon; perception filter stays in SQL (B-1, I-3). |
 
-> ⚠️ **Numbering rule (new):** the engine owns plain `ADR-001…033` inside `canon_engine/02_world_state_adrs.md`. All platform/product ADRs use the `ADR-P###` prefix. The old loose `ADR_001` and governance `ADR-016` collided with engine numbers — resolved by the P-prefix.
+> ⚠️ **Numbering rule (new):** the engine owns plain `ADR-001` onward inside `canon_engine/02_world_state_adrs.md`. All platform/product ADRs use the `ADR-P###` prefix. The old loose `ADR_001` and governance `ADR-016` collided with engine numbers — resolved by the P-prefix.
 
 ### `image_platform/` — ✅ Active
 Sprite-sheet pipeline architecture, API addendum, DB schema extension (SQL), JSON schema, runbook, implementation prompt, change summary. The Image Platform remains a separate service that never owns world truth (engine + platform docs agree).

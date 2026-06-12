@@ -10,7 +10,7 @@ Status legend: 🔒 Frozen (engine contract) · ✅ Accepted (validated by you, 
 
 ## Part A — Engine rules (🔒 frozen; reference only)
 
-**ADRs:** ADR-001…033 in `canon_engine/02_world_state_adrs.md`. The load-bearing ones for everything downstream:
+**ADRs:** ADR-001 onward in `canon_engine/02_world_state_adrs.md`. The load-bearing ones for everything downstream:
 - **ADR-001** Canon events are the immutable source of truth · **ADR-005** Perception separate from canon; data-layer isolation absolute · **ADR-006** Three time axes; invalidation never deletion · **ADR-007** Causality = reified bundles, not binary edges · **ADR-008** Provenance always, bundles selectively (used from Phase 4) · **ADR-009** LLM proposes, deterministic gate decides · **ADR-016** Corrections present-forward · **ADR-017** Propagation bounded; Traversal Matrix enforced · **ADR-020** Narrator gets no omniscient pass · **ADR-021/030** World Clock owns in-world time; fictional time is logical tick + label · **ADR-026** Replay invariance = domain equivalence
 
 **Invariants (CI-enforced):** I-1 replay invariance · I-2 universal provenance · I-3 no hidden-canon leakage · I-4 causal acyclicity · I-5 traversal safety · I-6 canonization threshold (chatter ≠ canon) · I-7 projections written only by the maintainer · I-8 window closure · I-9 epistemic temporal sanity · I-10 claim non-abandonment
@@ -67,7 +67,7 @@ Status legend: 🔒 Frozen (engine contract) · ✅ Accepted (validated by you, 
 | D-2 | The Core owns the substrate (world, entities, scenes, canon, knowledge, corrections, module registry); modules own their mechanics (HP, mana, sanity…). Core never learns module semantics. | Module architecture docs | ✅ 2026-06-10 (blanket approval) |
 | D-3 | The Image Platform is a separate service and never owns world truth; it receives only classified/authorized generation requests. | Platform/09; ADR-P016 | ✅ 2026-06-10 (blanket approval) |
 | D-4 | Engine DDL is the only core schema; JSONB is for module-owned/evolving state, always with `schema_version` + runtime validation. | Decision 2026-06-10; ADR-P001 banner | ✅ 2026-06-10 |
-| D-5 | ADR numbering: engine owns plain ADR-001…033 (doc 02 only); platform/product ADRs use `ADR-P###`. Decisions change only via superseding ADR. | MASTER_INDEX | ✅ 2026-06-10 |
+| D-5 | ADR numbering: engine owns plain ADR-001 onward (doc 02 only); platform/product ADRs use `ADR-P###`. Decisions change only via superseding ADR. | MASTER_INDEX | ✅ 2026-06-10 |
 | D-6 | Git `/docs` is the source of truth for layers 10/20/30; Drive is drafting space for layer 00 and WIP; promotion is one-way (export → commit → banner). | Decision 2026-06-10 | ✅ 2026-06-10 |
 | D-7 | Frontend owns presentation only — never world truth, canon decisions, knowledge checks, or correction validity. | Modular architecture §2.1 | ✅ 2026-06-10 (blanket approval) |
 | D-8 | Synchronous path stays small (parse → read → route → validate → stream); summarization, reflection, backstage, images, evals run async. | Platform/03 §7; engine phase plan | ✅ 2026-06-10 (blanket approval) |
