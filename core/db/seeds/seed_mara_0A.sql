@@ -95,4 +95,59 @@ INSERT INTO perception_record (world_id, holder_id, source_event_id, content, ep
  ('11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
   'e0000000-0000-0000-0000-000000000102','It is now common knowledge that the mayor keeps a hidden ledger',
   'public',201,201,'public');
+-- =====================================================================================
+-- Chunk-3 additions (design 2026-06-14). Deterministic. Chosen to miss every existing
+-- scoped 0A assertion: name perceptions are 'public' sourced to world_genesis (≠ E102);
+-- the about-Mara fixture is 'direct' sourced to E1 (≠ Player's 'shared'); no state_mutation
+-- is added (replay/golden projections untouched).
+-- =====================================================================================
+
+-- (G) world_genesis @ tick 0 — sources common-knowledge identity (names). No state mutation.
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         in_world_label, status, accepted_at, visibility_scope, origin)
+VALUES ('e0000000-0000-0000-0000-0000000000e0','11111111-1111-1111-1111-111111111111',
+        'world_genesis','the world is established; its principal figures are publicly known',0,0,
+        'Genesis','accepted', now(), 'public','fast_path');
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+ ('e0000000-0000-0000-0000-0000000000e0','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','faction','source');
+
+-- (N) Common-knowledge NAME perceptions — principal cast only; held by Common Knowledge (PUB),
+-- public, sourced to genesis. content = the canonical name (read at projection time via the
+-- perception layer, NEVER a raw entity_registry read — going-in 5). O1..O5 deliberately omitted
+-- so fn_perceived_name's WITHHOLD path is exercised on real seed rows. Fixed perception_ids so
+-- the explicit subject links are unambiguous.
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick, visibility_scope) VALUES
+ ('ace00000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','e0000000-0000-0000-0000-0000000000e0','Player','public',0,0,'public'),
+ ('ace00000-0000-0000-0000-0000000000b1','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','e0000000-0000-0000-0000-0000000000e0','Mara',  'public',0,0,'public'),
+ ('ace00000-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','e0000000-0000-0000-0000-0000000000e0','Jonas', 'public',0,0,'public'),
+ ('ace00000-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','e0000000-0000-0000-0000-0000000000e0','Tavern','public',0,0,'public'),
+ ('ace00000-0000-0000-0000-0000000000f1','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee','e0000000-0000-0000-0000-0000000000e0','Square','public',0,0,'public');
+-- explicit subjects for the name perceptions (one entity each)
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('ace00000-0000-0000-0000-0000000000a1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
+ ('ace00000-0000-0000-0000-0000000000b1','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111'),
+ ('ace00000-0000-0000-0000-0000000000c1','cccccccc-cccc-cccc-cccc-cccccccccccc','11111111-1111-1111-1111-111111111111'),
+ ('ace00000-0000-0000-0000-0000000000d1','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111'),
+ ('ace00000-0000-0000-0000-0000000000f1','000000a0-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111');
+
+-- (A) Player-private-about-Mara — the gate fixture. Genuinely about Mara (content-subject = Mara,
+-- who is also an E1 participant → junction ⊆ derivation, future-proof). 'direct' (≠ Player's
+-- 'shared' of E1, so the existing scoped assertion holds). Private → invisible to Jonas. Fixed id.
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick) VALUES
+ ('dca70000-0000-0000-0000-000000000a01','11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e0000000-0000-0000-0000-000000000001','Mara listened intently and seemed unsettled','direct',100,100);
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('dca70000-0000-0000-0000-000000000a01','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111');
+
+-- (B) Generic about-ness backfill for the ORIGINAL event-derived perceptions only (ADR-035:
+-- subjects = source event participants). NOT EXISTS skips rows that already carry explicit subjects
+-- (the names and the about-Mara fixture), so those stay precise and are never over-attributed.
+INSERT INTO perception_subject (perception_id, entity_id, world_id)
+SELECT pr.perception_id, ep.entity_id, pr.world_id
+FROM perception_record pr
+JOIN event_participant ep ON ep.event_id = pr.source_event_id
+WHERE NOT EXISTS (SELECT 1 FROM perception_subject ps WHERE ps.perception_id = pr.perception_id)
+ON CONFLICT (perception_id, entity_id) DO NOTHING;
+
 COMMIT;
