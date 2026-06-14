@@ -186,40 +186,8 @@ END $$;
 CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_id uuid) RETURNS json
     LANGUAGE sql STABLE
     AS $$
-  WITH about_actor AS (
-    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence,
-           ce.in_world_label
-    FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
-    JOIN perception_subject ps ON ps.perception_id = v.perception_id AND ps.entity_id = p_actor_id
-    JOIN canon_event ce ON ce.event_id = v.source_event_id
-    WHERE ce.event_type <> 'world_genesis'
-  ),
-  items AS (
-    SELECT json_build_object(
-             'perception_id',   aa.perception_id,
-             'content',         aa.content,
-             'epistemic_type',  aa.epistemic_type,
-             'occurred_at_tick',aa.valid_tick,
-             'display_label',   aa.in_world_label,
-             'confidence',      aa.confidence,
-             'decay',           json_build_object('stale', false, 'last_confirmed_label', aa.in_world_label),
-             'source',          json_build_object('epistemic_type', aa.epistemic_type,
-                                                  'source_event_label', aa.in_world_label)
-           ) AS item,
-           aa.valid_tick AS sort_tick
-    FROM about_actor aa
-  ),
-  groups AS (
-    SELECT CASE WHEN count(*) = 0 THEN '[]'::json
-                ELSE json_build_array(json_build_object(
-                       'group_key',   p_actor_id::text,
-                       'group_label', fn_perceived_name(p_world_id, p_viewer_id, p_actor_id),
-                       'items',       coalesce(json_agg(i.item ORDER BY i.sort_tick), '[]'::json)
-                     ))
-           END AS arr
-    FROM items i
-  )
-  SELECT json_build_object(
+  SELECT CASE WHEN NOT fn_entity_visible(p_world_id, p_viewer_id, p_actor_id) THEN NULL
+  ELSE json_build_object(
     'schema_version', 'actor_page/1',
     'world_id',  p_world_id,
     'viewer_id', p_viewer_id,
@@ -230,10 +198,50 @@ CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_
       'current_synthesis',          NULL,
       'last_known_status',          NULL,
       'known_artifacts',            '[]'::json,
-      'collected_knowledge_groups', (SELECT arr FROM groups),
+      'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_actor_id),
       'inline_links',               '[]'::json
     )
-  );
+  ) END;
+$$;
+
+
+--
+-- Name: fn_collected_knowledge(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_collected_knowledge(p_world_id uuid, p_viewer_id uuid, p_target_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  WITH about AS (
+    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence, ce.in_world_label
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
+    JOIN perception_subject ps ON ps.perception_id = v.perception_id AND ps.entity_id = p_target_id
+    JOIN canon_event ce ON ce.event_id = v.source_event_id
+    WHERE ce.event_type <> 'world_genesis'
+  ),
+  items AS (
+    SELECT json_build_object(
+             'perception_id',    a.perception_id,
+             'content',          a.content,
+             'epistemic_type',   a.epistemic_type,
+             'occurred_at_tick', a.valid_tick,
+             'display_label',    a.in_world_label,
+             'confidence',       a.confidence,
+             'decay',  json_build_object('stale', false, 'last_confirmed_label', a.in_world_label),
+             'source', json_build_object('epistemic_type', a.epistemic_type,
+                                         'source_event_label', a.in_world_label)
+           ) AS item,
+           a.valid_tick AS sort_tick
+    FROM about a
+  )
+  SELECT CASE WHEN count(*) = 0 THEN '[]'::json
+              ELSE json_build_array(json_build_object(
+                     'group_key',   p_target_id::text,
+                     'group_label', fn_perceived_name(p_world_id, p_viewer_id, p_target_id),
+                     'items',       coalesce(json_agg(i.item ORDER BY i.sort_tick), '[]'::json)
+                   ))
+         END
+  FROM items i;
 $$;
 
 
