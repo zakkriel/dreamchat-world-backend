@@ -431,6 +431,17 @@ CREATE TABLE public.perception_record (
 
 
 --
+-- Name: perception_subject; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perception_subject (
+    perception_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    world_id uuid NOT NULL
+);
+
+
+--
 -- Name: provenance_edge; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -539,6 +550,14 @@ ALTER TABLE ONLY public.location_state
 
 ALTER TABLE ONLY public.perception_record
     ADD CONSTRAINT perception_record_pkey PRIMARY KEY (perception_id);
+
+
+--
+-- Name: perception_subject perception_subject_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_subject
+    ADD CONSTRAINT perception_subject_pkey PRIMARY KEY (perception_id, entity_id);
 
 
 --
@@ -665,6 +684,20 @@ CREATE INDEX idx_pr_source ON public.perception_record USING btree (source_event
 
 
 --
+-- Name: idx_ps_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ps_entity ON public.perception_subject USING btree (entity_id);
+
+
+--
+-- Name: idx_ps_world; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ps_world ON public.perception_subject USING btree (world_id);
+
+
+--
 -- Name: idx_sm_entity; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -749,6 +782,13 @@ CREATE TRIGGER trg_perception_record_no_delete BEFORE DELETE ON public.perceptio
 
 
 --
+-- Name: perception_subject trg_perception_subject_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_perception_subject_no_delete BEFORE DELETE ON public.perception_subject FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
 -- Name: provenance_edge trg_provenance_edge_no_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -810,6 +850,14 @@ ALTER TABLE ONLY public.perception_record
 
 
 --
+-- Name: perception_subject perception_subject_perception_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_subject
+    ADD CONSTRAINT perception_subject_perception_id_fkey FOREIGN KEY (perception_id) REFERENCES public.perception_record(perception_id);
+
+
+--
 -- Name: state_mutation state_mutation_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -834,4 +882,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090005'),
     ('20260610090006'),
     ('20260610090007'),
-    ('20260611090001');
+    ('20260611090001'),
+    ('20260614090001');
