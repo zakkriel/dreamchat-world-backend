@@ -180,6 +180,23 @@ END $$;
 
 
 --
+-- Name: fn_perceived_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT vp.content
+  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+  JOIN perception_subject ps ON ps.perception_id = vp.perception_id AND ps.entity_id = p_entity_id
+  JOIN canon_event ce ON ce.event_id = vp.source_event_id
+  WHERE ce.event_type = 'world_genesis'
+  ORDER BY vp.acquired_tick
+  LIMIT 1;
+$$;
+
+
+--
 -- Name: perception_record; Type: TABLE; Schema: public; Owner: -
 --
 

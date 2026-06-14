@@ -26,5 +26,25 @@ LANGUAGE sql STABLE AS $$
         );
 $$;
 
+-- Name resolution — a GENUINE knowability gate (not a raw entity_registry read; going-in 5).
+-- Returns the perception-layer name content IFF the entity is knowable to the viewer:
+--  priority 1: a viewer-held divergent perceived-name perception (DEFERRED — none in 0A; the
+--              branch is intentionally absent, the seam is this function boundary);
+--  priority 2: a common-knowledge name perception (CK-held, world_genesis-sourced, subject=entity)
+--              that the viewer is permitted to see (routed through FILTER 1);
+--  else NULL (WITHHELD). A noise actor with no CK name perception returns NULL.
+CREATE FUNCTION fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid)
+RETURNS text
+LANGUAGE sql STABLE AS $$
+  SELECT vp.content
+  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+  JOIN perception_subject ps ON ps.perception_id = vp.perception_id AND ps.entity_id = p_entity_id
+  JOIN canon_event ce ON ce.event_id = vp.source_event_id
+  WHERE ce.event_type = 'world_genesis'
+  ORDER BY vp.acquired_tick
+  LIMIT 1;
+$$;
+
 -- migrate:down
+DROP FUNCTION IF EXISTS fn_perceived_name(uuid, uuid, uuid);
 DROP FUNCTION IF EXISTS fn_visible_perceptions(uuid, uuid);
