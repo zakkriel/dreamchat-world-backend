@@ -238,6 +238,21 @@ $$;
 
 
 --
+-- Name: fn_entity_visible(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_entity_visible(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT EXISTS (
+    SELECT 1
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp     -- FILTER 1, unchanged
+    JOIN perception_subject ps ON ps.perception_id = vp.perception_id
+    WHERE ps.entity_id = p_entity_id);
+$$;
+
+
+--
 -- Name: fn_perceived_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -981,4 +996,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090007'),
     ('20260611090001'),
     ('20260614090001'),
-    ('20260614090002');
+    ('20260614090002'),
+    ('20260615090001');
