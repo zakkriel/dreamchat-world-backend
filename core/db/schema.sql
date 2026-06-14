@@ -180,6 +180,54 @@ END $$;
 
 
 --
+-- Name: perception_record; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perception_record (
+    perception_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    holder_id uuid NOT NULL,
+    source_event_id uuid NOT NULL,
+    content text NOT NULL,
+    epistemic_type text NOT NULL,
+    sensory_mode text,
+    confidence real DEFAULT 1.0 NOT NULL,
+    distortion_level real DEFAULT 0 NOT NULL,
+    acquired_tick bigint NOT NULL,
+    valid_tick bigint NOT NULL,
+    invalid_tick bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expired_at timestamp with time zone,
+    visibility_scope text DEFAULT 'private'::text NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    importance real DEFAULT 5.0 NOT NULL,
+    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
+);
+
+
+--
+-- Name: fn_visible_perceptions(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_visible_perceptions(p_world_id uuid, p_viewer_id uuid) RETURNS SETOF public.perception_record
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT pr.*
+  FROM perception_record pr
+  WHERE pr.world_id = p_world_id
+    AND pr.invalid_tick IS NULL
+    AND pr.expired_at  IS NULL
+    AND ( pr.holder_id = p_viewer_id
+          OR pr.holder_id IN (
+            SELECT er.entity_id FROM entity_registry er
+            WHERE er.world_id = p_world_id
+              AND er.entity_kind IN ('faction','group')
+          )
+        );
+$$;
+
+
+--
 -- Name: forbid_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -401,32 +449,6 @@ CREATE TABLE public.location_state (
     dirty boolean DEFAULT false NOT NULL,
     last_event_id uuid,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: perception_record; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.perception_record (
-    perception_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    world_id uuid NOT NULL,
-    holder_id uuid NOT NULL,
-    source_event_id uuid NOT NULL,
-    content text NOT NULL,
-    epistemic_type text NOT NULL,
-    sensory_mode text,
-    confidence real DEFAULT 1.0 NOT NULL,
-    distortion_level real DEFAULT 0 NOT NULL,
-    acquired_tick bigint NOT NULL,
-    valid_tick bigint NOT NULL,
-    invalid_tick bigint,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expired_at timestamp with time zone,
-    visibility_scope text DEFAULT 'private'::text NOT NULL,
-    dirty boolean DEFAULT false NOT NULL,
-    importance real DEFAULT 5.0 NOT NULL,
-    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
 );
 
 
@@ -883,4 +905,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090006'),
     ('20260610090007'),
     ('20260611090001'),
-    ('20260614090001');
+    ('20260614090001'),
+    ('20260614090002');
