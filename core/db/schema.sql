@@ -238,6 +238,42 @@ $$;
 
 
 --
+-- Name: fn_compendium_index(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_index(p_world_id uuid, p_viewer_id uuid, p_kind text) RETURNS TABLE(entity_id uuid, perceived_name text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT DISTINCT er.entity_id,
+         fn_perceived_name(p_world_id, p_viewer_id, er.entity_id)
+  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp       -- FILTER 1, unchanged
+  JOIN perception_subject ps ON ps.perception_id = vp.perception_id
+  JOIN entity_registry er ON er.entity_id = ps.entity_id AND er.world_id = p_world_id
+  WHERE er.entity_kind = p_kind;
+$$;
+
+
+--
+-- Name: fn_compendium_index_json(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_index_json(p_world_id uuid, p_viewer_id uuid, p_kind text) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT json_build_object(
+    'schema_version', 'compendium_index/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'kind',      p_kind,
+    'entries', coalesce(
+      (SELECT json_agg(json_build_object('id', entity_id, 'perceived_name', perceived_name)
+                       ORDER BY entity_id)
+       FROM fn_compendium_index(p_world_id, p_viewer_id, p_kind)), '[]'::json)
+  );
+$$;
+
+
+--
 -- Name: fn_entity_visible(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
