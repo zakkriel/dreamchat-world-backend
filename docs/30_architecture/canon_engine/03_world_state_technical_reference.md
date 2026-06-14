@@ -136,6 +136,19 @@ CREATE INDEX idx_pr_active  ON perception_record (holder_id) WHERE invalid_tick 
 
 Invalidation rule: contradiction or correction **closes** a perception (sets `invalid_tick` for in-world falsification and/or `expired_at` for system supersession) and writes a replacement; nothing is deleted (ADR-006). Note `expired_at` is a system timestamp (transaction-time supersession); `invalid_tick` is fictional time (when the belief became false in-world) — the two axes stay distinct.
 
+```sql
+-- about-ness (ADR-035, accepted chunk-3): the entities a perception is *about*, populated at
+-- write time. Derivation source_event_id → event_participant is retained as fallback/validation.
+CREATE TABLE perception_subject (
+  perception_id UUID NOT NULL REFERENCES perception_record(perception_id),
+  entity_id     UUID NOT NULL,
+  world_id      UUID NOT NULL,          -- tenant key from birth (SPEC-009)
+  PRIMARY KEY (perception_id, entity_id)
+);
+CREATE INDEX idx_ps_entity ON perception_subject (entity_id);
+CREATE INDEX idx_ps_world  ON perception_subject (world_id);
+```
+
 ### 1.4 Causal layer (schema-ready from Phase 0; used from Phase 4 — ADR-008)
 
 ```sql

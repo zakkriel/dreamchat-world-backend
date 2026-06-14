@@ -188,6 +188,8 @@ the perception is about the entities that were *in* the event — but it has a s
 - **Expected outcome:** ADR-035 moves Proposed → Accepted under the Chunk 3 gate; the
   `perception_subject` migration ships in Chunk 3 with positive/negative pgTAP and a
   derivation-agreement guard.
+  DONE (chunk-3, 2026-06-14): perception_subject shipped (migration 20260614090001), write-time
+  population in the seed, pgTAP positive/negative + derivation usage; ADR-035 Accepted.
 
 ## SPEC-009 — recorded scale triggers (capacity tripwires from the architecture pressure-test)
 Not an open question — a **standing tripwire ledger** captured from the external pressure-test so
@@ -206,7 +208,8 @@ or the Master DDL.
   on the materialized projection** — a stale materialized page could otherwise leak now-hidden truth
   (I-3). Materialize the *display* join, never the *epistemic* wall.
 - **Citus / row-based sharding:** adopt when **single-node capacity binds.** Shard **by row on
-  `world_id`** (every core table already carries it — see SPEC-009 verification / Task 5b).
+  `world_id`** (core tables carry world_id; EXCEPTION: the junction/edge tables event_participant,
+  provenance_edge, causal_bundle_input do NOT — see the deferral below).
   **Explicitly NOT** schema-per-world and **NOT** partition-per-world — those fragment the tenant key
   and break cross-world operational queries for no capacity win at this stage.
 - **Table partitioning:** consider per-table partitioning at **~10M rows per table** (the append-only
@@ -230,3 +233,11 @@ or the Master DDL.
 - **Owner:** the first chunk that hits any named condition. **Expected outcome:** per fired trigger,
   a scoped implementation chunk; conditions that change a decision get a register amendment or new
   ADR. No action while every tripwire is unfired.
+
+### SPEC-009b — world_id absent on three junction/edge tables (deferred, chunk-3 audit)
+event_participant, provenance_edge, causal_bundle_input carry no world_id. Chunk-3 (read-only
+Actor page) does not need it: event_participant is reached only through its world-scoped parent
+canon_event; the other two are not read in chunk-3. The new perception_subject carries world_id
+from birth. **Firing trigger:** when SPEC-009 row-based sharding is implemented, these three must
+either gain world_id as the distribution key OR be co-located by their world-scoped parent —
+decided then. Until then, unchanged. No frozen-DDL change in chunk-3.

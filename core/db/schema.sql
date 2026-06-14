@@ -180,6 +180,129 @@ END $$;
 
 
 --
+-- Name: fn_actor_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  WITH about_actor AS (
+    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence,
+           ce.in_world_label
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
+    JOIN perception_subject ps ON ps.perception_id = v.perception_id AND ps.entity_id = p_actor_id
+    JOIN canon_event ce ON ce.event_id = v.source_event_id
+    WHERE ce.event_type <> 'world_genesis'
+  ),
+  items AS (
+    SELECT json_build_object(
+             'perception_id',   aa.perception_id,
+             'content',         aa.content,
+             'epistemic_type',  aa.epistemic_type,
+             'occurred_at_tick',aa.valid_tick,
+             'display_label',   aa.in_world_label,
+             'confidence',      aa.confidence,
+             'decay',           json_build_object('stale', false, 'last_confirmed_label', aa.in_world_label),
+             'source',          json_build_object('epistemic_type', aa.epistemic_type,
+                                                  'source_event_label', aa.in_world_label)
+           ) AS item,
+           aa.valid_tick AS sort_tick
+    FROM about_actor aa
+  ),
+  groups AS (
+    SELECT CASE WHEN count(*) = 0 THEN '[]'::json
+                ELSE json_build_array(json_build_object(
+                       'group_key',   p_actor_id::text,
+                       'group_label', fn_perceived_name(p_world_id, p_viewer_id, p_actor_id),
+                       'items',       coalesce(json_agg(i.item ORDER BY i.sort_tick), '[]'::json)
+                     ))
+           END AS arr
+    FROM items i
+  )
+  SELECT json_build_object(
+    'schema_version', 'actor_page/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'actor', json_build_object(
+      'id',                         p_actor_id,
+      'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_actor_id),
+      'perceived_role',             NULL,
+      'current_synthesis',          NULL,
+      'last_known_status',          NULL,
+      'known_artifacts',            '[]'::json,
+      'collected_knowledge_groups', (SELECT arr FROM groups),
+      'inline_links',               '[]'::json
+    )
+  );
+$$;
+
+
+--
+-- Name: fn_perceived_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT vp.content
+  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+  JOIN perception_subject ps ON ps.perception_id = vp.perception_id AND ps.entity_id = p_entity_id
+  JOIN canon_event ce ON ce.event_id = vp.source_event_id
+  WHERE ce.event_type = 'world_genesis'
+  ORDER BY vp.acquired_tick
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: perception_record; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.perception_record (
+    perception_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    holder_id uuid NOT NULL,
+    source_event_id uuid NOT NULL,
+    content text NOT NULL,
+    epistemic_type text NOT NULL,
+    sensory_mode text,
+    confidence real DEFAULT 1.0 NOT NULL,
+    distortion_level real DEFAULT 0 NOT NULL,
+    acquired_tick bigint NOT NULL,
+    valid_tick bigint NOT NULL,
+    invalid_tick bigint,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    expired_at timestamp with time zone,
+    visibility_scope text DEFAULT 'private'::text NOT NULL,
+    dirty boolean DEFAULT false NOT NULL,
+    importance real DEFAULT 5.0 NOT NULL,
+    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
+);
+
+
+--
+-- Name: fn_visible_perceptions(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_visible_perceptions(p_world_id uuid, p_viewer_id uuid) RETURNS SETOF public.perception_record
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT pr.*
+  FROM perception_record pr
+  WHERE pr.world_id = p_world_id
+    AND pr.invalid_tick IS NULL
+    AND pr.expired_at  IS NULL
+    AND ( pr.holder_id = p_viewer_id
+          OR pr.holder_id IN (
+            SELECT er.entity_id FROM entity_registry er
+            WHERE er.world_id = p_world_id
+              AND er.entity_kind IN ('faction','group')
+          )
+        );
+$$;
+
+
+--
 -- Name: forbid_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -405,28 +528,13 @@ CREATE TABLE public.location_state (
 
 
 --
--- Name: perception_record; Type: TABLE; Schema: public; Owner: -
+-- Name: perception_subject; Type: TABLE; Schema: public; Owner: -
 --
 
-CREATE TABLE public.perception_record (
-    perception_id uuid DEFAULT gen_random_uuid() NOT NULL,
-    world_id uuid NOT NULL,
-    holder_id uuid NOT NULL,
-    source_event_id uuid NOT NULL,
-    content text NOT NULL,
-    epistemic_type text NOT NULL,
-    sensory_mode text,
-    confidence real DEFAULT 1.0 NOT NULL,
-    distortion_level real DEFAULT 0 NOT NULL,
-    acquired_tick bigint NOT NULL,
-    valid_tick bigint NOT NULL,
-    invalid_tick bigint,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    expired_at timestamp with time zone,
-    visibility_scope text DEFAULT 'private'::text NOT NULL,
-    dirty boolean DEFAULT false NOT NULL,
-    importance real DEFAULT 5.0 NOT NULL,
-    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
+CREATE TABLE public.perception_subject (
+    perception_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    world_id uuid NOT NULL
 );
 
 
@@ -539,6 +647,14 @@ ALTER TABLE ONLY public.location_state
 
 ALTER TABLE ONLY public.perception_record
     ADD CONSTRAINT perception_record_pkey PRIMARY KEY (perception_id);
+
+
+--
+-- Name: perception_subject perception_subject_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_subject
+    ADD CONSTRAINT perception_subject_pkey PRIMARY KEY (perception_id, entity_id);
 
 
 --
@@ -665,6 +781,20 @@ CREATE INDEX idx_pr_source ON public.perception_record USING btree (source_event
 
 
 --
+-- Name: idx_ps_entity; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ps_entity ON public.perception_subject USING btree (entity_id);
+
+
+--
+-- Name: idx_ps_world; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ps_world ON public.perception_subject USING btree (world_id);
+
+
+--
 -- Name: idx_sm_entity; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -749,6 +879,13 @@ CREATE TRIGGER trg_perception_record_no_delete BEFORE DELETE ON public.perceptio
 
 
 --
+-- Name: perception_subject trg_perception_subject_no_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_perception_subject_no_delete BEFORE DELETE ON public.perception_subject FOR EACH ROW EXECUTE FUNCTION public.forbid_delete();
+
+
+--
 -- Name: provenance_edge trg_provenance_edge_no_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -810,6 +947,14 @@ ALTER TABLE ONLY public.perception_record
 
 
 --
+-- Name: perception_subject perception_subject_perception_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.perception_subject
+    ADD CONSTRAINT perception_subject_perception_id_fkey FOREIGN KEY (perception_id) REFERENCES public.perception_record(perception_id);
+
+
+--
 -- Name: state_mutation state_mutation_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -834,4 +979,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260610090005'),
     ('20260610090006'),
     ('20260610090007'),
-    ('20260611090001');
+    ('20260611090001'),
+    ('20260614090001'),
+    ('20260614090002');

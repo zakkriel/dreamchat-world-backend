@@ -5,3 +5,8 @@
 \set jonas_id   'cccccccc-cccc-cccc-cccc-cccccccccccc'
 \set e1_id      'e0000000-0000-0000-0000-000000000001'
 \set e102_id    'e0000000-0000-0000-0000-000000000102'
+\set square_id  '000000a0-0000-0000-0000-0000000000a1'
+\set o1_id      '00000000-0000-0000-0000-000000000001'
+\set genesis_id 'e0000000-0000-0000-0000-0000000000e0'
+\set about_mara_pid 'dca70000-0000-0000-0000-000000000a01'
+\set ck_id      'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee'

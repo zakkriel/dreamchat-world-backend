@@ -1,6 +1,6 @@
 # ADR-P017: Backend application language — Go
 
-**Status:** Proposed
+**Status:** Accepted (chunk-3 gate, 2026-06-14)
 **Date:** 2026-06-11
 **Series:** Platform (ADR-P###, per D-5) — does NOT touch frozen engine canon
 **Owner of decision:** Chunk 3 (first backend application surface)
