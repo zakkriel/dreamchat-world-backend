@@ -28,6 +28,7 @@ DreamChat is a persistent AI RPG world platform. **The world is the product; thi
 - **Invariants I-1…I-10 are the permanent regression suite** (engine doc 07). They run in CI; a red invariant blocks merge, always.
 
 ## Process
+- **Backend-only repo.** Frontend code lives in **github.com/zakkriel/dreamchat-frontend** and must **not** be built here — do not recreate a `frontend/` directory (D-7, D-10). The API contract `core/api/schema/actor_page.v1.schema.json` is the source of truth the frontend repo generates its types from; it stays here.
 - We build in **chunks** (playbook §2). One chunk = one worktree = one plan = one PR. **Never start chunk N+1 while chunk N's gate is red.** Chunks marked 🪜 also require an honest answer to their Validation Ladder product question (§0.5) — green CI + product "no" = not done.
 - Workflow per chunk: targeted brainstorm (open edges only) → write-plan from the spec → execute with TDD (failing test first, no exceptions) → gate check.
 - Scope control: PRD non-goals + the register ARE the out-of-scope list. "Wouldn't it be nice to…" already has an answer — look it up.

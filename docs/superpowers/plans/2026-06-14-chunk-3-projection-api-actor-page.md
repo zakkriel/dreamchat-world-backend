@@ -1,5 +1,13 @@
 # Chunk 3 — Read-only Projection API + Perception-bound Actor Page — Implementation Plan
 
+> **⚠️ SUPERSEDED (frontend location only) — 2026-06-14.** The in-repo `frontend/` shell
+> described below was extracted to its own repo, **github.com/zakkriel/dreamchat-frontend**,
+> per design §6 / D-7 / D-10. The backend repo is now backend-only. Treat every `frontend/…`
+> path and `cd frontend` step in this plan as historical record, not live instructions — do
+> **not** recreate `frontend/` here. The API contract source of truth
+> (`core/api/schema/actor_page.v1.schema.json`) stays in this repo; the frontend repo generates
+> its types from it. All backend/SQL/Go steps below remain accurate.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Ship a read-only, perception-bound projection API serving the Actor-page payload for `(world, viewer, actor)`, plus a minimal frontend that renders one Actor page from seeded data — proving "can the user inspect a world and trust it?" (Validation Ladder Q2).
@@ -10,7 +18,7 @@
 
 **Design source:** `docs/superpowers/specs/2026-06-14-chunk-3-projection-api-actor-page-design.md` (approved 2026-06-14).
 
-**Process:** one worktree · one plan · one PR · TDD iron law (failing test first, always) · gate red → stop. Branch the worktree before Task 1 (see Phase 0). FE lives under `frontend/` in this repo for Chunk 3 so the whole chunk is one PR (founder-confirmed); migration to a dedicated repo per D-10/Bridge is deferred to when it grows.
+**Process:** one worktree · one plan · one PR · TDD iron law (failing test first, always) · gate red → stop. Branch the worktree before Task 1 (see Phase 0). ~~FE lives under `frontend/` in this repo for Chunk 3 so the whole chunk is one PR (founder-confirmed); migration to a dedicated repo per D-10/Bridge is deferred to when it grows.~~ **Superseded 2026-06-14 (see banner above): the FE was extracted to github.com/zakkriel/dreamchat-frontend per design §6 / D-10; this repo is backend-only.**
 
 **Fixed UUIDs (from the seed + new fixtures):**
 - world `11111111-1111-1111-1111-111111111111`
