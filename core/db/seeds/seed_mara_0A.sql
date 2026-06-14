@@ -140,6 +140,46 @@ INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_
 INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
  ('dca70000-0000-0000-0000-000000000a01','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111');
 
+-- =====================================================================================
+-- (C4) Chunk-4 additions (design 2026-06-14): the Sealed Note artifact fixture. It powers the
+-- Artifact page AND the index existence-leak asymmetry (a non-CK entity perceived ONLY by Player,
+-- ABSENT for Jonas). The Tavern observation gives the Location page real about-ness. An observation
+-- changes PERCEPTION, not canon (ADR-005), so there is NO state_mutation and NO artifact_state row
+-- (golden/replay untouched). Deterministic; chosen to miss every existing scoped 0A assertion.
+-- =====================================================================================
+
+-- discovery event @ tick 100, beat_seq 1 — distinct slot from E1 (100,0) under uq_ce_accepted_order.
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         in_world_label, status, accepted_at, visibility_scope, origin)
+VALUES ('e0000000-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111',
+        'observation','Player, alone in the tavern, finds a sealed note and notes the room''s tension',
+        100,1,'Day 1','accepted', now(), 'private','fast_path');
+
+-- the Sealed Note artifact — NON-CK (no genesis name perception), created by the discovery event.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name, created_by_event) VALUES
+ ('a4000000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111','artifact','Sealed Note',
+  'e0000000-0000-0000-0000-0000000000d1');
+
+-- participants: observer + the two subjects. subject ≠ participants — the explicit perception_subject
+-- rows below carry the PRECISE about-ness (ADR-035), not the participant set.
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+ ('e0000000-0000-0000-0000-0000000000d1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','observer'),
+ ('e0000000-0000-0000-0000-0000000000d1','a4000000-0000-0000-0000-0000000000a1','artifact','discovered'),
+ ('e0000000-0000-0000-0000-0000000000d1','dddddddd-dddd-dddd-dddd-dddddddddddd','location','setting');
+
+-- two Player-private 'direct' perceptions, fixed ids, each with an EXPLICIT single subject.
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick) VALUES
+ ('dca70000-0000-0000-0000-000000000b01','11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e0000000-0000-0000-0000-0000000000d1',
+  'A small folded note, sealed with dark wax. No markings, no sender.','direct',100,100),
+ ('dca70000-0000-0000-0000-000000000c01','11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e0000000-0000-0000-0000-0000000000d1',
+  'The tavern was tense and quieter than usual.','direct',100,100);
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('dca70000-0000-0000-0000-000000000b01','a4000000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111'),
+ ('dca70000-0000-0000-0000-000000000c01','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111');
+
 -- (B) Generic about-ness backfill for the ORIGINAL event-derived perceptions only (ADR-035:
 -- subjects = source event participants). NOT EXISTS skips rows that already carry explicit subjects
 -- (the names and the about-Mara fixture), so those stay precise and are never over-attributed.
