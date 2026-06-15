@@ -1,4 +1,4 @@
-.PHONY: doctor db-up db-down migrate seed test replay reset schema-check pgtap
+.PHONY: doctor db-up db-down migrate seed test replay reset schema-check pgtap schema-contract
 
 doctor:          ## verify the sanctioned Docker runtime is available
 	@command -v docker >/dev/null 2>&1 || { \
@@ -43,3 +43,10 @@ reset: db-down db-up migrate seed ## clean DB from scratch (determinism check he
 
 schema-check: db-down db-up migrate ## fail if dbmate schema.sql has uncommitted drift (always against a clean migrated DB)
 	git diff --exit-code core/db/schema.sql
+
+schema-contract: ## SPEC-011: validate REAL payloads vs published schemas (two-sided) + teeth (needs a seeded db; run `make reset` first)
+	./ci/gen_payloads.sh ci/.payloads
+	docker run --rm -v "$$PWD:/work" -w /work python:3.12-slim sh -c '\
+	  pip install --quiet "jsonschema==4.*" && \
+	  python ci/schema_contract.py core/api/schema ci/.payloads && \
+	  python ci/schema_contract.py --selftest core/api/schema'

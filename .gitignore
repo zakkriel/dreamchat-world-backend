@@ -6,3 +6,6 @@ core/api/api
 
 # agent worktrees (harness-managed; never commit)
 .claude/
+
+# SPEC-011 schema-contract build artifact (generated payloads)
+ci/.payloads/
