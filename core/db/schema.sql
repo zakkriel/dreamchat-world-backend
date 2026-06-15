@@ -297,6 +297,33 @@ $$;
 
 
 --
+-- Name: fn_location_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_location_page(p_world_id uuid, p_viewer_id uuid, p_location_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE WHEN NOT fn_entity_visible(p_world_id, p_viewer_id, p_location_id) THEN NULL
+  ELSE json_build_object(
+    'schema_version', 'location_page/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'location', json_build_object(
+      'id',                         p_location_id,
+      'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_location_id),
+      'part_of',                    NULL,
+      'current_synthesis',          NULL,
+      'last_known_status',          NULL,
+      'known_areas_inside',         '[]'::json,
+      'key_actors',                 '[]'::json,
+      'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_location_id),
+      'inline_links',               '[]'::json
+    )
+  ) END;
+$$;
+
+
+--
 -- Name: fn_perceived_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
