@@ -367,6 +367,39 @@ $$;
 
 
 --
+-- Name: fn_timeline(uuid, uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_timeline(p_world_id uuid, p_viewer_id uuid, p_before_tick bigint DEFAULT NULL::bigint) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  WITH mine AS (
+    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence, ce.in_world_label
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
+    JOIN canon_event ce ON ce.event_id = v.source_event_id
+    WHERE v.holder_id = p_viewer_id                              -- FILTER 2: relevance = own holdings
+      AND (p_before_tick IS NULL OR v.valid_tick < p_before_tick)
+  )
+  SELECT json_build_object(
+    'schema_version', 'timeline/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'records', coalesce(
+      (SELECT json_agg(json_build_object(
+                'perception_id',    m.perception_id,
+                'content',          m.content,
+                'epistemic_type',   m.epistemic_type,
+                'occurred_at_tick', m.valid_tick,
+                'display_label',    m.in_world_label,
+                'confidence',       m.confidence,
+                'decay', json_build_object('stale', false, 'last_confirmed_label', m.in_world_label))
+              ORDER BY m.valid_tick, m.perception_id)
+       FROM mine m), '[]'::json)
+  );
+$$;
+
+
+--
 -- Name: perception_record; Type: TABLE; Schema: public; Owner: -
 --
 

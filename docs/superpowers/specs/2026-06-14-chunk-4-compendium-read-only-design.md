@@ -53,7 +53,7 @@ The founder browses Mara's world across **all four** surfaces, as **two viewers 
 **(a) Every page type is perception-bound — no unperceived canon in any payload, AND no existence leak via the status code (§5.1).**
 - **Location** — Player opens Tavern → `200`, sees the Player-private Tavern observation; flips `?viewer=` to Jonas → `200` (Tavern is common knowledge) with name `"Tavern"` but **empty** collected knowledge. No `canon_event.summary` text anywhere.
 - **Artifact** — Player opens the Sealed Note → `200`, the discovery observation, `perceived_name: null` (name withheld, §0.2); Jonas opens the same id → **`404`** (the note is not in Jonas's existence set — §5.1), indistinguishable from a fabricated id. A `200`-with-withheld-name for Jonas would itself leak existence.
-- **Timeline** — Player's timeline lists his held perceptions in tick order, each pointing to a perception record; Jonas's timeline is **empty** (he learned nothing in 0A). The planted secret never appears in Jonas's timeline.
+- **Timeline** — Player's timeline lists his held perceptions in tick order, each pointing to a perception record. Jonas's timeline shows **only his own movements** (the noise loop gives him 13 `direct` self-observations; the Chunk-3 "Jonas ignorant" claim is **E1-scoped**, not global) — it contains **none** of Player's private perceptions and **never** the planted secret (no `ledger` content). The leak gate is *present-on-Player / absent-from-Jonas* on the secret content, with Jonas's non-empty timeline making the absence non-vacuous.
 
 **New gate assertion (reviewer):** `GET` the Sealed Note's page as Jonas and `GET` a **fabricated id** as Jonas — both return **`404`**, byte-indistinguishable. Player's `GET` on the same note returns `200`. Asserted as a pair (present-200 for Player / absent-404 for Jonas on the same id) — teeth-proven: removing the `fn_entity_visible` gate turns the Jonas-404 assertion red while Player-200 stays green.
 
@@ -100,8 +100,9 @@ Cast: `Player(aaaa) Mara(bbbb) Jonas(cccc) Tavern(dddd) CommonKnowledge(eeee) O1
 | viewer | what appears | why |
 |---|---|---|
 | Player | shared-of-E1 (`Day 1`, tick 100); the about-Mara observation (tick 100); the new Note + Tavern observations (tick 100); the ~12 noise "I moved to …" rows where Player was the mover (ticks where `actors[(i%8)+1]=Player`) | all held by Player; ambient genesis-CK rows excluded by relevance (Player holds none anyway) |
-| Jonas | **empty** — Jonas holds no perceptions in 0A | perception-binding: no history ⇒ honest emptiness, not omniscient canon |
+| Jonas | his **own 13 `direct` self-moves** ("I moved to …", ticks 102–198) — and **nothing else**: no Player-private rows, no `ledger` secret | perception-binding: holder=viewer relevance; the "Jonas ignorant" claim is E1-scoped, not global |
 
+- **Leak gate (corrected):** the planted secret ("hidden ledger", E1) is present on Player's timeline (his `shared`-of-E1 row, content contains `ledger`) and **absent** from Jonas's, while Jonas's timeline is non-empty — so the absence is non-vacuous.
 - Each item points to a **perception record** (`perception_id`), never a canon row (Timeline & Perception PRD AC#1 / §4 — *"Timeline points to perception versions, never canon"*).
 - **Ordered by `valid_tick`** (world-history order; **I-9 guarantees `acquired_tick ≥ valid_tick`**, so world-history order is well-defined; Timeline & Perception PRD §7 registry mechanics, ADR-030 tick semantics). **[citation (c)]**
 - `before_tick` is an optional cursor: `valid_tick < before_tick` when supplied.
