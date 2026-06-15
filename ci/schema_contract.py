@@ -83,11 +83,20 @@ def check_direction2(sid, schema):
 def run(schema_dir, payload_dir):
     by_id = load_schemas(schema_dir)
     if not by_id:
-        return [f"no *.v1.schema.json found in {schema_dir}"], 0, 0
+        return [f"no *.v1.schema.json found in {schema_dir}"], 0, 0, 0, 0
     errs, n_payload = [], 0
+    seen_versions, seen_viewers = set(), set()
+
+    # Expected viewers for the COVERAGE assertion, from the generator's manifest.
+    expected_viewers = None
+    mf = os.path.join(payload_dir, "_manifest.json")
+    if os.path.exists(mf):
+        expected_viewers = set(json.load(open(mf)).get("viewers", []))
 
     # Direction 1: real payloads validate against their published schema.
-    files = sorted(glob.glob(os.path.join(payload_dir, "*.json")))
+    # (Files starting with "_" are manifests/metadata, not payloads.)
+    files = sorted(f for f in glob.glob(os.path.join(payload_dir, "*.json"))
+                   if not os.path.basename(f).startswith("_"))
     if not files:
         errs.append(f"no payloads found in {payload_dir} (did ci/gen_payloads.sh run against a seeded db?)")
     for f in files:
@@ -99,14 +108,30 @@ def run(schema_dir, payload_dir):
         validator = Draft7Validator(by_id[sid][1])
         for e in sorted(validator.iter_errors(payload), key=str):
             errs.append(f"[dir1] {os.path.basename(f)} ({sid}): {e.message} at {list(e.path)}")
+        seen_versions.add(sid)
+        if isinstance(payload.get("viewer_id"), str):
+            seen_viewers.add(payload["viewer_id"])
         n_payload += 1
+
+    # COVERAGE (enforced — a subset or single-viewer run MUST fail, not pass vacuously).
+    # This is the only thing standing between a regressed generator (it has bitten twice:
+    # stdin-eaten loop; set -e on a NULL payload) and a false green.
+    for sid in sorted(set(by_id) - seen_versions):
+        errs.append(f"[coverage] no real payload exercised schema {sid} — the generator must "
+                    f"produce at least one payload for every published schema")
+    if expected_viewers is not None:
+        for v in sorted(expected_viewers - seen_viewers):
+            errs.append(f"[coverage] viewer {v} produced no payloads — both Player and Jonas required")
+    elif len(seen_viewers) < 2:
+        errs.append(f"[coverage] payloads cover only {len(seen_viewers)} distinct viewer(s) and there "
+                    f"is no _manifest.json — both Player and Jonas required")
 
     # Direction 2: schema nullability matches the DDL, for every published schema.
     for sid, (_f, schema) in by_id.items():
         for e in check_direction2(sid, schema):
             errs.append(f"[dir2] {e}")
 
-    return errs, n_payload, len(by_id)
+    return errs, n_payload, len(by_id), len(seen_versions), len(seen_viewers)
 
 
 def selftest(schema_dir):
@@ -150,13 +175,14 @@ if __name__ == "__main__":
         sys.exit(selftest(args[1] if len(args) > 1 else "core/api/schema"))
     schema_dir = args[0] if len(args) > 0 else "core/api/schema"
     payload_dir = args[1] if len(args) > 1 else "ci/.payloads"
-    errs, n_payload, n_schema = run(schema_dir, payload_dir)
-    print(f"SPEC-011 schema contract: {n_payload} payload(s) x {n_schema} schema(s)")
+    errs, n_payload, n_schema, n_seen, n_viewers = run(schema_dir, payload_dir)
+    print(f"SPEC-011 schema contract: {n_payload} payload(s); "
+          f"coverage {n_seen}/{n_schema} published schemas, {n_viewers} viewer(s)")
     if errs:
         print(f"FAIL ({len(errs)} violation(s)):")
         for e in errs:
             print("  -", e)
         sys.exit(1)
-    print("PASS: all payloads validate; NOT NULL-sourced fields are non-nullable; "
-          "nullable fields stay nullable.")
+    print("PASS: every published schema exercised by real payloads (both viewers); all payloads "
+          "validate; NOT NULL-sourced fields non-nullable; nullable fields stay nullable.")
     sys.exit(0)

@@ -60,4 +60,8 @@ for vp in $VIEWERS; do
   save "timeline_${vp%%:*}" "SELECT fn_timeline('$WORLD','${vp#*:}')"
 done
 
-echo "generated $(find "$OUT" -name '*.json' | wc -l | tr -d ' ') payload(s) in $OUT"
+# manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
+# (both Player and Jonas must appear) rather than trust the generator.
+printf '{"viewers":["%s","%s"]}\n' "$PLAYER" "$JONAS" > "$OUT/_manifest.json"
+
+echo "generated $(find "$OUT" -name '*.json' -not -name '_*' | wc -l | tr -d ' ') payload(s) in $OUT"
