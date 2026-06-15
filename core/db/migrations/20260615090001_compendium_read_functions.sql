@@ -131,7 +131,30 @@ RETURNS json LANGUAGE sql STABLE AS $$
   ) END;
 $$;
 
+-- fn_artifact_page — subject = artifact lens via the shared core + existence gate (NULL → 404).
+-- Carry-state (holder/owner/access, last_known_location) deferred → NULL. Never reads artifact_state.
+CREATE FUNCTION fn_artifact_page(p_world_id uuid, p_viewer_id uuid, p_artifact_id uuid)
+RETURNS json LANGUAGE sql STABLE AS $$
+  SELECT CASE WHEN NOT fn_entity_visible(p_world_id, p_viewer_id, p_artifact_id) THEN NULL
+  ELSE json_build_object(
+    'schema_version', 'artifact_page/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'artifact', json_build_object(
+      'id',                         p_artifact_id,
+      'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_artifact_id),
+      'perceived_type',             NULL,
+      'current_synthesis',          NULL,
+      'last_known_location',        NULL,
+      'current_holder_owner_access',NULL,
+      'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_artifact_id),
+      'inline_links',               '[]'::json
+    )
+  ) END;
+$$;
+
 -- migrate:down
+DROP FUNCTION IF EXISTS fn_artifact_page(uuid, uuid, uuid);
 DROP FUNCTION IF EXISTS fn_location_page(uuid, uuid, uuid);
 DROP FUNCTION IF EXISTS fn_collected_knowledge(uuid, uuid, uuid);
 -- restore the Chunk-3 fn_actor_page (verbatim from migration 0002) on rollback

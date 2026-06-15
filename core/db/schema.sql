@@ -206,6 +206,32 @@ $$;
 
 
 --
+-- Name: fn_artifact_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_artifact_page(p_world_id uuid, p_viewer_id uuid, p_artifact_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE WHEN NOT fn_entity_visible(p_world_id, p_viewer_id, p_artifact_id) THEN NULL
+  ELSE json_build_object(
+    'schema_version', 'artifact_page/1',
+    'world_id',  p_world_id,
+    'viewer_id', p_viewer_id,
+    'artifact', json_build_object(
+      'id',                         p_artifact_id,
+      'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_artifact_id),
+      'perceived_type',             NULL,
+      'current_synthesis',          NULL,
+      'last_known_location',        NULL,
+      'current_holder_owner_access',NULL,
+      'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_artifact_id),
+      'inline_links',               '[]'::json
+    )
+  ) END;
+$$;
+
+
+--
 -- Name: fn_collected_knowledge(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
