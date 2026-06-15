@@ -1,0 +1,26 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "compendium_index/1",
+  "title": "CompendiumIndex",
+  "type": "object",
+  "required": ["schema_version", "world_id", "viewer_id", "kind", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "compendium_index/1" },
+    "world_id":  { "type": "string", "format": "uuid" },
+    "viewer_id": { "type": "string", "format": "uuid" },
+    "kind":      { "type": "string", "enum": ["actor","location","artifact"] },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id","perceived_name"],
+        "additionalProperties": false,
+        "properties": {
+          "id":             { "type": "string", "format": "uuid" },
+          "perceived_name": { "type": ["string","null"] }
+        }
+      }
+    }
+  }
+}

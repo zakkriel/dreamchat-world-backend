@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "timeline/1",
+  "title": "Timeline",
+  "type": "object",
+  "required": ["schema_version", "world_id", "viewer_id", "records"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "timeline/1" },
+    "world_id":  { "type": "string", "format": "uuid" },
+    "viewer_id": { "type": "string", "format": "uuid" },
+    "records": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["perception_id","content","epistemic_type","occurred_at_tick","display_label","confidence","decay"],
+        "additionalProperties": false,
+        "properties": {
+          "perception_id":   { "type": "string", "format": "uuid" },
+          "content":         { "type": "string" },
+          "epistemic_type":  { "type": "string" },
+          "occurred_at_tick":{ "type": "integer" },
+          "display_label":   { "type": ["string","null"] },
+          "confidence":      { "type": "number" },
+          "decay":           { "type": "object" }
+        }
+      }
+    }
+  }
+}

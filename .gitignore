@@ -3,3 +3,6 @@
 .DS_Store
 .env
 core/api/api
+
+# agent worktrees (harness-managed; never commit)
+.claude/
