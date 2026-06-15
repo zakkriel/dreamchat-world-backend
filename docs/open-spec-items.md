@@ -241,3 +241,17 @@ canon_event; the other two are not read in chunk-3. The new perception_subject c
 from birth. **Firing trigger:** when SPEC-009 row-based sharding is implemented, these three must
 either gain world_id as the distribution key OR be co-located by their world-scoped parent —
 decided then. Until then, unchanged. No frozen-DDL change in chunk-3.
+
+## SPEC-010 — published-schema nullability matches the engine DDL (chunk-4 audit)
+**Verified contract:** `perception_record.confidence` is `REAL NOT NULL DEFAULT 1.0` (Master DDL,
+doc 03 §1.3; migration `20260610090004`), so `confidence` on every projected page/timeline item is
+**non-nullable**. The chunk-4 schemas `location_page/1`, `artifact_page/1`, `timeline/1` initially
+typed it `["number","null"]` (over-permissive — the pgTAP/Go suite cannot catch over-permissiveness
+because real non-null payloads validate against a nullable schema; only a field-by-field DDL check
+catches it). Corrected to `"number"`. `actor_page/1` was already correct and is unchanged.
+**Standing rule:** a published projection field's nullability must match its source —
+NOT-NULL column ⇒ non-nullable type; nullable column or `fn_perceived_name` (withheld ⇒ NULL) ⇒
+nullable type (`perceived_name`/`group_label`/`display_label` stay nullable). Deferred placeholder
+fields hardcoded to `NULL` (`part_of`, `current_synthesis`, `last_known_status`, `perceived_type`,
+`last_known_location`, `current_holder_owner_access`) stay `["string","null"]` — forward-compatible
+for when their lens lands. If `confidence`'s engine DDL ever becomes nullable, bump `schema_version`.
