@@ -309,3 +309,21 @@ missing arm shows; Sabin's secret PhD doesn't). Captured in the Chunk-5 play-loo
 The engine checks an action is physically possible against current world state (locked door,
 collapsed bridge, not co-located with the target) before applying it. Captured in the Chunk-5
 play-loop architecture notes (§6). **Firing trigger:** when ActorMoved / actions land in Chunk 5.
+
+## SPEC-018 — Spatial engine (deferred subsystem)
+A bounded subsystem beside the canon, perception, cognition (SPEC-012), and adjudication (SPEC-013)
+engines, owning geometry only. **Coordinates recorded per place** (the only recorded geometric fact);
+**distance derived** as the magnitude of the vector between coordinates; **travel time = distance /
+speed**, where speed is a recorded property of the mover/mode (walk, mount, …), not of the place.
+Two recorded inputs (coordinate-per-place, speed-per-mover); everything else derives — so
+coordinate-derived distances are coherent by construction (three of them cannot violate the triangle
+inequality), dissolving rather than merely containing the coupled-fact coherence problem. Distinct
+from reachability — distance (how far) is SPEC-018; whether one can go at all (a wall, a locked door,
+no path) stays with move-validity (SPEC-017). NOT in Chunk 5. Owns the deferred machinery: nested
+coordinate frames (containment), dimensionality (2D/3D), non-geometric move overrides
+(portals/teleport), record-on-first-use for emergent geography, and rich speed/terrain modifiers.
+Captured in the Chunk-5 play-loop architecture notes (§11, §12).
+**Standing rule (general):** *record independent facts directly; for coupled facts record the
+generating structure and derive the facts.* **Firing trigger:** when travel must span more than a
+hand-authored handful of places, or emergent geography appears (post thin-slice); the thin slice uses
+hand-set coordinates + a flat default speed and needs none of the deferred machinery.
