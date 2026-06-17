@@ -8,7 +8,13 @@ implementation time (D-9). Intended location on commit: `docs/superpowers/specs/
 **Updated 2026-06-17:** §§1–6 unchanged. §7 (leg plan) updated for incremental-apply. New §§8–12
 capture the **turn loop**, **world-pushback structure**, the **action-driven time model**,
 **duration-as-world-data**, and the **spatial-engine split** decided in the 2026-06-17 session.
-Registration + ledger (now §§13–14) extended.
+Registration + ledger (now §§17–18) extended.
+
+**Updated 2026-06-17 (cont.):** §7 narrator naming corrected — it is **the narrator**, not "Seren"
+(Seren is a *seeded Actor*). §8 loop expanded to a **four-stage per-event pipeline**
+(gate → **resolve** → apply → interrupt). §9 gains the **perception-vs-expectation continuation
+rule**. New **§§13–16**: canon-write authority (the gate), perception payload (not "bundle"),
+deception-lives-in-the-world, and corrections (off-beat, leaf-only on the provenance spine).
 
 **Validation Ladder:** this chunk carries **Q3**. Stated precisely, the *gateable* claim is:
 > the trust guarantees already proven — deterministic replay (Q1 / I-1) and no perception leakage
@@ -109,8 +115,8 @@ canon). Sharpened here: a relationship is a **belief-perception** whose *subject
 held per-actor, in the existing perception layer.
 
 **Realization (new framing):** the perception system isn't only for the inspector — it is the
-**substrate NPCs think with.** An NPC perceives the world through the same perception bundle the
-Compendium renders and the narrator is fed (ADR-020, no omniscient pass), holds beliefs on top, and
+**substrate NPCs think with.** An NPC perceives the world through the same **perception payload** (§14)
+the Compendium renders and the narrator is fed (ADR-020, no omniscient pass), holds beliefs on top, and
 *acts on them*. Misperception → misaligned behaviour is a **feature** (an NPC can act cold because it
 misread a glance).
 
@@ -144,7 +150,7 @@ mechanical for the thin slice; uncertain-outcome adjudication is deferred (§7).
 The LLM could sit in **three** places — all "propose," all gated (ADR-009 / D-1):
 
 1. **Intent decomposition** — prose → events (input side).
-2. **Narration** — Seren, output side, perception-bound (ADR-020).
+2. **Narration** — the narrator, output side, perception-bound (ADR-020).
 3. **NPC cognition** — perceive → believe → act.
 
 Chunk 5 takes only the **safe** one to build first (narration). Adjudication (deciding *uncertain*
@@ -180,13 +186,25 @@ One **beat** runs:
 1. **Player input** (free text).
 2. **Decompose** *(LLM — proposes)* — prose → an **ordered chain of canon events** (ADR-009/D-1). The
    model proposes; it never commits.
-3. **Execute the chain incrementally** — for each event, in order:
-   - **(a) Pre-apply gate** — impossibility / canon-authority / move-validity against current world
-     state (SPEC-015, SPEC-017). On failure the step does **not** apply and the chain **halts** here.
-   - **(b) Apply + generate** — commit the event to canon, generate the perceptions it produces
-     (witnessing trigger, §4), advance the clock by the event's duration (§10).
-   - **(c) Post-apply interruption** — world pushback (C-7). If it fires, the chain **halts** here,
-     *after* this step's effects are committed.
+3. **Execute the chain incrementally** — for each event, in order, a **four-stage pipeline**:
+   - **(a) Gate** *(can it happen?)* — impossibility / canon-authority / move-validity against current
+     world state (SPEC-015, SPEC-017). On failure the step does **not** apply and the chain **halts** here.
+   - **(b) Resolve** *(what actually happens?)* — the world decides the **real outcome**, which **may
+     differ from the proposed action** (adjudication, **SPEC-013** — deferred; **passthrough / identity
+     in the thin slice**, where outcome = intent). The resolved outcome carries its **visible-vs-hidden
+     split** (perceivability, SPEC-016).
+   - **(c) Apply + generate** — commit the **resolved outcome** (*not* the raw proposal) to canon — the
+     gate is the canonization point (D-1, §13) — generate the perceptions it produces **from canon's
+     *visible* aspect** (witnessing trigger, §4; the visible aspect may differ from the hidden truth →
+     deception, §15), advance the clock by the event's duration (§10).
+   - **(d) Interrupt** *(does the chain continue?)* — world pushback (C-7), per the **continuation rule**
+     (§9). If it fires, the chain **halts** here, *after* this step's effects are committed.
+
+**Four loci where truth and experience diverge** (per event): **gate** (can it) → **resolve** (what
+actually happened — outcome B may ≠ intent A) → **perceive** (what the user sees — appearance may ≠
+hidden truth) → **interrupt** (does the chain continue). In the thin slice **resolve / perceive /
+interrupt are identity / mechanical**; each gets its real engine later (SPEC-013 / SPEC-016 / SPEC-012).
+**Structure-in / behavior-deferred**, mirroring §9.
 4. **Narrate** *(LLM)* — render prose from the **player's perceptions only** (ADR-020, no omniscient
    pass), up to the halt point.
 5. **Return control** — the player acts again, or **Continue** advances the moment (C-6) without
@@ -198,10 +216,11 @@ the moment, never the world (C-6).
 
 **Two halt mechanisms, both first-class (DECIDED — "we do both"):**
 - **Pre-apply impossibility gate** (3a) — *rejects* a step before it applies; nothing is committed.
-- **Post-apply interruption** (3c) — *halts* the chain after a step's effects land; the prefix stands,
+- **Post-apply interruption** (3d) — *halts* the chain after a step's effects land; the prefix stands,
   the remainder never runs.
 
-**Deterministic core vs model.** gate + apply + generate + replay are the **deterministic engine**.
+**Deterministic core vs model.** gate + resolve (where mechanical) + apply + generate + replay are the
+**deterministic engine**.
 The LLM is only **decompose** (2) and **narrate** (4). The trust guarantees — Q1/I-1 replay, Q2/B-1
 no-leak — are properties of the deterministic core; the model sits on either side of it, gated.
 
@@ -234,11 +253,34 @@ exercise the same control flow from day one. And it is cheap: **incremental appl
 for intra-beat ordering (move-then-speak, where each event's perception generation runs against the
 state the prior event left); the halt hook is a small addition on top.
 
-- **Triggers in the thin slice — deterministic / state-based:** impossibility (pre-apply gate);
-  co-presence / a flagged standing condition at a step (post-apply interruption, e.g. arriving where
-  another actor is present). Computed from state; no model needed.
-- **Rich triggers deferred (SPEC-012 / SPEC-013):** an NPC actively reacting, risk escalation. They
-  plug into the *same* halt hook **additively — zero structural change** when they land.
+**The unified interrupt trigger — perception vs. expectation (DECIDED).** The chain advances on
+**perception matching expectation**, *not* canon matching intent. Precisely: it advances from action
+*n* to *n+1* **iff *n*'s perceived outcome still satisfies *n+1*'s premise.** **"Surprise" = the next
+link's premise is broken** by what the player perceives. Forward, link-by-link:
+- resolve B / perceive B (≠ intent A): the user sees the surprise (it breaks the next link) → **STOP**.
+- resolve B / perceive A (hidden divergence): premise holds → **CONTINUE**, deception rides (§15).
+- resolve A / perceive A: normal success → **CONTINUE**.
+
+Outcome-vs-intent is **not independently a stop:** a divergence in *n* matters only if it breaks *n+1*
+(queue *[kill, leave]* — the kill fails but leaving doesn't depend on it → continue; the **last** link
+has no next premise → the beat just ends). This **subsumes** the old co-presence trigger (arriving to
+find someone is one kind of broken premise).
+
+**Hard constraint (Q1 / I-1):** the stop/continue decision is **canon-affecting** (it changes which
+events commit) → it **must be deterministic** — a **state-computable predicate** (next-link precondition
+broken), **never an LLM judgment**, or replay breaks. Scope "surprise" to **plan-relevant**
+(precondition-break), *not any* novel perception (else every described room halts the chain).
+
+**Two doors into the interrupt stage:**
+- **(1) Deterministic precondition-break** — thin slice, **fires now** via *discovery* (move into a
+  room, perceive an actor, the queued action no longer holds). Computed from state; no model needed.
+- **(2) World / NPC reaction injecting a new perceived event** — the guard raises the alarm, the
+  "corpse" grabs you. The **adjudication / NPC path (SPEC-013 / SPEC-012), deferred.** A reaction big
+  enough to matter almost always breaks the next premise anyway. Plugs into the *same* halt hook
+  **additively — zero structural change** when it lands.
+
+**Deceptions self-unravel under door 1:** the fake-death rides "loot the body" until looting makes the
+"corpse" react and breaks the next premise — no scripting needed (§15).
 
 **Gate consequence (a stronger Q3 property): partial-beat correctness.** A chain that halts at step 2
 must leave *exactly* the step-1 perceptions and *zero* step-3 perceptions. This is the core safety
@@ -352,11 +394,108 @@ record-on-first-use all defer. **The model is adopted; the machinery is minimal.
 
 ---
 
-## 13. Registration routing
+## 13. Canon-write authority — the gate writes canon (DECIDED)
+
+**Who writes canon? The gate — and only the gate.** It is the **canonization point** for everything:
+the LLM (decompose), modules, and world-rules all **propose**; the gate **commits** (ADR-009 / D-1).
+The decomposer is only the *source* of candidate player-events; the narrator writes nothing.
+
+**The gate is the one *non*-perception-bound component.** The LLM seats read the player's partial view
+(§14); the gate reads the **objective world**. That asymmetry is the whole point of D-1 — a partial,
+fallible model proposes, and the component holding full objective state decides. So canon stays
+**"more than perception"**:
+- the gate validates proposals against **real** state the decomposer never saw (move-validity SPEC-017,
+  impossibility) — believed-unlocked-but-objectively-locked is rejected, and that mismatch *is* the game;
+- what's committed is an **objective event**, not a perception; perceptions are then *generated from*
+  it (§4), each actor a partial view, the event true even where unwitnessed;
+- **non-player writers** add canon never sourced from the player's view — world / rule events (null
+  cause-agent, §3) now; NPC cognition (SPEC-012) and adjudication (SPEC-013) later.
+
+**The LLM must not invent canon** (SPEC-015): it proposes events within the player's actual intent; the
+gate enforces and commits.
+
+---
+
+## 14. Perception payload — what the two LLM seats consume (NOT "bundle") (DECIDED)
+
+**Both LLM seats are perception-bound.** The **decomposer** reads the player's perception *before*
+resolving (to interpret intent); the **narrator** reads the resolved beat's perceptions *after* (to
+render — ADR-020, no omniscient pass). Both consume a perception-bound payload built by the **same
+safety filter the Compendium uses** (the pgTAP-tested safety wall; B-1 / I-3). **The model never
+touches raw canon** → Q3's no-leak claim for the live loop collapses to: *the model only ever sees
+safety-filtered perception.*
+
+**Terminology (DECIDED — do not call it a "bundle"):** in the register, **"bundle" = the causal /
+validated bundle** (G3, ADR-007/008, Phase 4+). This is a **different object** — call it a
+**perception payload**. *Proof they differ:* Chunk 3 assembles the perception view with **live SQL
+joins**, which **G3 forbids** for causal-bundle inputs ("durable records only, never live projection
+reads") — so they cannot be the same thing.
+
+**Grounded vs reasoned:**
+- *Grounded:* narrator perception-binding (ADR-020); perception-bound surfaces / no leak (B-1, I-3);
+  perception isolated from canon (ADR-005).
+- *Reasoned (confirm against engine **doc 06 — context assembler** + the glossary, not readable from
+  chat):* that the **decomposer** (not only the narrator) is perception-bound is an extension of the
+  B-1/I-3 wall (ADR-020 names only the narrator); reusing the Chunk-3/4 safety filter as the assembler
+  is a design choice that *satisfies* B-1/I-3/ADR-005, not a stated rule.
+
+---
+
+## 15. Deception lives in the world (DECIDED — rationale)
+
+A perception can be **flatly false** relative to canon — and that is the architecture working, not
+failing. This is **B-6** ("contradiction lives in perception, never canon").
+
+**Example (fake-death):** canon = *alive-and-faking* (hidden); perception = *dead* (the visible
+appearance). Realized through the **perceivability flag** (SPEC-016, §3): the event carries a
+**visible** aspect (collapses, lifeless) and a **hidden** one (still alive); perception-generation
+surfaces the visible appearance, the hidden truth stays in canon, unperceived.
+
+**No component lies — the deception is *in the world*.** The gate honestly records both truth and
+appearance; perception honestly surfaces the appearance; the narrator honestly renders what the player
+perceives. The **injector** is the **gate + resolve / outcome layer** (the side holding objective
+truth), **never** the perception-bound LLM seats — which preserves D-1.
+
+**Boundary (B-4):** author **world-perceptions** (the enemy appears dead) — never the **player's inner
+state** ("you're certain you've won"). Keep the lie external to the world.
+
+**Deferred:** the *capability* exists the moment canon ≠ perception (now); the thing that **decides** a
+specific divergence is **adjudication (SPEC-013)** — the textbook adjudicated-attack outcome — possibly
+with **NPC cognition (SPEC-012)**. Thin slice: outcomes mechanical, canon = perception, no divergence yet.
+
+---
+
+## 16. Corrections — off-beat, leaf-only on the provenance spine (DECIDED)
+
+**Corrections are OFF-BEAT** — applied after a beat fully resolves and stores; they do **not** run
+inside the chain and do **not** tick the clock.
+
+**A record is correctable iff it is a LEAF in the provenance spine** — nothing depends on it (no inbound
+provenance dependents on `provenance_edge`). *"Remove the going-to-the-mountain → the fall never
+happens":* the going has a dependent (the fall), so it is **locked**; the fall, if a leaf, is
+**correctable**. The no-dependent rule is **cascade-free by construction** — a stricter implementation
+of **ADR-016** (present-forward only).
+
+**Mechanism:** correction = **append-supersession** (B-5 / ADR-006), fully **replayable** (Q1). The
+window **self-bounds** — a record stays correctable until something links to it; **no timer**
+(cf. ADR-011 / C-11).
+
+**Grounding (provenance ≠ causality):** the gate reads the **provenance graph** (`provenance_edge`;
+universal provenance, I-2) — **separate** from **causality** (validated bundles, ADR-007/008,
+Phase 4+). The correction gate needs only **dependency** (provenance, present today), **not** the
+Phase-4 causal layer.
+
+**OPEN (verify before planning):** the exact `provenance_edge` **edge semantics** — canon-event →
+canon-event direct, or routed via perception / participant records — against the frozen Master DDL
+(grep). The leaf-rule holds regardless of which; only the implementation differs.
+
+---
+
+## 17. Registration routing
 
 **Already law — cite, do not re-file:** B-1, B-2 (incl. inference + propagation + common knowledge),
-B-3, B-4, B-5, B-6, B-7, B-10, C-5, C-6, C-7, C-10, ADR-001, ADR-006, ADR-009 / D-1, ADR-017, ADR-020,
-ADR-021/030, D-7, I-1.
+B-3, B-4, B-5, B-6, B-7, B-10, C-5, C-6, C-7, C-10, ADR-001, ADR-005, ADR-006, ADR-007/008,
+ADR-009 / D-1, ADR-011 / C-11, ADR-016, ADR-017, ADR-020, ADR-021/030, D-7, G3, I-1, I-2, I-3.
 
 **Write now (this doc + ledger):** this design-capture doc; the deferred-item ledger entries below.
 
@@ -373,18 +512,23 @@ not gated by D-9 (precedent: D-3 declares the Image Platform boundary ahead of t
 - **D-12** (spatial is a bounded subsystem — its own engine) — §12; owns geometry only, distance ≠
   reachability.
 - **B-11** (event-driven cognition) — §5: NPC beliefs update only on perception, never on a
-  free-running idle loop; every update carries a trigger and provenance.
+  free-running idle loop; every update carries a trigger and provenance. (Subsumes the earlier
+  "candidate register rule" framing of event-driven NPC cognition — promoted, no longer a candidate.)
 
 Still **awaiting ADRs with running-code evidence at implementation** (D-9), NOT register rules: the
 action-driven clock, the canon event spine, and the duration mechanism — engine-behavior claims all.
 
-**Open (decide in the Chunk-5 brainstorm, topics 2–8):** ~~loop skeleton / turn cycle~~ (now §8);
-exact thin-slice action set; the canon-authority boundary for decomposition; **intra-tick event
-ordering** (ADR-034+ if the engine needs it, §8); the Chunk-5 operator gate definition.
+**Open (decide in the remainder of the Chunk-5 brainstorm):** ~~loop skeleton / turn cycle~~ (now §8,
+four-stage); ~~canon-authority boundary~~ (now §13; SPEC-015 owns the decomposition reliability piece);
+exact thin-slice action set; **intra-tick event ordering** (ADR-034+ if the engine needs it, §8); **the
+gate's own (non-perception) view**; **the Chunk-5 operator gate definition**.
+
+**Verify before planning (grep, no decision yet):** exact `provenance_edge` edge semantics against the
+frozen Master DDL (§16) — canon-event→canon-event direct vs routed via perception/participant.
 
 ---
 
-## 14. Proposed ledger entries (`docs/open-spec-items.md`, SPEC-012+)
+## 18. Proposed ledger entries (`docs/open-spec-items.md`, SPEC-012+)
 
 > Numbers provisional — assign the next free SPEC-### on commit (SPEC-011 was the payload-vs-schema
 > CI test). Format mirrors SPEC-009/010.
