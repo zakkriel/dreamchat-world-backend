@@ -287,7 +287,8 @@ world needs autonomous NPCs (post-Chunk-5).
 ## SPEC-013 — Outcome-resolution / adjudication engine (deferred)
 Resolving *uncertain* actions (persuade, attack, search) requires a ruling (rules+dice or LLM) — the
 path that puts the model in the trust/canon-authority position, distinct from the mechanically-
-resolvable thin-slice primitives. Captured in the Chunk-5 play-loop architecture notes (§6, §7).
+resolvable thin-slice primitives. Captured in the Chunk-5 play-loop architecture notes (§6, §7); it
+fills the §8 turn-loop **resolve** stage (identity/passthrough in the thin slice).
 **Firing trigger:** when the action set extends beyond the mechanically-resolvable primitives.
 
 ## SPEC-014 — Cascading-inference depth bound
@@ -303,7 +304,8 @@ trigger:** when the Chunk-5 Leg-2 LLM bridge is built.
 ## SPEC-016 — Per-attribute perceivability model
 AttributeChanged needs an outwardly-visible vs hidden flag deciding discovery-on-inspection (Jimmy's
 missing arm shows; Sabin's secret PhD doesn't). Captured in the Chunk-5 play-loop architecture notes
-(§3, §4). **Firing trigger:** when AttributeChanged is implemented in Chunk 5.
+(§3, §4); its visible-vs-hidden split realizes the §15 deception-lives-in-the-world path.
+**Firing trigger:** when AttributeChanged is implemented in Chunk 5.
 
 ## SPEC-017 — Move-validity / physical-possibility gate
 The engine checks an action is physically possible against current world state (locked door,
