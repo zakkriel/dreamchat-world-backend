@@ -364,8 +364,19 @@ ADR-021/030, D-7, I-1.
 spine (§3, reconciled against the Master DDL), the perceivability flag on AttributeChanged, the two
 perception-generation triggers if they extend the engine; **action-driven clock advancement + per-event
 duration read from world state (§10–§11), where they touch the World Clock**; the **spatial engine**
-(§12); an **intra-tick ordering field, if needed — new ADR-034+** (§8). Candidate register rule (B/D),
-not engine ADR: "NPC cognition is event-driven, never free-running."
+(§12); an **intra-tick ordering field, if needed — new ADR-034+** (§8).
+
+**Promoted to the register (2026-06-17) — design-intent amendments, NOT engine-behavior claims, so
+not gated by D-9 (precedent: D-3 declares the Image Platform boundary ahead of that build):**
+- **D-11** (record/derive discipline) — §11's general principle: coupled facts derive from a recorded
+  generating structure; only independent facts are recorded directly.
+- **D-12** (spatial is a bounded subsystem — its own engine) — §12; owns geometry only, distance ≠
+  reachability.
+- **B-11** (event-driven cognition) — §5: NPC beliefs update only on perception, never on a
+  free-running idle loop; every update carries a trigger and provenance.
+
+Still **awaiting ADRs with running-code evidence at implementation** (D-9), NOT register rules: the
+action-driven clock, the canon event spine, and the duration mechanism — engine-behavior claims all.
 
 **Open (decide in the Chunk-5 brainstorm, topics 2–8):** ~~loop skeleton / turn cycle~~ (now §8);
 exact thin-slice action set; the canon-authority boundary for decomposition; **intra-tick event
