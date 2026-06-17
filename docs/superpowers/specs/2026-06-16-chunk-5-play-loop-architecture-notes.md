@@ -16,6 +16,12 @@ Registration + ledger (now §§17–18) extended.
 rule**. New **§§13–16**: canon-write authority (the gate), perception payload (not "bundle"),
 deception-lives-in-the-world, and corrections (off-beat, leaf-only on the provenance spine).
 
+**Updated 2026-06-17 (cont. 2):** §9 refined — the interrupt is **one rule (perception breaks
+expectation), two sources** (the world acting is not itself a stop); adds the **world-time turn budget**
+(third pushback face) and the **telegraph + reaction-window** UX principle (held outcome; SPEC-012/013).
+New **§17 — the Chunk-5 operator gate (Q3)**; Registration + ledger now §§18–19. Companion flow diagram:
+`chunk5-play-loop-flow.mermaid` (same directory).
+
 **Validation Ladder:** this chunk carries **Q3**. Stated precisely, the *gateable* claim is:
 > the trust guarantees already proven — deterministic replay (Q1 / I-1) and no perception leakage
 > (Q2 / B-1 / I-3) — survive a **live, mutating, LLM-mediated** loop.
@@ -224,11 +230,11 @@ the moment, never the world (C-6).
 The LLM is only **decompose** (2) and **narrate** (4). The trust guarantees — Q1/I-1 replay, Q2/B-1
 no-leak — are properties of the deterministic core; the model sits on either side of it, gated.
 
-**Narration is presentation, not canon.** Only the committed events (3b) are canon and are replayed;
+**Narration is presentation, not canon.** Only the committed events (3c) are canon and are replayed;
 narration prose is **not** logged for determinism. (It *may* be logged for session fidelity only — a
 separate concern that does not touch replay.) This is why a non-deterministic narrator does not
 threaten Q1: replay reconstructs the world from the event log, not from prose. (ADR-001 canon = events;
-ADR-020 narrator-bound; D-1 only the gate commits.)
+I-6 chatter ≠ canon; ADR-020 narrator-bound; D-1 only the gate commits.)
 
 **Open — intra-tick ordering.** When several events share a tick they need a deterministic tiebreaker.
 **The register has no established ordering field for this.** (An earlier reference to "ADR-034
@@ -271,16 +277,43 @@ events commit) → it **must be deterministic** — a **state-computable predica
 broken), **never an LLM judgment**, or replay breaks. Scope "surprise" to **plan-relevant**
 (precondition-break), *not any* novel perception (else every described room halts the chain).
 
-**Two doors into the interrupt stage:**
-- **(1) Deterministic precondition-break** — thin slice, **fires now** via *discovery* (move into a
-  room, perceive an actor, the queued action no longer holds). Computed from state; no model needed.
-- **(2) World / NPC reaction injecting a new perceived event** — the guard raises the alarm, the
-  "corpse" grabs you. The **adjudication / NPC path (SPEC-013 / SPEC-012), deferred.** A reaction big
-  enough to matter almost always breaks the next premise anyway. Plugs into the *same* halt hook
-  **additively — zero structural change** when it lands.
+**One stop rule, two sources of the triggering perception (REFINED — corrects "two doors").** The chain
+stops on exactly one condition: **a perceived expectation-break.** The *world acting is not itself a
+stop* — the world interacts continuously as the clock advances, and the chain rides **through** every
+world interaction the player either doesn't witness or perceives without surprise (unwitnessed /
+non-disruptive; B-7, B-1). A world interaction halts only when it yields a perception that breaks the
+player's expectation. One rule, fed by **two sources of perception**:
+- **(a) the player's own resolved action** — fires now in the thin slice via *discovery* (move into a
+  room, perceive an actor, the queued action no longer holds); deterministic, no model.
+- **(b) the world's / an NPC's interactions** — events that interleave; most unwitnessed or
+  non-disruptive; only a perceived, expectation-breaking one stops the chain. (SPEC-012 / SPEC-013, deferred.)
 
-**Deceptions self-unravel under door 1:** the fake-death rides "loot the body" until looting makes the
+**Deceptions self-unravel under (a):** the fake-death rides "loot the body" until looting makes the
 "corpse" react and breaks the next premise — no scripting needed (§15).
+
+**World-time turn budget (third pushback face — DECIDED shape).** Bounding a beat is **not** about action
+*count*; it is about **world-time.** Committing actions moves the world (each event advances the clock by
+its duration, §10–11), and a turn can move the world only so far before the world must react —
+*"that's more than your turn"* (C-6: a beat advances the moment, not weeks of world). Mostly **not new
+machinery** — it is source (b): as the chain advances the clock, the moment it crosses a pending
+world/NPC event, that event fires and (if perceived-disruptive) stops the chain. Context-sensitivity is
+therefore **emergent** — a fight is dense with imminent events → short beats; downtime is sparse → long
+beats / time-skips — with **no per-context table, no "combat mode" flag.** The **one new piece** is a
+**generous hard time-cap (backstop)** for the *sparse* case (a 10-week skip through a dead world, where
+nothing interleaves): the world refuses to advance more than ~a turn regardless. Generous, so calm-time
+creativity flows; it bites only at the absurd. In the thin slice (source (b) deferred) the cap is the
+*only* bound. OPEN: the cap's budget; whether long actions *halt-before* or *begin as multi-turn
+commitments* the world moves through (build halt-before first).
+
+**Telegraph + reaction window (UX principle — banked for SPEC-012/013).** A disruptive NPC action should
+interrupt the player at its **telegraph** (perceivable wind-up / declared intent), *not* at its committed
+outcome — *"the enemy moves to smite your friend"* (room to react), not *"the enemy smited your friend"*
+(fait accompli). The action's lifecycle splits: the **wind-up** is committed & perceivable (it fires the
+stop-check — the one rule, keyed on "about to"); the **outcome** is **held — not committed** — until the
+player has had a reaction beat, then resolves *with the reaction in it* (contested resolution). Introduces
+one new concept: a **declared-but-unresolved (held) action.** Replay holds (Q1): telegraph → reaction →
+resolution are committed events in order. Only for perceived + reactable actions; unwitnessed ones just
+commit. B-4: author the *world*-perception, never inner state. Deferred (SPEC-012 / SPEC-013).
 
 **Gate consequence (a stronger Q3 property): partial-beat correctness.** A chain that halts at step 2
 must leave *exactly* the step-1 perceptions and *zero* step-3 perceptions. This is the core safety
@@ -491,11 +524,46 @@ canon-event direct, or routed via perception / participant records — against t
 
 ---
 
-## 17. Registration routing
+## 17. Chunk-5 operator gate (Q3) — DECIDED (shape)
+
+**Ladder claim (Q3):** the trust guarantees survive even though a **non-deterministic LLM is now in the
+loop** — because the model is **quarantined**: it proposes only (D-1), is perception-bound only
+(B-1 / I-3 / ADR-020), and never holds canon-authority. Q1 proved replay with *fixed* events; Q3 proves
+replay + no-leak still hold when the events come from a *live, variable* model.
+
+**The sharpest idea the gate rests on:** *narration may vary run-to-run; canon must replay.* Different
+prose across runs is fine; each session's committed events must replay to that session's exact world, and
+the model must never have seen or surfaced a hidden fact. (Process law: a 🪜 chunk needs an honest
+Validation-Ladder answer — green CI + product "no" = not done.)
+
+**Form** — a scripted scenario (seed world with at least one *hidden* fact the player cannot perceive),
+played end-to-end through the live loop, then four inspectable checks, each producing reviewable evidence
+(verify the artifact, not a green check):
+
+1. **Replay invariance (I-1 / ADR-026).** Replay the session's committed event log; assert the rebuilt
+   world is **domain-equivalent** (ADR-026 — *domain* equivalence, **not** byte-identity; volatile
+   transaction-time fields like `recorded_at` are excluded, SPEC-002). Evidence: an empty *domain* diff.
+   *Q1 surviving the loop.*
+2. **No-leak (B-1 / I-3).** The seeded hidden fact never appears in *any* perception payload the model was
+   handed, nor in any narration. Evidence: payloads + narration, grepped for the hidden fact — absent.
+3. **Partial-beat correctness.** A deliberately-halting chain commits *exactly* its prefix — both halt
+   ways: a gate-reject (open chest → try locked door → sit: chest commits, door rejects, sit never runs)
+   and a stop-check (walk in, discover an actor that breaks the next queued action). Zero trace from the
+   halt onward. Evidence: that beat's event log + perceptions.
+4. **Canon-authority (D-1 / SPEC-015).** Every committed event traces to the gate committing a gated
+   proposal; the model wrote nothing to canon directly. Evidence: authorship / provenance of committed events.
+
+Founder-run, by hand: play it, review the four pieces of evidence, sign off, tag — same shape as the
+Compendium gate (Q2), but the object under inspection is the live loop, not a static page. **Gate red →
+stop** (process law).
+
+---
+
+## 18. Registration routing
 
 **Already law — cite, do not re-file:** B-1, B-2 (incl. inference + propagation + common knowledge),
 B-3, B-4, B-5, B-6, B-7, B-10, C-5, C-6, C-7, C-10, ADR-001, ADR-005, ADR-006, ADR-007/008,
-ADR-009 / D-1, ADR-011 / C-11, ADR-016, ADR-017, ADR-020, ADR-021/030, D-7, G3, I-1, I-2, I-3.
+ADR-009 / D-1, ADR-011 / C-11, ADR-016, ADR-017, ADR-020, ADR-021/030, ADR-026, D-7, G3, I-1, I-2, I-3, I-6.
 
 **Write now (this doc + ledger):** this design-capture doc; the deferred-item ledger entries below.
 
@@ -518,17 +586,18 @@ not gated by D-9 (precedent: D-3 declares the Image Platform boundary ahead of t
 Still **awaiting ADRs with running-code evidence at implementation** (D-9), NOT register rules: the
 action-driven clock, the canon event spine, and the duration mechanism — engine-behavior claims all.
 
-**Open (decide in the remainder of the Chunk-5 brainstorm):** ~~loop skeleton / turn cycle~~ (now §8,
-four-stage); ~~canon-authority boundary~~ (now §13; SPEC-015 owns the decomposition reliability piece);
-exact thin-slice action set; **intra-tick event ordering** (ADR-034+ if the engine needs it, §8); **the
-gate's own (non-perception) view**; **the Chunk-5 operator gate definition**.
+**Open (remaining):** exact thin-slice action set (move + say; possession in or out?); **intra-tick event
+ordering** (ADR-034+ if the engine needs it, §8); the **turn-budget cap value** + **long-action behavior**
+(halt-before vs multi-turn commitment, §9). Resolved this session: ~~loop skeleton~~ (§8); ~~canon-authority
+boundary~~ (§13); ~~the gate's own (non-perception) view~~ (§13/§17 — the gate is the omniscient truth-side
+reader, opposite end of the same filter from the perception payload); ~~the Chunk-5 operator gate~~ (§17).
 
 **Verify before planning (grep, no decision yet):** exact `provenance_edge` edge semantics against the
 frozen Master DDL (§16) — canon-event→canon-event direct vs routed via perception/participant.
 
 ---
 
-## 18. Proposed ledger entries (`docs/open-spec-items.md`, SPEC-012+)
+## 19. Proposed ledger entries (`docs/open-spec-items.md`, SPEC-012+)
 
 > Numbers provisional — assign the next free SPEC-### on commit (SPEC-011 was the payload-vs-schema
 > CI test). Format mirrors SPEC-009/010.

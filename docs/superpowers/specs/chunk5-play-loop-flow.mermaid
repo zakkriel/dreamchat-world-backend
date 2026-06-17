@@ -1,0 +1,44 @@
+flowchart TD
+    Start(["PLAYER · free-text input"])
+
+    subgraph FILTERED["FILTERED SIDE · perception-bound · sees only the player's view"]
+      Decompose["DECOMPOSE · LLM<br/>prose to ordered event chain = intent<br/>proposes, never commits · ADR-009 / D-1"]
+      Narrate["NARRATE · LLM<br/>prose from the player's perceptions only · ADR-020"]
+    end
+
+    World["WORLD / NPC ACTIVITY · the world is alive<br/>scheduled + NPC events fire as the clock advances<br/>most unwitnessed or non-disruptive<br/>SPEC-012 / SPEC-013 · deferred"]
+
+    subgraph TRUTH["TRUTH SIDE · sees objective canon · omniscient by design"]
+      Loop["FOR EACH event in the player's chain · incremental"]
+      Budget{"world-time left this turn?<br/>generous cap · backstop only · C-6<br/>over: world pushes back — not your turn"}
+      Gate["GATE — can it happen?<br/>impossibility / move-validity · SPEC-017"]
+      Resolve["RESOLVE — what actually happens?<br/>may differ from intent · mechanical now; SPEC-013 later"]
+      Apply["APPLY + GENERATE + advance clock<br/>commit RESOLVED outcome — ONLY canon writer · D-1<br/>perceptions from VISIBLE aspect · SPEC-016"]
+      Stop{"STOP-CHECK · ONE rule<br/>does a perception break the user's expectation?<br/>broken: halt · else: next"}
+    end
+
+    Canon[("CANON · objective truth<br/>immutable · append-only · ADR-001 / B-5")]
+    Percept[("PERCEPTION · per-actor belief · B-1")]
+    Filter["SAFETY FILTER<br/>builds perception payload · B-1 / I-3"]
+
+    Start --> Decompose
+    Decompose -->|event chain| Loop
+    Loop --> Budget
+    Budget -->|over budget| Narrate
+    Budget -->|ok| Gate
+    World -->|world event, proposed| Gate
+    Gate -->|impossible| Narrate
+    Gate -->|ok| Resolve --> Apply
+    Apply -->|player chain| Stop
+    Stop -->|premise holds| Loop
+    Stop -->|surprise / chain done| Narrate
+    Narrate --> Done(["RETURN control / CONTINUE · advances the moment, not the world · C-6"])
+
+    Canon -. true state .-> Gate
+    Canon -. true state .-> Resolve
+    Apply -. commits resolved outcome .-> Canon
+    Apply -. generates views .-> Percept
+    Percept -. perceived state .-> Stop
+    Percept --> Filter
+    Filter -. player view .-> Decompose
+    Filter -. player view .-> Narrate
