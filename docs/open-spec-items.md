@@ -276,3 +276,36 @@ direction 2 fails on the mutant, so the check is not vacuously green.
 **Scope:** test/CI only — no change to `core/db`, the SQL functions, the Go handlers, or
 `core/api/schema` (those are correct post-SPEC-010). To extend the NOT-NULL field map, edit
 `NOTNULL_FIELDS` in `ci/schema_contract.py` against the Master DDL (doc 03 §1.3).
+
+## SPEC-012 — NPC cognition engine (deferred subsystem)
+The perceive → appraise → believe → decide → act loop, LLM-run and event-driven, is its own
+subsystem beside the canon and perception engines. NOT in Chunk 5. Captured in the Chunk-5 play-loop
+architecture notes (`docs/superpowers/specs/2026-06-16-chunk-5-play-loop-architecture-notes.md` §5,
+§7). **Firing trigger:** when the play loop + write-side perception generation are proven and the
+world needs autonomous NPCs (post-Chunk-5).
+
+## SPEC-013 — Outcome-resolution / adjudication engine (deferred)
+Resolving *uncertain* actions (persuade, attack, search) requires a ruling (rules+dice or LLM) — the
+path that puts the model in the trust/canon-authority position, distinct from the mechanically-
+resolvable thin-slice primitives. Captured in the Chunk-5 play-loop architecture notes (§6, §7).
+**Firing trigger:** when the action set extends beyond the mechanically-resolvable primitives.
+
+## SPEC-014 — Cascading-inference depth bound
+Inference → act → others perceive → infer can cascade unbounded; bound its depth/fan-out
+(cf. ADR-017 Traversal Matrix). Captured in the Chunk-5 play-loop architecture notes (§5).
+**Firing trigger:** when NPC inference is implemented.
+
+## SPEC-015 — Decomposition reliability + canon-authority boundary
+The prose → events mapping must be correct, and the LLM must not emit events the player did not take
+(inventing canon). Captured in the Chunk-5 play-loop architecture notes (§7, Leg 2). **Firing
+trigger:** when the Chunk-5 Leg-2 LLM bridge is built.
+
+## SPEC-016 — Per-attribute perceivability model
+AttributeChanged needs an outwardly-visible vs hidden flag deciding discovery-on-inspection (Jimmy's
+missing arm shows; Sabin's secret PhD doesn't). Captured in the Chunk-5 play-loop architecture notes
+(§3, §4). **Firing trigger:** when AttributeChanged is implemented in Chunk 5.
+
+## SPEC-017 — Move-validity / physical-possibility gate
+The engine checks an action is physically possible against current world state (locked door,
+collapsed bridge, not co-located with the target) before applying it. Captured in the Chunk-5
+play-loop architecture notes (§6). **Firing trigger:** when ActorMoved / actions land in Chunk 5.
