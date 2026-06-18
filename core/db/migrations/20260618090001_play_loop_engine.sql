@@ -65,6 +65,44 @@ BEGIN
     END LOOP;
   END IF;
 
+  IF ev.event_type = 'move' THEN
+    -- mover + destination, from the move's own location mutation.
+    DECLARE
+      mover uuid;
+      dest  text;
+      other uuid;
+      pid   uuid;
+    BEGIN
+      SELECT entity_id INTO mover FROM event_participant
+        WHERE event_id = p_event_id AND role_qualifier = 'instigator' LIMIT 1;
+      SELECT (new_value #>> '{}') INTO dest FROM state_mutation
+        WHERE event_id = p_event_id AND attribute_path = 'attrs.location_id' LIMIT 1;
+      IF mover IS NOT NULL THEN
+        -- witnessing: the mover perceives their own move ('direct').
+        INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                       acquired_tick, valid_tick)
+        VALUES (ev.world_id, mover, p_event_id, ev.summary, 'direct', ev.in_world_tick, ev.in_world_tick);
+        n := n + 1;
+        -- discovery-on-arrival (§4 trigger 2): the mover perceives each actor ALREADY at dest
+        -- (exclude self). Each carries an explicit subject link → the stop-check reads about-ness.
+        IF dest IS NOT NULL THEN
+          FOR other IN SELECT entity_id FROM fn_actors_at(ev.world_id, dest)
+                        WHERE entity_id <> mover LOOP
+            INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                           acquired_tick, valid_tick)
+            VALUES (ev.world_id, mover, p_event_id,
+                    'On arriving, I noticed someone already here.', 'direct',
+                    ev.in_world_tick, ev.in_world_tick)
+            RETURNING perception_id INTO pid;
+            INSERT INTO perception_subject (perception_id, entity_id, world_id)
+            VALUES (pid, other, ev.world_id);
+            n := n + 1;
+          END LOOP;
+        END IF;
+      END IF;
+    END;
+  END IF;
+
   RETURN n;
 END $$;
 ALTER FUNCTION generate_perceptions(uuid) OWNER TO maintainer;
@@ -73,8 +111,9 @@ GRANT  EXECUTE ON FUNCTION generate_perceptions(uuid) TO maintainer;
 -- generate_perceptions runs as maintainer (SECURITY DEFINER); grant the canon/epistemic-side
 -- reads+writes it performs (mirrors apply_mutation's grants in migration 0006). These are NOT
 -- projection tables, so I-7 (projections written only by the maintainer) is unaffected.
-GRANT SELECT ON event_participant TO maintainer;
-GRANT INSERT ON perception_record TO maintainer;
+GRANT SELECT         ON event_participant  TO maintainer;
+GRANT SELECT, INSERT ON perception_record  TO maintainer;  -- SELECT needed for INSERT ... RETURNING
+GRANT INSERT         ON perception_subject TO maintainer;  -- discovery-on-arrival subject link (move branch)
 
 -- migrate:down
 DROP FUNCTION IF EXISTS generate_perceptions(uuid);
