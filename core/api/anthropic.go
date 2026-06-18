@@ -63,12 +63,20 @@ func (a *anthropicDriver) Generate(ctx context.Context, req GenRequest) (string,
 		if err := json.Unmarshal(req.Schema, &schema); err != nil {
 			return "", fmt.Errorf("anthropic: bad schema: %w", err)
 		}
-		// the leash: one tool whose input_schema = the closed vocabulary, FORCED → tool_use input is
-		// schema-valid by construction.
+		// Anthropic requires an OBJECT-root tool input_schema; the closed-vocabulary chain is an array,
+		// so nest it under "chain" for the wire and unwrap back to the bare array below. The leash is
+		// unchanged (forced tool_use → schema-valid by construction); the shared schema and
+		// DecodeAndValidateChain stay untouched. Provider shaping lives in the driver (D-13).
+		wrapped := map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"chain": schema},
+			"required":             []any{"chain"},
+			"additionalProperties": false,
+		}
 		body["tools"] = []any{map[string]any{
 			"name":         "emit_beat_chain",
 			"description":  "Emit the player's beat as an ordered chain of closed-vocabulary events.",
-			"input_schema": schema,
+			"input_schema": wrapped,
 		}}
 		body["tool_choice"] = map[string]any{"type": "tool", "name": "emit_beat_chain"}
 	}
@@ -77,8 +85,22 @@ func (a *anthropicDriver) Generate(ctx context.Context, req GenRequest) (string,
 	if err != nil {
 		return "", err
 	}
-	if req.Schema != nil {
-		return extractToolInput(resp, "emit_beat_chain")
+if req.Schema != nil {
+		input, err := extractToolInput(resp, "emit_beat_chain")
+		if err != nil {
+			return "", err
+		}
+		// unwrap {"chain":[...]} → the bare array DecodeAndValidateChain expects
+		var env struct {
+			Chain json.RawMessage `json:"chain"`
+		}
+		if err := json.Unmarshal([]byte(input), &env); err != nil {
+			return "", fmt.Errorf("anthropic: unwrap chain: %w", err)
+		}
+		if len(env.Chain) == 0 {
+			return "", fmt.Errorf("anthropic: tool input missing chain")
+		}
+		return string(env.Chain), nil
 	}
 	return extractText(resp), nil
 }

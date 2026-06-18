@@ -4,6 +4,7 @@ import (
 	"context"
 	_ "embed"
 	"encoding/json"
+	"log"
 	"net/http"
 	"regexp"
 
@@ -73,6 +74,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
 		GenRequest{Payload: pre, Prompt: in.Text, Schema: beatChainSchema})
 	if err != nil {
+		log.Printf("decompose error: %v", err)
 		http.Error(w, "decompose failed", http.StatusBadGateway)
 		return
 	}
