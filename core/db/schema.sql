@@ -206,6 +206,20 @@ $$;
 
 
 --
+-- Name: fn_actors_at(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_actors_at(p_world_id uuid, p_location text) RETURNS TABLE(entity_id uuid)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT a.entity_id
+  FROM actor_state a
+  WHERE a.world_id = p_world_id
+    AND a.attrs->>'location_id' = p_location;
+$$;
+
+
+--
 -- Name: fn_artifact_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1127,4 +1141,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260611090001'),
     ('20260614090001'),
     ('20260614090002'),
-    ('20260615090001');
+    ('20260615090001'),
+    ('20260618090001');
