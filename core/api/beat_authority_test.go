@@ -97,7 +97,9 @@ func TestBeat_NoLeak_PrivateE1AbsentFromUninvolvedPayload(t *testing.T) {
 	}
 
 	// the PRIVATE disclosure is forbidden in Jonas's view (provenance, not text)
-	if e1 := countBySource(e1ID); e1 != 0 {
+	// TEMP BITE CHECK (revert me): inverted no-leak expectation — a CORRECT system hides E1 (count 0),
+	// so this deliberately-wrong assertion must turn the job RED to prove the CI check has teeth.
+	if e1 := countBySource(e1ID); e1 == 0 {
 		t.Fatalf("E1 (private disclosure) leaked into Jonas's payload: %d rows (B-1/I-3 breach)", e1)
 	}
 	// the PUBLIC record is correctly present (common knowledge, B-2) — NOT a leak
