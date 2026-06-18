@@ -48,6 +48,10 @@ func main() {
 		NewIndexHandler(pool, debug, "locations", "location").(matcher),
 		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
 		NewTimelineHandler(pool, debug).(matcher),
+		// Chunk-5 play loop (POST /worlds/{w}/beat). Default seats are deterministic fakes; the live
+		// model is wired via a separate build/config path kept OUT of CI (operator gate only). The
+		// endpoint is the only write path; everything it commits goes through apply_beat (D-1).
+		NewBeatHandler(pool, debug, NewFakeDecomposer(map[string]string{}), NewFakeNarrator("")).(matcher),
 	}}
 
 	mux := http.NewServeMux()
