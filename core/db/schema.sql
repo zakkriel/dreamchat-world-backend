@@ -364,6 +364,21 @@ $$;
 
 
 --
+-- Name: fn_move_duration(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_move_duration(p_world_id uuid, p_from text, p_to text) RETURNS bigint
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT CASE
+           WHEN p_from = p_to THEN 0
+           WHEN (p_from,p_to) IN (('tavern','square'),('square','tavern')) THEN 5
+           ELSE 5   -- flat default for the thin-slice fixture map
+         END::bigint;
+$$;
+
+
+--
 -- Name: fn_perceived_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 

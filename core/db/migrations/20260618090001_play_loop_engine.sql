@@ -14,5 +14,20 @@ LANGUAGE sql STABLE AS $$
     AND a.attrs->>'location_id' = p_location;
 $$;
 
+-- ADR-036 substrate: per-event duration as RECORDED, deterministic world data (D-11; §11), assigned
+-- by the engine — NEVER the model (§10 Q1 guardrail). Thin slice = a hand-authored cost table; the
+-- spatial engine (coordinates → derived distance/travel-time) is DEFERRED wholesale (SPEC-018), so
+-- there is no derive here. Unknown pairs fall back to a flat default; same place = 0.
+CREATE FUNCTION fn_move_duration(p_world_id uuid, p_from text, p_to text)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+           WHEN p_from = p_to THEN 0
+           WHEN (p_from,p_to) IN (('tavern','square'),('square','tavern')) THEN 5
+           ELSE 5   -- flat default for the thin-slice fixture map
+         END::bigint;
+$$;
+
 -- migrate:down
+DROP FUNCTION IF EXISTS fn_move_duration(uuid, text, text);
 DROP FUNCTION IF EXISTS fn_actors_at(uuid, text);
