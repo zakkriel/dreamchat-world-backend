@@ -1,6 +1,7 @@
 {
   "schema_version": "beat_chain/1",
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "beat_chain/1",
   "title": "Decomposed beat chain — the closed event vocabulary (ADR-009/D-1, SPEC-015)",
   "type": "array",
   "items": {
