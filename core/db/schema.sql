@@ -489,6 +489,46 @@ END $$;
 
 
 --
+-- Name: generate_perceptions(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.generate_perceptions(p_event_id uuid) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  ev   canon_event;
+  n    integer := 0;
+  spk  uuid;
+  lst  uuid;
+BEGIN
+  SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
+  IF NOT FOUND THEN RETURN 0; END IF;
+
+  IF ev.event_type = 'private_disclosure' THEN
+    -- speaker → 'shared'; each listener → 'told' (B-7). Recipients = the addressed listeners
+    -- (thin slice; co-present overhearers defer with the broader vocabulary, §3).
+    SELECT entity_id INTO spk FROM event_participant
+      WHERE event_id = p_event_id AND role_qualifier = 'speaker' LIMIT 1;
+    IF spk IS NOT NULL THEN
+      INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                     acquired_tick, valid_tick)
+      VALUES (ev.world_id, spk, p_event_id, ev.summary, 'shared', ev.in_world_tick, ev.in_world_tick);
+      n := n + 1;
+    END IF;
+    FOR lst IN SELECT entity_id FROM event_participant
+                 WHERE event_id = p_event_id AND role_qualifier = 'listener' LOOP
+      INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                     acquired_tick, valid_tick)
+      VALUES (ev.world_id, lst, p_event_id, ev.summary, 'told', ev.in_world_tick, ev.in_world_tick);
+      n := n + 1;
+    END LOOP;
+  END IF;
+
+  RETURN n;
+END $$;
+
+
+--
 -- Name: replay_0a(); Type: FUNCTION; Schema: public; Owner: -
 --
 
