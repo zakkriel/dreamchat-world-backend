@@ -8,15 +8,37 @@ import (
 	"testing"
 )
 
+// rogueStructuredDriver REPORTS structured output but emits out-of-vocab. It binds to decompose
+// (capability floor passes) yet proves the handler's DEFENSE-IN-DEPTH belt (DecodeAndValidateChain)
+// still rejects out-of-vocab → 422, even if a bound driver misbehaves.
+type rogueStructuredDriver struct{}
+
+func (rogueStructuredDriver) Name() string                { return "rogue-structured" }
+func (rogueStructuredDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (rogueStructuredDriver) Generate(context.Context, GenRequest) (string, error) {
+	return `[{"type":"attack","to":"x"}]`, nil
+}
+
+func mustBridge(t *testing.T, decompose, narrate Driver) *Bridge {
+	t.Helper()
+	b, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatDecompose.Name: decompose,
+		SeatNarrate.Name:   narrate,
+	}, SeatDecompose, SeatNarrate)
+	if err != nil {
+		t.Fatalf("bridge: %v", err)
+	}
+	return b
+}
+
 // Happy path: position Player + Mara together at a seed-clean label ('hall', off the noise map) so
-// the say-gate passes and the beat commits end-to-end. Writes persist (additive, high ticks, legal
-// origin) — harmless to sibling tests; the gate runs `make reset` before `go test`.
+// the say-gate passes and the beat commits end-to-end through the bridge. Writes persist (additive,
+// high ticks, legal origin) — harmless to sibling tests; the gate runs `make reset` before `go test`.
 func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
 	ctx := context.Background()
 
-	// setup: Player + Mara co-present at 'hall' via accepted move events (trigger maintains state).
 	_, err := pool.Exec(ctx, `
 		INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin) VALUES
 		 ('e5000000-0000-0000-0000-00000000bc01','`+worldID+`','move','P→hall',300,0,'accepted',now(),'public','fast_path'),
@@ -31,11 +53,13 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 		t.Fatalf("setup positions: %v", err)
 	}
 
-	h := NewBeatHandler(pool, true, // debug → honor ?viewer=
-		NewFakeDecomposer(map[string]string{
+	bridge := mustBridge(t,
+		NewFakeStructuredDriver("fake-structured:test", map[string]string{
 			"tell mara about the note": `[{"type":"say","listener":"` + maraID + `","content":"the note"}]`,
 		}),
-		NewFakeNarrator("Scene:"))
+		NewFakeTextDriver("fake-text:test"))
+	h := NewBeatHandler(pool, true, bridge) // debug → honor ?viewer=
+
 	req := httptest.NewRequest(http.MethodPost,
 		"/worlds/"+worldID+"/beat?viewer="+playerID, strings.NewReader(`{"text":"tell mara about the note"}`))
 	rec := httptest.NewRecorder()
@@ -52,23 +76,23 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 	if !strings.Contains(body, `"halt_reason":"completed"`) {
 		t.Fatalf("beat did not commit end-to-end (halt_reason != completed): %s", body)
 	}
-	// B-1: no canon vocabulary crosses the boundary (no raw canon_event row shape).
 	if strings.Contains(body, `"status":"accepted"`) {
-		t.Fatalf("response leaked a raw canon row: %s", body)
+		t.Fatalf("response leaked a raw canon row (B-1): %s", body)
 	}
 }
 
-func TestBeat_OutOfVocabularyRejected(t *testing.T) {
+// Defense-in-depth: a misbehaving structured driver that emits out-of-vocab is rejected by the
+// handler's belt → 422 (the primary leash is the capability floor + constrained decoding; this is
+// the backstop, SPEC-015/D-1).
+func TestBeat_OutOfVocabularyRejectedByBelt(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
-	h := NewBeatHandler(pool, true,
-		NewFakeDecomposer(map[string]string{"attack mara": `[{"type":"attack","target":"` + maraID + `"}]`}),
-		NewFakeNarrator("Scene:"))
+	h := NewBeatHandler(pool, true, mustBridge(t, rogueStructuredDriver{}, NewFakeTextDriver("fake-text:test")))
 	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beat?viewer="+playerID,
-		strings.NewReader(`{"text":"attack mara"}`))
+		strings.NewReader(`{"text":"anything"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 422 {
-		t.Fatalf("status = %d, want 422 (the leash rejects out-of-vocabulary; SPEC-015)", rec.Code)
+		t.Fatalf("status = %d, want 422 (belt rejects out-of-vocab; SPEC-015)", rec.Code)
 	}
 }

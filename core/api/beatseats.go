@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 )
@@ -20,19 +19,10 @@ type BeatStep struct {
 	Content  string `json:"content,omitempty"`  // say
 }
 
-// Decomposer: prose → proposed chain. PROPOSES ONLY (D-1). Perception-bound input (§14).
-type Decomposer interface {
-	Decompose(ctx context.Context, payload PerceptionPayload, text string) string // returns raw JSON
-}
-
-// Narrator: post-beat perception payload → prose. Perception-bound (ADR-020, no omniscient pass).
-// Output is presentation, NOT canon — never written to canon_event (I-6).
-type Narrator interface {
-	Narrate(ctx context.Context, payload PerceptionPayload) string
-}
-
-// DecodeAndValidateChain enforces the leash: valid JSON AND every step's type ∈ the closed set
-// (SPEC-015/D-1). Anything else is rejected — the model cannot widen the vocabulary.
+// DecodeAndValidateChain is the DEFENSE-IN-DEPTH belt behind the generation-time leash: the primary
+// enforcement is structured output at the decompose seat (schema-valid by construction), but the
+// handler still re-validates the decoded chain against the closed vocabulary (SPEC-015/D-1) before it
+// reaches apply_beat. A correctly-bound structured driver never trips this; a rogue/misbound one does.
 func DecodeAndValidateChain(raw string) ([]BeatStep, error) {
 	var chain []BeatStep
 	if err := json.Unmarshal([]byte(raw), &chain); err != nil {
@@ -50,29 +40,4 @@ func DecodeAndValidateChain(raw string) ([]BeatStep, error) {
 		}
 	}
 	return chain, nil
-}
-
-// --- deterministic fakes for CI (the live model is wired only at the operator gate) ---
-
-type fakeDecomposer struct{ table map[string]string }
-
-func NewFakeDecomposer(table map[string]string) Decomposer { return &fakeDecomposer{table} }
-
-func (f *fakeDecomposer) Decompose(_ context.Context, _ PerceptionPayload, text string) string {
-	if out, ok := f.table[text]; ok {
-		return out
-	}
-	return "[]" // unknown prose → empty chain (a beat that commits nothing; C-5)
-}
-
-type fakeNarrator struct{ prefix string }
-
-func NewFakeNarrator(prefix string) Narrator { return &fakeNarrator{prefix} }
-
-func (f *fakeNarrator) Narrate(_ context.Context, p PerceptionPayload) string {
-	out := f.prefix
-	for _, l := range p.Lines {
-		out += " " + l
-	}
-	return out
 }

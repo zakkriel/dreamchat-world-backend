@@ -40,6 +40,16 @@ func main() {
 	defer pool.Close()
 
 	debug := os.Getenv("DREAMCHAT_MODE") == "debug"
+
+	// Chunk-5 play loop: build the per-seat LLM bridge (D-13). Default = Claude via the Anthropic API
+	// (structured tool-use as the decompose leash), swappable behind the interface; DREAMCHAT_BRIDGE=fake
+	// uses deterministic drivers for keyless local dev. Bind fails closed if a seat's driver underpowers
+	// its capability floor. CI never starts this server; tests inject their own bridge.
+	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory, SeatDecompose, SeatNarrate)
+	if err != nil {
+		log.Fatalf("bridge: %v", err)
+	}
+
 	rt := &router{handlers: []matcher{
 		NewPageHandler(pool, debug, "actors", "fn_actor_page").(matcher),
 		NewPageHandler(pool, debug, "locations", "fn_location_page").(matcher),
@@ -48,10 +58,8 @@ func main() {
 		NewIndexHandler(pool, debug, "locations", "location").(matcher),
 		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
 		NewTimelineHandler(pool, debug).(matcher),
-		// Chunk-5 play loop (POST /worlds/{w}/beat). Default seats are deterministic fakes; the live
-		// model is wired via a separate build/config path kept OUT of CI (operator gate only). The
-		// endpoint is the only write path; everything it commits goes through apply_beat (D-1).
-		NewBeatHandler(pool, debug, NewFakeDecomposer(map[string]string{}), NewFakeNarrator("")).(matcher),
+		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_beat (D-1).
+		NewBeatHandler(pool, debug, bridge).(matcher),
 	}}
 
 	mux := http.NewServeMux()
@@ -60,4 +68,25 @@ func main() {
 	addr := ":8080"
 	log.Printf("dreamchat world backend (read-only compendium API) on %s (debug=%v)", addr, debug)
 	log.Fatal(http.ListenAndServe(addr, mux))
+}
+
+// defaultSeatConfig routes each LLM seat (D-13). Production default = Claude via the Anthropic API
+// (the decompose seat's structured tool-use is the leash); the live call needs ANTHROPIC_API_KEY at
+// request time (bind succeeds without it — capability is reported, not key-gated). DREAMCHAT_BRIDGE=fake
+// selects deterministic drivers for keyless local dev. Re-pointing one seat's entry changes only it.
+func defaultSeatConfig() SeatConfig {
+	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
+		return SeatConfig{
+			"decompose": {Provider: "fake-structured", Model: "dev"},
+			"narrate":   {Provider: "fake-text", Model: "dev"},
+		}
+	}
+	model := os.Getenv("DREAMCHAT_MODEL")
+	if model == "" {
+		model = "claude-opus-4-8"
+	}
+	return SeatConfig{
+		"decompose": {Provider: "anthropic", Model: model},
+		"narrate":   {Provider: "anthropic", Model: model},
+	}
 }
