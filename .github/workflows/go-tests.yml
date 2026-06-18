@@ -13,21 +13,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build db image (pinned Postgres 16)
         run: docker compose build db
-      # Mirrors the pgTAP jobs' provisioning + migrate + seed targets. `make reset` =
-      # db-down → db-up → migrate → seed, so the seed lands BEFORE the Go tests (they query E1/E102).
+      # Mirrors the pgTAP jobs' provisioning + migrate + seed targets. "make reset" =
+      # db-down -> db-up -> migrate -> seed, so the seed lands BEFORE the Go tests (they query E1/E102).
       - name: Reset to a clean, migrated, seeded DB (seed before Go tests)
         run: make reset
-      - uses: actions/setup-go@v5
-        with:
-          go-version-file: core/api/go.mod
-          cache-dependency-path: core/api/go.sum
-      - name: go vet
-        working-directory: core/api
-        run: go vet ./...
-      # The DSN points at the CI Postgres exposed by docker compose (host :5432). `-count=1` defeats
-      # the test cache so the safety assertions (no-leak / capability-floor / belt) run every time.
-      - name: go test (safety: no-leak, capability-floor, belt + full suite)
-        working-directory: core/api
-        env:
-          DATABASE_URL: postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable
-        run: go test ./... -count=1
+      # Run Go inside a pinned toolchain container (same docker-first idiom as the schema-contract
+      # target's "docker run python:3.12-slim"). --network host reaches the compose-published Postgres
+      # at localhost:5432; -count=1 defeats the test cache so the safety assertions run every time.
+      - name: "go vet + go test (safety: no-leak, capability-floor, belt + full suite)"
+        run: |
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/core/api \
+            -e DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+            golang:1.26 sh -c 'go vet ./... && go test ./... -count=1'
