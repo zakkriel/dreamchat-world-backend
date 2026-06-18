@@ -1,0 +1,28 @@
+name: go-tests
+on:
+  push: { branches: ["**"] }
+  pull_request:
+jobs:
+  # SEPARATE from the pgTAP jobs: its own Postgres, its own migrated+seeded DB. The bridge/beat
+  # safety tests WRITE and do not roll back, so they must never share state with the pgTAP suite.
+  # Continuously enforces the Q3 trust guarantees: no-leak (B-1/I-3), capability-floor (fail closed),
+  # and the out-of-vocab belt (SPEC-015/D-1). A red Go test blocks merge.
+  go-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build db image (pinned Postgres 16)
+        run: docker compose build db
+      # Mirrors the pgTAP jobs' provisioning + migrate + seed targets. "make reset" =
+      # db-down -> db-up -> migrate -> seed, so the seed lands BEFORE the Go tests (they query E1/E102).
+      - name: Reset to a clean, migrated, seeded DB (seed before Go tests)
+        run: make reset
+      # Run Go inside a pinned toolchain container (same docker-first idiom as the schema-contract
+      # target's "docker run python:3.12-slim"). --network host reaches the compose-published Postgres
+      # at localhost:5432; -count=1 defeats the test cache so the safety assertions run every time.
+      - name: "go vet + go test (safety: no-leak, capability-floor, belt + full suite)"
+        run: |
+          docker run --rm --network host \
+            -v "$PWD:/src" -w /src/core/api \
+            -e DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+            golang:1.26 sh -c 'go vet ./... && go test ./... -count=1'
