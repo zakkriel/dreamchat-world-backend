@@ -329,3 +329,55 @@ Captured in the Chunk-5 play-loop architecture notes (§11, §12).
 generating structure and derive the facts.* **Firing trigger:** when travel must span more than a
 hand-authored handful of places, or emergent geography appears (post thin-slice); the thin slice uses
 hand-set coordinates + a flat default speed and needs none of the deferred machinery.
+
+---
+
+## FE architecture seams (A3, 2026-06-19 — chunk-6 pre-brainstorm)
+SPEC-019…024 are the small, concrete seams owed by the FE rendering + theme architecture
+(D-14 / D-15 / ADR-P019). Most fold into **Chunk 6** (cheap seams + shell); none touches the frozen
+engine canon, an invariant, or the Master DDL. Cross-repo items (FE = `dreamchat-frontend`, plus a
+small BE config) are flagged.
+
+## SPEC-019 — World theme-token field
+World data carries a small **theme-token field**: accent color, mood/treatment, ornament motif —
+plain data read by the FE chrome theme (D-15), never genre labels the system understands (GA-3). It
+evolves as module/world JSONB-style data, so it carries `schema_version` + runtime validation (D-4).
+- **Owner:** Chunk 6 (BE side: expose the field on world data; FE side: read it into the chrome theme).
+- **Expected outcome:** a theme-token shape on world data + the FE reading accent/mood/ornament as
+  tokens (the "tokens are the floor" layer of D-15). No engine/DDL change.
+
+## SPEC-020 — Configurable backend API base (FE)
+The FE must reach the backend through a **single configurable base** (config/env var) at the existing
+request chokepoint — required because FE and BE are separate Railway services (cross-origin). This is
+also the only seam that keeps the Electron door open (SPEC-024).
+- **Owner:** Chunk 6. **Cross-repo:** FE (`dreamchat-frontend`).
+- **Expected outcome:** one config seam through the FE request chokepoint; no hardcoded backend URL.
+
+## SPEC-021 — BE CORS allowing the FE origin
+The backend must send CORS headers permitting the FE origin (FE and BE are separate Railway services).
+Small backend config; pairs with SPEC-020.
+- **Owner:** Chunk 6. **Cross-repo to-do:** small BE config (this repo).
+- **Expected outcome:** CORS configured for the FE origin; no change to handlers or the perception
+  boundary (B-1, I-3).
+
+## SPEC-022 — Dynamic multi-world id
+No hardcoded world constant — **world id is runtime state** (multi-world from the start). Pairs with
+the viewer-identity seam (`?viewer=` today; real session later — B1/auth).
+- **Owner:** Chunk 6. **Cross-repo:** FE (`dreamchat-frontend`).
+- **Expected outcome:** world id flows as runtime state through the FE; no hardcoded world constant.
+
+## SPEC-023 — App shell with named slots (+ Aux docked ↔ full-screen)
+An **app shell of named slots** (left rail, top bar, scene, right Aux, bottom input) — the neutral
+skeleton D-15 names and the slot model modules compose into (D-2). The **Aux slot supports docked ↔
+full-screen** via **one responsive component** (bleed-out), not two implementations.
+- **Owner:** Chunk 6.  **Cross-repo:** FE (`dreamchat-frontend`).
+- **Expected outcome:** named-slot shell + one responsive Aux component covering docked and
+  full-screen; chunk-6 Aux gate = **Current + Known** only (Inspect/Intent land chunk 7).
+
+## SPEC-024 — Electron-wrappable delivery target
+**Delivery target:** web SPA now, **Electron-wrappable** later. The **configurable API base (SPEC-020)
+is the only seam** keeping the desktop door open (near-zero rework). No Electron work now — this entry
+records the constraint that nothing may close that door.
+- **Owner:** standing constraint; revisit if/when a desktop build is wanted. **Cross-repo:** FE.
+- **Firing trigger:** a decision to ship a desktop wrapper. Until then, keep the API-base seam
+  (SPEC-020) the single source of the backend origin so the wrap stays near-zero rework.
