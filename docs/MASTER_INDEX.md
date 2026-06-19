@@ -1,6 +1,8 @@
 # DreamChat Documentation — Master Index
 
-**Date:** 2026-06-10 (rev 8)
+**Date:** 2026-06-10 (rev 9)
+
+**Rev 9:** Chunks 4 and 5 landed. Chunk 4 — read-only Compendium (Location/Artifact/Timeline pages + per-type index) over the chunk-3 two-filter spine, with an existence wall (unperceived entities absent from the index; direct-id 404 byte-indistinguishable from a fabricated id); Carrying overlay and Graph Inspector deferred. Chunk 5 — fast-path play loop, thin slice MOVE+SAY, LLM in the loop via a model-agnostic per-seat bridge (ADR-P018), write-side perception fan-out (`generate_perceptions`), action-driven clock (ADR-036); the model is quarantined (proposes only, perception-bound, canon-authority via `apply_beat` alone). Register: +B-11 (event-driven cognition), +D-11/D-12/D-13. Ledger: +SPEC-010/011 (schema-contract CI) and +SPEC-012…018 (deferred subsystems); SPEC-001 reframed, SPEC-003 owned by chunk 7. ADR-P017 (Go backend) and ADR-035 (`perception_subject`) Accepted.
 
 **Rev 8:** Validation Ladder principle added to the implementation playbook (§0.5): every 2–3 chunks must answer a *product* question with a falsification criterion; a product "no" blocks the ladder even with green CI. Q1–Q5 per product owner (replay / trust / transcript-independence / immersive correction / aliveness); Q6–Q7 added pending confirmation (gameplay without losing itself / user-created worlds believable). Chunk 13 clarified: image platform is external and pre-existing — integration only; V2 addendum becomes a parallel sub-chunk in the platform's repo if not yet implemented.
 

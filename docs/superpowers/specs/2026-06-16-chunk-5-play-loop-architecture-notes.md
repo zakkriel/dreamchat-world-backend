@@ -236,6 +236,11 @@ separate concern that does not touch replay.) This is why a non-deterministic na
 threaten Q1: replay reconstructs the world from the event log, not from prose. (ADR-001 canon = events;
 I-6 chatter ≠ canon; ADR-020 narrator-bound; D-1 only the gate commits.)
 
+> **Errata (2026-06-18):** §8's "intra-tick ordering is open / ADR-034 was recall-drift" is WRONG.
+> ADR-034 exists and is Accepted; `(in_world_tick, beat_seq)` ordering is enforced by
+> `uq_ce_accepted_order` and `replay_0A`. The play loop assigns `beat_seq` and owes no new ordering
+> ADR. The only new engine ADR is ADR-036 (action-driven clock). See chunk-5 plan §0 Finding B.
+
 **Open — intra-tick ordering.** When several events share a tick they need a deterministic tiebreaker.
 **The register has no established ordering field for this.** (An earlier reference to "ADR-034
 (tick, beat_seq)" was recall-drift — it is *not* in the register; do not treat it as law.) If the
