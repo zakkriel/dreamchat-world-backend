@@ -1,6 +1,17 @@
 # DreamChat Documentation — Master Index
 
-**Date:** 2026-06-10 (rev 8)
+**Date:** 2026-06-19 (rev 9)
+
+**Rev 9 — FE architecture landed (docs-only):** the chunk-6 FE Architecture working-session decisions
+(2026-06-19) ratified into the law. Two register rules added — **D-14** (FE rendering model — one
+engine, a catalog of kinds; attaches to D-2 / D-7 / GA-3) and **D-15** (theme architecture — neutral
+skeleton + swappable skins; reinforces GA-3, cites D-3 / D-4 / D-8). One platform ADR — **ADR-P019**
+(FE rendering + theme architecture, A1+A2) with the chunk-6 mockups as evidence. Six FE seams filed in
+`open-spec-items.md` — **SPEC-019** (world theme-token field), **SPEC-020** (configurable backend API
+base), **SPEC-021** (BE CORS for the FE origin), **SPEC-022** (dynamic multi-world id), **SPEC-023**
+(app shell with named slots + Aux docked↔full-screen), **SPEC-024** (Electron-wrappable delivery
+target). Three deferred workstreams added as planned stubs below: B1 identity/auth, B2 world-creation,
+B3 module-architecture. Docs-only; no engine canon, invariant, or Master DDL touched.
 
 **Rev 8:** Validation Ladder principle added to the implementation playbook (§0.5): every 2–3 chunks must answer a *product* question with a falsification criterion; a product "no" blocks the ladder even with green CI. Q1–Q5 per product owner (replay / trust / transcript-independence / immersive correction / aliveness); Q6–Q7 added pending confirmation (gameplay without losing itself / user-created worlds believable). Chunk 13 clarified: image platform is external and pre-existing — integration only; V2 addendum becomes a parallel sub-chunk in the platform's repo if not yet implemented.
 
@@ -94,11 +105,25 @@ The 8-doc architecture set (platform shape, world core, modules, memory/canon, A
 | `ADR-P001_database_strategy_postgres_jsonb.md` | 🗄️ Superseded in part (bannered) | Postgres-first is reaffirmed by engine ADR-003; but its proposed core tables (`entity`, `relationship_edge`, …) conflict with the engine Master DDL (doc 03). **The engine DDL wins.** JSONB-for-module-state guidance remains valid. Needs a rewrite or formal supersession note. |
 | `ADR-P016_private_vs_public_world_governance.md` | ✅ Active | Platform-level; no engine conflict. JSON schemas included alongside. |
 | `ADR-P017_backend_application_language_go.md` | 🟡 Proposed | World backend application/transport tier = Go (Chunk 3 owns the decision). Does not touch frozen engine canon; perception filter stays in SQL (B-1, I-3). |
+| `ADR-P018_llm_bridge_per_seat_model_routing.md` | ✅ Accepted (chunk-5 Leg-2 gate) | Model-agnostic per-seat LLM routing in the bridge layer (`core/api`); governing rule D-13. No provider SDK in the canon engine. |
+| `ADR-P019_fe_rendering_and_theme_architecture.md` | ✅ Accepted (FE working session 2026-06-19) | FE rendering model (one engine, a catalog of kinds) + theme architecture (neutral skeleton + swappable skins). Governing rules D-14 / D-15; chunk-6 mockups as evidence. Does not touch frozen engine canon (D-7, GA-3). |
 
 > ⚠️ **Numbering rule (new):** the engine owns plain `ADR-001` onward inside `canon_engine/02_world_state_adrs.md`. All platform/product ADRs use the `ADR-P###` prefix. The old loose `ADR_001` and governance `ADR-016` collided with engine numbers — resolved by the P-prefix.
 
 ### `image_platform/` — ✅ Active
 Sprite-sheet pipeline architecture, API addendum, DB schema extension (SQL), JSON schema, runbook, implementation prompt, change summary. The Image Platform remains a separate service that never owns world truth (engine + platform docs agree).
+
+## Planned docs (stubs — not yet written)
+
+Deferred workstreams surfaced by the 2026-06-19 FE Architecture working session (chunk-6
+pre-brainstorm, §B). Each is its **own chunk** and is **out of chunk 6**; they are filed here so the
+work is tracked, not lost. Status = **planned / stub** (no doc exists yet).
+
+| Planned doc | Kind | Status | Scope (what it must cover) |
+|---|---|---|---|
+| B1 — Identity / Auth | ADR or PRD | 🅿️ Planned / stub | None exists today; `?viewer=` is a debug override, not auth. Must cover: the account model; the **account→player binding** (how a logged-in account becomes "you" in a world — central, undesigned); **per-user isolation** (multi-world + Railway → user A must never read user B's worlds; security-critical before any real users). Not needed for chunk 6 (seed worlds via `?viewer=`); viewer-identity resolves in one place, so swapping the debug param for a real session later is a one-spot change. Coordinates with B2. |
+| B2 — World creation | PRD / spec | 🅿️ Planned / stub | Acknowledged essential ("without it, no product, only a demo"), unspecified. Two jobs: a thin **creation flow** (name, experience style, theme, enter) + a deep **seeding pipeline** (generate a coherent populated world — cast, places, objects, relationships, initial knowledge — from a prompt; wired to the engine for canon validity and to the Image Platform for art). The seeding pipeline is the iceberg — likely **multiple chunks**. Sequencing: prove a hand-made world plays well (chunks 5–6 on seed worlds) **before** building the world-factory. The account→player binding **coordinates with B1**. |
+| B3 — Module-architecture | render contract / manifest / trust | 🅿️ Planned / stub | Pins the three deferred module pieces: the catalog/fragment **render contract**; the **manifest** (how a module declares its slot + kinds + actions); the **trust model** (declarative-only now; WASM/server sandbox if/when 3rd-party code arrives). Engine + manifest + trust deferred to **S4**. Chunk 6 carries only the already-locked seams (named slots + interactive-component pattern — D-2, D-14, ADR-P019). |
 
 ## Archive (`90_archive/`)
 
