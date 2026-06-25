@@ -381,3 +381,48 @@ records the constraint that nothing may close that door.
 - **Owner:** standing constraint; revisit if/when a desktop build is wanted. **Cross-repo:** FE.
 - **Firing trigger:** a decision to ship a desktop wrapper. Until then, keep the API-base seam
   (SPEC-020) the single source of the backend origin so the wrap stays near-zero rework.
+
+---
+
+## Gate & state model contracts (chunk-5.5 design, 2026-06-25)
+SPEC-025…027 are the three new contracts owed by the **Gate & State Model — v2** design
+(`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`). All three are **DESIGN** — needs
+running-code evidence before they become canon (D-9); each files as a SPEC when built. None touches
+the frozen engine canon, an invariant, or the Master DDL at this stage.
+
+## SPEC-025 — Status-effect catalog
+A predefined catalog (the contract) mapping a status (`tied`, `limping`, `gagged`, `blinded`) to
+`status → { impacts: [action axes], effect: prevent | modify(param, factor) }`. `prevent` hard-gates
+`not-blocked` on that axis; `modify` scales a parameter and feeds `fits-time` (never gates). The
+engine applies it generically — new statuses are new catalog rows, never new gate logic. Feeds
+**`not-blocked` + `fits-time`**.
+- **Source:** Gate & State Model — v2 §5 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
+  when built.
+- **Firing trigger:** when statuses / the status-aware gate land beyond the reachability-only thin
+  slice.
+
+## SPEC-026 — Object-physics (size / weight / capacity)
+Two independent, pure-arithmetic dimensions on every object: **volume** — a `size` 1–10 where each
+tier holds 4× the previous (`size n = 4^(n-1)` base units), with `has-room` ⟺
+`used_volume + 4^(size-1) ≤ volume_budget`; and **weight** — a `weight` per object vs a carrier's /
+container's `max_load`, with `within-load` ⟺ `used_weight + weight ≤ max_load` (a carrier's
+`max_load` is its strength dimension). The two are orthogonal. Feeds **`has-room` + `within-load`**.
+- **Source:** Gate & State Model — v2 §7 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
+  when built.
+- **Firing trigger:** when `ObjectRelocated` / capacity checks land beyond the reachability-only thin
+  slice.
+
+## SPEC-027 — Comprehension / language model
+A `Communicated` event carries a **language**; an actor holds **known languages**; fan-out compares
+the two → **full content** on a match, **content stripped, act-only** on a mismatch (the
+non-comprehending listener perceives that someone spoke, at whom, the tone — not the meaning, B-7).
+Binary understand/not for v1; partial fluency later. The reception/comprehension axis also gates
+meaning-dependent outcomes at resolution (a non-comprehending target can't be talked into anything).
+Feeds **fan-out → full vs act-only**.
+- **Source:** Gate & State Model — v2 §8 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
+  when built.
+- **Firing trigger:** when `Communicated` fan-out / comprehension-gated reception lands beyond the
+  reachability-only thin slice.
