@@ -166,17 +166,22 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 
 	// Build candidate whitelist: present actors + current location.
 	var loc string
-	_ = h.pool.QueryRow(ctx,
+	if err := h.pool.QueryRow(ctx,
 		`SELECT (attrs->>'location_id')::text FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
-		worldID, viewerID).Scan(&loc)
+		worldID, viewerID).Scan(&loc); err != nil {
+		return PerceptionPayload{}, err
+	}
 
 	if loc != "" {
 		// Present actors at the same location.
-		actorRows, _ := h.pool.Query(ctx,
+		actorRows, err := h.pool.Query(ctx,
 			`SELECT er.entity_id, er.canonical_name, er.entity_kind
 			 FROM fn_actors_at($1, $2::uuid) fa
 			 JOIN entity_registry er ON er.entity_id=fa.entity_id AND er.world_id=$1`,
 			worldID, loc)
+		if err != nil {
+			return PerceptionPayload{}, err
+		}
 		if actorRows != nil {
 			for actorRows.Next() {
 				var id, name, kind string
@@ -184,14 +189,20 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 					p.Candidates = append(p.Candidates, Candidate{ID: id, Name: name, Kind: kind})
 				}
 			}
+			if err := actorRows.Err(); err != nil {
+				actorRows.Close()
+				return PerceptionPayload{}, err
+			}
 			actorRows.Close()
 		}
 
 		// Current location entity.
 		var locName string
-		_ = h.pool.QueryRow(ctx,
+		if err := h.pool.QueryRow(ctx,
 			`SELECT canonical_name FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2`,
-			loc, worldID).Scan(&locName)
+			loc, worldID).Scan(&locName); err != nil {
+			return PerceptionPayload{}, err
+		}
 		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location"})
 
 		// Artifacts are deliberately ABSENT from the whitelist: naming reach = the

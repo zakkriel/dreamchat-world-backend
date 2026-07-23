@@ -8,10 +8,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// beatTickCap is the generous hard time-cap backstop (§9; ADR-025 provisional — tune at the gate).
-// NOTE: Also defined in beathandler.go; orchestrator uses this shared constant.
-// Using a local const to avoid redeclaration — see beathandler.go for the canonical value.
-const orchBeatTickCap = 1000
+// beatTickCap is the chain budget backstop: a beat may advance the clock at most this many ticks (parity with the retired apply_beat parameter).
+const beatTickCap = 1000
 
 // Orchestrator runs the five-stage per-attempt loop for a beat.
 // Stage 1: World-first hook (CognitionBatch) — NPC decisions.
@@ -179,7 +177,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 				curTick += dur
 				curSeq = 0
 				// Backstop: turn budget check.
-				if curTick-startTick > orchBeatTickCap {
+				if curTick-startTick > beatTickCap {
 					outcome.HaltReason = "turn_budget"
 					outcome.TicksAdvanced = curTick - startTick
 					return outcome, nil
