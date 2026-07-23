@@ -26,14 +26,14 @@ DECLARE
   halt       text := 'completed';
   ev_id      uuid;
   dur        bigint;
-  here       text;
+  here       uuid;
   listener   uuid;
   next_step  jsonb;
   next_ok    boolean;
 BEGIN
   FOR step IN SELECT * FROM jsonb_array_elements(p_chain) LOOP
     idx := idx + 1;
-    SELECT a.attrs->>'location_id' INTO here FROM actor_state a
+    SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
       WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
 
     -- (3a) GATE — thin-slice move-validity / co-location precondition (SPEC-017).
@@ -44,7 +44,7 @@ BEGIN
       END IF;
       dur := 0;
     ELSIF step->>'type' = 'move' THEN
-      dur := fn_move_duration(p_world_id, COALESCE(here,'?'), step->>'to');
+      dur := fn_move_duration(p_world_id, here, (step->>'to')::uuid);
     ELSE
       halt := 'gate_reject'; EXIT;     -- out-of-vocabulary (closed set; ADR-009/D-1, SPEC-015)
     END IF;
@@ -86,7 +86,7 @@ BEGIN
     -- keeps the two halts DISTINCT (§8): a committed SAY must never pre-empt a later step's own gate.
     next_step := p_chain -> idx;   -- 0-based: element after the current 1-based idx
     IF step->>'type' = 'move' AND next_step IS NOT NULL AND next_step->>'type' = 'say' THEN
-      SELECT a.attrs->>'location_id' INTO here FROM actor_state a
+      SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
         WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
       next_ok := EXISTS (SELECT 1 FROM fn_actors_at(p_world_id, here)
                          WHERE entity_id = (next_step->>'listener')::uuid);
@@ -296,16 +296,16 @@ $$;
 
 
 --
--- Name: fn_actors_at(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_actors_at(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_actors_at(p_world_id uuid, p_location text) RETURNS TABLE(entity_id uuid)
+CREATE FUNCTION public.fn_actors_at(p_world_id uuid, p_location_id uuid) RETURNS TABLE(entity_id uuid)
     LANGUAGE sql STABLE
     AS $$
   SELECT a.entity_id
   FROM actor_state a
   WHERE a.world_id = p_world_id
-    AND a.attrs->>'location_id' = p_location;
+    AND a.attrs->>'location_id' = p_location_id::text;
 $$;
 
 
@@ -454,16 +454,15 @@ $$;
 
 
 --
--- Name: fn_move_duration(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_move_duration(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_move_duration(p_world_id uuid, p_from text, p_to text) RETURNS bigint
+CREATE FUNCTION public.fn_move_duration(p_world_id uuid, p_from uuid, p_to uuid) RETURNS bigint
     LANGUAGE sql IMMUTABLE
     AS $$
   SELECT CASE
            WHEN p_from = p_to THEN 0
-           WHEN (p_from,p_to) IN (('tavern','square'),('square','tavern')) THEN 5
-           ELSE 5   -- flat default for the thin-slice fixture map
+           ELSE 5   -- flat default for the thin-slice fixture map (SPEC-018 spatial engine deferred)
          END::bigint;
 $$;
 
@@ -618,13 +617,13 @@ BEGIN
     -- mover + destination, from the move's own location mutation.
     DECLARE
       mover uuid;
-      dest  text;
+      dest  uuid;
       other uuid;
       pid   uuid;
     BEGIN
       SELECT entity_id INTO mover FROM event_participant
         WHERE event_id = p_event_id AND role_qualifier = 'instigator' LIMIT 1;
-      SELECT (new_value #>> '{}') INTO dest FROM state_mutation
+      SELECT (new_value #>> '{}')::uuid INTO dest FROM state_mutation
         WHERE event_id = p_event_id AND attribute_path = 'attrs.location_id' LIMIT 1;
       IF mover IS NOT NULL THEN
         -- witnessing: the mover perceives their own move ('direct').
@@ -1325,4 +1324,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260614090001'),
     ('20260614090002'),
     ('20260615090001'),
-    ('20260618090001');
+    ('20260618090001'),
+    ('20260723100001');

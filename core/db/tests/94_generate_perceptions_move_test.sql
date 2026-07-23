@@ -1,9 +1,12 @@
 BEGIN;
 SELECT plan(4);
 
--- Pre-position Jonas at 'cellar' (a seed-clean label). Then a MOVE of Player → cellar (with its
--- location mutation applied). 'cellar' has no seed occupant, so discovery at the destination is
--- exactly {Jonas} regardless of the seed's noise positions.
+-- Pre-position Jonas at cellar-uuid (a seed-clean location uuid). Then a MOVE of Player → cellar-uuid
+-- (with its location mutation applied). The cellar uuid has no seed occupant, so discovery at the
+-- destination is exactly {Jonas} regardless of the seed's noise positions.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+VALUES ('e5ffffff-0000-0000-0000-000000000002','11111111-1111-1111-1111-111111111111','location','test-cellar-94');
+
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          status, accepted_at, visibility_scope, origin) VALUES
  ('e5000000-0000-0000-0000-000000000030','11111111-1111-1111-1111-111111111111','move','setup J→cellar',310,0,'accepted',now(),'public','fast_path'),
@@ -12,8 +15,8 @@ INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
  ('e5000000-0000-0000-0000-000000000030','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','instigator'),
  ('e5000000-0000-0000-0000-000000000031','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator');
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value, valid_from_tick, valid_from_seq) VALUES
- ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000030','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','attrs.location_id', to_jsonb('cellar'::text),310,0),
- ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000031','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('cellar'::text),311,0);
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000030','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000002'::text),310,0),
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000031','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000002'::text),311,0);
 
 -- mover 'direct' (witnessed own move) + discovery 'direct' about Jonas already present = 2.
 SELECT is(generate_perceptions('e5000000-0000-0000-0000-000000000031')::int, 2,
