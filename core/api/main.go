@@ -45,7 +45,8 @@ func main() {
 	// (structured tool-use as the decompose leash), swappable behind the interface; DREAMCHAT_BRIDGE=fake
 	// uses deterministic drivers for keyless local dev. Bind fails closed if a seat's driver underpowers
 	// its capability floor. CI never starts this server; tests inject their own bridge.
-	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory, SeatDecompose, SeatNarrate)
+	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory,
+		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatWorldActor)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -58,7 +59,7 @@ func main() {
 		NewIndexHandler(pool, debug, "locations", "location").(matcher),
 		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
 		NewTimelineHandler(pool, debug).(matcher),
-		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_beat (D-1).
+		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_event (D-1).
 		NewBeatHandler(pool, debug, bridge).(matcher),
 	}}
 
@@ -77,8 +78,11 @@ func main() {
 func defaultSeatConfig() SeatConfig {
 	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
 		return SeatConfig{
-			"decompose": {Provider: "fake-structured", Model: "dev"},
-			"narrate":   {Provider: "fake-text", Model: "dev"},
+			"decompose":       {Provider: "fake-structured", Model: "dev"},
+			"narrate":         {Provider: "fake-text", Model: "dev"},
+			"resolve":         {Provider: "fake-structured", Model: "dev"},
+			"cognition_batch": {Provider: "fake-structured", Model: "dev"},
+			"world_actor":     {Provider: "fake-structured", Model: "dev"},
 		}
 	}
 	model := os.Getenv("DREAMCHAT_MODEL")
@@ -86,7 +90,10 @@ func defaultSeatConfig() SeatConfig {
 		model = "claude-opus-4-8"
 	}
 	return SeatConfig{
-		"decompose": {Provider: "anthropic", Model: model},
-		"narrate":   {Provider: "anthropic", Model: model},
+		"decompose":       {Provider: "anthropic", Model: model},
+		"narrate":         {Provider: "anthropic", Model: model},
+		"resolve":         {Provider: "anthropic", Model: model},
+		"cognition_batch": {Provider: "anthropic", Model: model},
+		"world_actor":     {Provider: "anthropic", Model: model},
 	}
 }

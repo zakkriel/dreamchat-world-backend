@@ -9,7 +9,7 @@ import (
 )
 
 // rogueStructuredDriver REPORTS structured output but emits out-of-vocab. It binds to decompose
-// (capability floor passes) yet proves the handler's DEFENSE-IN-DEPTH belt (DecodeAndValidateChain)
+// (capability floor passes) yet proves the handler's DEFENSE-IN-DEPTH belt (DecodeAndValidateChainV2)
 // still rejects out-of-vocab → 422, even if a bound driver misbehaves.
 type rogueStructuredDriver struct{}
 
@@ -22,9 +22,12 @@ func (rogueStructuredDriver) Generate(context.Context, GenRequest) (string, erro
 func mustBridge(t *testing.T, decompose, narrate Driver) *Bridge {
 	t.Helper()
 	b, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatDecompose.Name: decompose,
-		SeatNarrate.Name:   narrate,
-	}, SeatDecompose, SeatNarrate)
+		SeatDecompose.Name:      decompose,
+		SeatNarrate.Name:        narrate,
+		SeatResolve.Name:        NewFakeResolveDriver(),
+		SeatCognitionBatch.Name: NewFakeCognitionDriver(),
+		SeatWorldActor.Name:     NewFakeWorldActorDriver(),
+	}, SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatWorldActor)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
@@ -32,8 +35,8 @@ func mustBridge(t *testing.T, decompose, narrate Driver) *Bridge {
 }
 
 // Happy path: position Player + Mara together at seedTavernID (existing seed entity, no registry row
-// added) so the say-gate passes and the beat commits end-to-end through the bridge. Event IDs are
-// random per run and ticks start at ≥50000 so re-runs never hit canon_event_pkey or
+// added) so the Communicated-gate passes and the beat commits end-to-end through the bridge. Event IDs
+// are random per run and ticks start at ≥50000 so re-runs never hit canon_event_pkey or
 // uq_ce_accepted_order collisions, and SQL-suite tick-range assertions (all ≤1400) are unaffected.
 // After the beat, perception_subject rows are backfilled (mirrors seed_mara_0A) so SQL test 14's
 // every-perception-has-a-subject invariant holds even when this test runs before the SQL suite.
@@ -86,9 +89,10 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 		t.Fatalf("setup positions: %v", err)
 	}
 
+	// v2 format: Communicated (listener_id + content), not legacy "say".
 	bridge := mustBridge(t,
 		NewFakeStructuredDriver("fake-structured:test", map[string]string{
-			"tell mara about the note": `[{"type":"say","listener":"` + maraID + `","content":"the note"}]`,
+			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
 		}),
 		NewFakeTextDriver("fake-text:test"))
 	h := NewBeatHandler(pool, true, bridge) // debug → honor ?viewer=
@@ -105,7 +109,6 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 	if !strings.Contains(body, "narration") {
 		t.Fatalf("response missing narration: %s", body)
 	}
-	// NOTE: Go's json.Marshal COMPACTS json.RawMessage, so postgres's ": " spacing becomes ":".
 	if !strings.Contains(body, `"halt_reason":"completed"`) {
 		t.Fatalf("beat did not commit end-to-end (halt_reason != completed): %s", body)
 	}

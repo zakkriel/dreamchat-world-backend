@@ -8,7 +8,8 @@ import (
 // PerceptionPayload is the ONLY world input either model seat receives (B-1/I-3; §14). It is built
 // upstream from fn_visible_perceptions — there is deliberately no field that can carry raw canon.
 type PerceptionPayload struct {
-	Lines []string `json:"lines"` // perception-bound, epistemically framed lines for the holder
+	Lines      []string    `json:"lines"`                // perception-bound, epistemically framed lines for the holder
+	Candidates []Candidate `json:"candidates,omitempty"` // entity whitelist for v2 decompose (beat_chain/2)
 }
 
 // BeatStep is one element of the closed-vocabulary chain (beat_chain/1).
