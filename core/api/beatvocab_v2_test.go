@@ -12,7 +12,10 @@ func TestVocabularyV2IsTheSixTypesPlusUnresolved(t *testing.T) {
 	}
 	for _, w := range want {
 		if !allowedBeatTypesV2[w] {
-			t.Fatalf("missing type %q", w)
+			t.Fatalf("missing type %q in allowedBeatTypesV2", w)
+		}
+		if !got[w] {
+			t.Fatalf("missing type %q in parsed schema", w)
 		}
 	}
 }
@@ -34,5 +37,10 @@ func TestDecodeV2RejectsOutcomeShapedAndAcceptsAttempts(t *testing.T) {
 	unres := `[{"type":"UNRESOLVED","stated":"give the note to her","reference":"her","candidate_ids":["33333333-3333-3333-3333-333333333333","44444444-4444-4444-4444-444444444444"]}]`
 	if _, err := DecodeAndValidateChainV2(unres); err != nil {
 		t.Fatalf("UNRESOLVED rejected: %v", err)
+	}
+	// ObjectRelocated must reject invalid dest_kind values.
+	invalidDestKind := `[{"type":"ObjectRelocated","stated":"slip her the note","object_id":"22222222-2222-2222-2222-222222222222","dest_kind":"basket","dest_id":"33333333-3333-3333-3333-333333333333"}]`
+	if _, err := DecodeAndValidateChainV2(invalidDestKind); err == nil {
+		t.Fatal("ObjectRelocated with invalid dest_kind 'basket' accepted")
 	}
 }

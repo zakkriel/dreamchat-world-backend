@@ -98,6 +98,11 @@ func validateAttemptFields(i int, a Attempt) error {
 		if a.ObjectID == "" || a.DestKind == "" || a.DestID == "" {
 			return fmt.Errorf("step %d ObjectRelocated requires object_id+dest_kind+dest_id", i)
 		}
+		switch a.DestKind {
+		case "actor", "location", "container":
+		default:
+			return fmt.Errorf("step %d ObjectRelocated dest_kind %q not in actor|location|container", i, a.DestKind)
+		}
 	case "OwnershipAccessChanged", "EntityDestroyed", "AttributeChanged":
 		if a.TargetID == "" {
 			return fmt.Errorf("step %d %s requires target_id", i, a.Type)
