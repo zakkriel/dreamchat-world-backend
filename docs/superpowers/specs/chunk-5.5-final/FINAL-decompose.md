@@ -70,6 +70,18 @@ Nobody added steps. Nobody guessed. The world answered, the player chose.
 
 ---
 
+## RULED since (2026-07-23 grilling — see RULINGS-2026-07-23-grilling-session.md §3–§4)
+
+- **Naming reach = the acting actor's OWN perception/knowledge, one hop.** The candidate whitelist is
+  what the actor perceives or knows; an NPC knowing a thing does not extend the player's reach. Nobody
+  can bind an entity they have no knowledge path to.
+- **Unknown reference as a physical-action TARGET** → cannot resolve; fail or clarify. NO world lookup
+  (a lookup would leak canon and turn naming into a fishing exploit).
+- **Unknown reference as a speech TOPIC** → legal, never blocked (bluffing/prying is play). Not resolved
+  to an id for the speaker; the real entity enters only through the LISTENER's knowledge, truth-side.
+- **Intent is not read here.** Sincere-vs-prying is each listener's own reading, at resolve — a second
+  job would bias the parse.
+
 ## OPEN (to be driven in the point-by-point pass)
 
 1. The output JSON schema, exactly (fields per attempt; how a target vs an instrument is marked).

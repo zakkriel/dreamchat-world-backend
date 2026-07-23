@@ -25,3 +25,24 @@ mirror image of the fantasy-deterministic-engine failure.
 **Plan:** FIRST — create the FINAL-X files for these points (contracts complete; the rest as honest
 scaffolds: locked rulings + explicit OPEN questions). SECOND — point-by-point Q&A, Claude driving the
 questions, to raise each rate. Return to this checkpoint to re-measure.
+
+---
+
+## ADDENDUM — 2026-07-23 (after the grilling session)
+
+The point-by-point pass ran (grill-with-docs, 2026-07-22/23). Mechanisms decided — see
+`RULINGS-2026-07-23-grilling-session.md`:
+
+- **Resolution (was ~35):** explain-first-then-match; gather = involved + one hop; naming reach =
+  actor's own knowledge; bluffing via listener's knowledge; colliding attempts = one combined ruling.
+  Remaining: output schema, repair-loop details, prompt/model shapes.
+- **Cognition (was ~50):** one call per action; exclusive batch/isolate split on about-ness
+  intersection; intent read per-NPC at resolve; world beyond the room = ledger + World Actor on
+  rising world-time pressure with tiered magnitude pools; **the Personality Module** (core+backstory /
+  malleability / per-perceiver magnitude / threshold / accumulation pools). Remaining: attempt-shape
+  output, payload assembly, tuning values.
+- **Commit/perception (was ~70):** memory scoping ruled (subject-triggered retrieval; about-ness
+  hard rule at write). Remaining: fan-out fidelity, narrator payload, hidden-truth surfacing.
+
+Rates are NOT re-scored here — per the standing rule, the rate goes up when a pass ends without a
+correction, not before. Founder re-measures at the next checkpoint after reviewing the rulings file.

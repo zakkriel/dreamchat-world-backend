@@ -25,13 +25,27 @@ here. CONFIDENCE AT CHECKPOINT: ~35% — the call mechanics are the least-design
   corrupted write, not a style choice.
 - **Will is not adjudication:** whether an NPC *chooses* to comply is cognition (SPEC-012); resolve rules
   what reality permits.
+- **Explain first, then match (2026-07-23):** the ruling writes its reasoning FIRST (from the gathered
+  facts); the typed outcome must follow from that reasoning; outcome-contradicts-own-reasoning → repair ×1
+  → bounce. Kills the recorded verdict-vs-reasoning failure. See RULINGS-2026-07-23 §1.
+- **Colliding attempts = ONE combined ruling (2026-07-23):** held wind-up + reaction resolve as a single
+  judgment over all coupled attempts + all involved parties' truth-side state → one set of typed events.
+  No first-mover-by-call-order; the reaction is inside the judgment. Coupling detected mechanically;
+  non-colliding chain steps stay sequential. See RULINGS-2026-07-23 §9.
 
-## OPEN (the point-by-point targets — this is where confidence is lowest)
-1. The call's exact INPUT: which slice of canon, assembled how (gather-by-participation was proposed;
-   the widening rule is unruled).
-2. The OUTPUT schema, exactly (events + tension + visible/hidden split + minted rows — one shape).
-3. **Contested two-actor exchange, step by step** (Jonas grabs Kade mid-move): one ruling resolving both
-   attempts together, or sequential rulings? This decides the schema.
+## RULED since checkpoint (2026-07-23 grilling — see RULINGS-2026-07-23-grilling-session.md)
+1. → **INPUT ruled:** involved entities + state/recent history + ONE hop of direct links; widen only on a
+   real miss shown in play. Candidates/ids come from the graph; naming reach = the acting actor's OWN
+   knowledge (§2–§3). Speech topics unknown to the speaker ride as words; the real entity enters via the
+   LISTENER's knowledge — this also closes most of old #5 (a named/known entity's TRUE state is in the
+   gather, so the ruling can't contradict it).
+3. → **Contested exchange ruled:** one combined ruling (above).
+6. → **Valence mitigation ruled:** explain-first-then-match (above). Model choice + prompt shape remain open.
+
+## OPEN (remaining)
+2. The OUTPUT schema, exactly (events + tension + visible/hidden split + minted rows — one shape;
+   now must also carry the reasoning-first structure).
 4. The repair loop concretely (what errors are attached, what the second pass may change).
-5. The output coherence guard (a ruling contradicting canon that provenance alone doesn't catch).
-6. Model choice / prompt shape / how the recorded valence-over-logic failure is mitigated in practice.
+5. (narrowed) Coherence beyond the gathered slice — cases where nothing in the action links the
+   contradicted fact. The naming/gather rules close the known cases; watch play for residue.
+6. (remaining half) Model choice / prompt shape per seat, re-validated against these mechanisms.

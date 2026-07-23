@@ -15,13 +15,31 @@ the orchestration is locked; the seats themselves are SPEC-012, undesigned.
 - **Tension review rides these seats** on their steps (no dedicated call).
 - **Held outcome / telegraph:** a disruptive act commits its wind-up, the player gets a reaction beat,
   resolution runs with the reaction in it. No fait accompli.
+- **One cognition call PER ACTION (2026-07-23):** not per text, not per NPC. Per action each present NPC
+  sits in exactly ONE seat — the shared batch (public moment only) or an isolated call (her private
+  knowledge rides alone). Split decided by id-intersection over about-ness links (mechanical, no
+  judgment); secrets never enter a shared prompt — the wall holds by construction. Prefix caching makes
+  it affordable (append-only canon is cache-native). See RULINGS-2026-07-23 §5–§6.
+- **Intent is read per-NPC, at resolve (2026-07-23):** there is no single "the intent" — each listener
+  reads the same words her own way. The decomposer never touches it. See RULINGS-2026-07-23 §4.
 
-## OPEN (SPEC-012 — the design work)
-1. Cognition INPUT: what an NPC actually receives (its own perception history only? its personality
-   record? the telegraph?) and how that's assembled.
+## RULED since checkpoint (2026-07-23 grilling — see RULINGS-2026-07-23-grilling-session.md)
+1. → **INPUT ruled (shape):** cached prefix = personality core + backstory events; + recent perceived
+   events; + old records retrieved by subject links (§10); batch seats get the public moment only,
+   isolated seats add the NPC's own private records (§5). Exact payload assembly remains implementation.
+3. → **Personality ruled: the Personality Module** (own module per D-2): authored core grounded in minted
+   backstory events; malleability as a measurement; per-perceiver event magnitude judged by the
+   already-open seat; engine composes magnitude vs malleability threshold to license core changes;
+   sub-threshold experiences accumulate in slow per-trait pools (quiet arcs). See RULINGS §8.
+4. → **Scheduling ruled:** the ROOM runs every step (locked above); the world BEYOND the room = pending-
+   events ledger (known futures, fired on clock-crossing) + World Actor spontaneity on rising pressure
+   accrued on WORLD-TIME, with independent small/medium/large magnitude pools. Intra-tick ordering
+   candidate: the batch's fixed generation order. Presence caps stand (6 acting / 10 known). See RULINGS §7.
+5. → **World Actor ruled:** world-scope context, intrusions may be unrelated to the scene (disruption is a
+   feature, no mood filter), brings non-present NPCs in, same no-bypass pipeline, scene perceives only the
+   perceivable edge. See RULINGS §7b.
+
+## OPEN (remaining)
 2. Cognition OUTPUT: the structured attempt shape; does it pass through decompose or arrive typed?
-3. **The personality model:** where "always respected, evolving" lives — what state, written by what,
-   read by what. (Currently nothing enforces personality consistency. This is the founder goal's core.)
-4. Scheduling: world cascade every step vs when the clock crosses a pending event; intra-tick ordering
-   when several NPCs act; presence caps.
-5. The World Actor itself (non-NPC events: weather, the cart, the patrol) — what decides, on what data.
+   (Same open as FINAL-decompose #3.)
+- Payload assembly details; the batch prompt's exact shape; pool/pressure tuning values (data, from play).

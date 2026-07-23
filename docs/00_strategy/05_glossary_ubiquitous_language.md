@@ -48,7 +48,7 @@ Translation between contexts happens at explicit mapping points (see §4), never
 |---|---|---|
 | `entity` | Supertype: any canonical world object with identity (actors, locations, artifacts are entity types). | Actor / Location / Artifact are entity *types*. UI and PRDs never say "entity". |
 | `projection` | Materialized read model derived from canon events. | What a Compendium page is built *from* (via Perception). |
-| `canonization pipeline / validation gate` | The only writer of canon. | Invisible to users except via the correction window. |
+| `canonization pipeline / validation gate` | The only writer of canon. *(2026-07-23 precision: this names the whole PIPELINE. The gate STAGE inside it reads canon, is structural-only, and writes nothing; the canonization point is COMMIT. See `chunk-5.5-final/` FINAL loop PRD.)* | Invisible to users except via the correction window. |
 | `narrative claim ledger` | Tracked lifecycle of durable assertions in prose. | Invisible to users. |
 
 ## 4. Mapping points (where contexts translate)
