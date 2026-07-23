@@ -144,7 +144,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // payload builds the perception-bound payload from the WALL (fn_visible_perceptions). No raw canon.
-// Also populates Candidates: present actors + current location + world artifacts.
+// Also populates Candidates: present actors + current location.
 func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (PerceptionPayload, error) {
 	rows, err := h.pool.Query(ctx,
 		`SELECT content FROM fn_visible_perceptions($1,$2) ORDER BY acquired_tick`, worldID, viewerID)
@@ -164,7 +164,7 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 		return PerceptionPayload{}, err
 	}
 
-	// Build candidate whitelist: present actors + current location + artifacts at location.
+	// Build candidate whitelist: present actors + current location.
 	var loc string
 	_ = h.pool.QueryRow(ctx,
 		`SELECT (attrs->>'location_id')::text FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
@@ -194,19 +194,11 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 			loc, worldID).Scan(&locName)
 		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location"})
 
-		// Artifacts (no per-location link table — include all artifacts for this world as best effort).
-		artRows, _ := h.pool.Query(ctx,
-			`SELECT entity_id::text, canonical_name FROM entity_registry WHERE world_id=$1 AND entity_kind='artifact'`,
-			worldID)
-		if artRows != nil {
-			for artRows.Next() {
-				var id, name string
-				if err := artRows.Scan(&id, &name); err == nil {
-					p.Candidates = append(p.Candidates, Candidate{ID: id, Name: name, Kind: "artifact"})
-				}
-			}
-			artRows.Close()
-		}
+		// Artifacts are deliberately ABSENT from the whitelist: naming reach = the
+		// actor's own perceived/known set (RULINGS-2026-07-23 §3), and no
+		// perception-subject link machinery exists yet to compute "artifacts this
+		// actor knows". Until Station E lands that lookup, artifacts are not
+		// nameable-by-id — fail closed beats leaking world contents.
 	}
 
 	return p, nil
