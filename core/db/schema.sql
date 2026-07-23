@@ -713,6 +713,20 @@ END $$;
 
 
 --
+-- Name: seed_world_defaults(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
+    LANGUAGE sql
+    AS $$
+  INSERT INTO movement_type (world_id, movement_type_id, base_speed_mps)
+  VALUES (p_world_id, 'walk', 1.4) ON CONFLICT DO NOTHING;
+  INSERT INTO status_modifier (world_id, status_type_id, action_type, movement_type_id, modifier_percent)
+  VALUES (p_world_id, 'encumbered', 'move', 'walk', -100) ON CONFLICT DO NOTHING;
+$$;
+
+
+--
 -- Name: sm_project(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -722,6 +736,21 @@ CREATE FUNCTION public.sm_project() RETURNS trigger
 BEGIN
   IF (SELECT status FROM canon_event WHERE event_id = NEW.event_id) = 'accepted' THEN
     PERFORM apply_mutation(NEW);
+  END IF;
+  RETURN NEW;
+END $$;
+
+
+--
+-- Name: trg_validate_tension(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.trg_validate_tension() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.attrs ? 'tension' AND NOT (NEW.attrs->>'tension' IN ('frantic','tense','normal','calm','none')) THEN
+    RAISE EXCEPTION 'tension % not in enum', NEW.attrs->>'tension';
   END IF;
   RETURN NEW;
 END $$;
@@ -781,6 +810,7 @@ CREATE TABLE public.canon_event (
     template_id text,
     source_refs jsonb,
     superseded_by uuid,
+    CONSTRAINT canon_event_event_type_check CHECK ((event_type = ANY (ARRAY['ActorMoved'::text, 'Communicated'::text, 'ObjectRelocated'::text, 'OwnershipAccessChanged'::text, 'EntityCreated'::text, 'EntityDestroyed'::text, 'AttributeChanged'::text, 'move'::text, 'private_disclosure'::text, 'world_genesis'::text, 'observation'::text, 'publicize'::text]))),
     CONSTRAINT canon_event_origin_check CHECK ((origin = ANY (ARRAY['fast_path'::text, 'template'::text, 'freeform'::text, 'threshold'::text, 'backstage'::text, 'compensation'::text]))),
     CONSTRAINT canon_event_status_check CHECK ((status = ANY (ARRAY['proposed'::text, 'accepted'::text, 'rejected'::text, 'retconned'::text, 'superseded'::text])))
 );
@@ -869,6 +899,18 @@ CREATE TABLE public.location_state (
 
 
 --
+-- Name: movement_type; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.movement_type (
+    world_id uuid NOT NULL,
+    movement_type_id text NOT NULL,
+    base_speed_mps numeric NOT NULL,
+    CONSTRAINT movement_type_base_speed_mps_check CHECK ((base_speed_mps > (0)::numeric))
+);
+
+
+--
 -- Name: perception_subject; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -915,6 +957,21 @@ CREATE TABLE public.relationship_state (
 
 CREATE TABLE public.schema_migrations (
     version character varying(128) NOT NULL
+);
+
+
+--
+-- Name: status_modifier; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.status_modifier (
+    world_id uuid NOT NULL,
+    status_type_id text NOT NULL,
+    action_type text NOT NULL,
+    movement_type_id text NOT NULL,
+    modifier_percent numeric NOT NULL,
+    CONSTRAINT status_modifier_action_type_check CHECK ((action_type = 'move'::text)),
+    CONSTRAINT status_modifier_modifier_percent_check CHECK ((modifier_percent >= ('-100'::integer)::numeric))
 );
 
 
@@ -983,6 +1040,14 @@ ALTER TABLE ONLY public.location_state
 
 
 --
+-- Name: movement_type movement_type_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.movement_type
+    ADD CONSTRAINT movement_type_pkey PRIMARY KEY (world_id, movement_type_id);
+
+
+--
 -- Name: perception_record perception_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1028,6 +1093,14 @@ ALTER TABLE ONLY public.schema_migrations
 
 ALTER TABLE ONLY public.state_mutation
     ADD CONSTRAINT state_mutation_pkey PRIMARY KEY (mutation_id);
+
+
+--
+-- Name: status_modifier status_modifier_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.status_modifier
+    ADD CONSTRAINT status_modifier_pkey PRIMARY KEY (world_id, status_type_id, action_type, movement_type_id);
 
 
 --
@@ -1154,6 +1227,13 @@ CREATE INDEX idx_sm_event ON public.state_mutation USING btree (event_id);
 --
 
 CREATE UNIQUE INDEX uq_ce_accepted_order ON public.canon_event USING btree (world_id, in_world_tick, beat_seq) WHERE (status = 'accepted'::text);
+
+
+--
+-- Name: location_state location_state_tension; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER location_state_tension BEFORE INSERT OR UPDATE ON public.location_state FOR EACH ROW EXECUTE FUNCTION public.trg_validate_tension();
 
 
 --
@@ -1304,6 +1384,14 @@ ALTER TABLE ONLY public.state_mutation
 
 
 --
+-- Name: status_modifier status_modifier_world_id_movement_type_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.status_modifier
+    ADD CONSTRAINT status_modifier_world_id_movement_type_id_fkey FOREIGN KEY (world_id, movement_type_id) REFERENCES public.movement_type(world_id, movement_type_id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -1325,4 +1413,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260614090002'),
     ('20260615090001'),
     ('20260618090001'),
-    ('20260723100001');
+    ('20260723100001'),
+    ('20260723100002');
