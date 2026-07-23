@@ -24,26 +24,35 @@ DECLARE
   start_tick bigint := p_start_tick;
   committed  jsonb := '[]'::jsonb;
   halt       text := 'completed';
-  ev_id      uuid;
   dur        bigint;
   here       uuid;
   listener   uuid;
   next_step  jsonb;
   next_ok    boolean;
+  attempt    jsonb;
+  result     jsonb;
 BEGIN
   FOR step IN SELECT * FROM jsonb_array_elements(p_chain) LOOP
     idx := idx + 1;
     SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
       WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
 
-    -- (3a) GATE — thin-slice move-validity / co-location precondition (SPEC-017).
+    -- Build the attempt shape and compute duration for budget check.
     IF step->>'type' = 'say' THEN
       listener := (step->>'listener')::uuid;
-      IF NOT EXISTS (SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = listener) THEN
-        halt := 'gate_reject'; EXIT;   -- nothing committed for this step (3a)
-      END IF;
+      attempt := jsonb_build_object(
+        'type',        'Communicated',
+        'stated',      COALESCE(step->>'content', 'say'),
+        'listener_id', listener,
+        'content',     step->>'content'
+      );
       dur := 0;
     ELSIF step->>'type' = 'move' THEN
+      attempt := jsonb_build_object(
+        'type',           'ActorMoved',
+        'stated',         'move',
+        'to_location_id', step->>'to'
+      );
       dur := fn_move_duration(p_world_id, here, (step->>'to')::uuid);
     ELSE
       halt := 'gate_reject'; EXIT;     -- out-of-vocabulary (closed set; ADR-009/D-1, SPEC-015)
@@ -54,29 +63,14 @@ BEGIN
       halt := 'turn_budget'; EXIT;
     END IF;
 
-    -- (3b) RESOLVE = identity (SPEC-013 deferred). (3c) APPLY + GENERATE + advance clock.
-    ev_id := gen_random_uuid();
-    INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
-                             status, accepted_at, visibility_scope, origin)
-    VALUES (ev_id, p_world_id,
-            CASE step->>'type' WHEN 'say' THEN 'private_disclosure' ELSE 'move' END,
-            COALESCE(step->>'content', step->>'type'), cur_tick, cur_seq,
-            'accepted', now(),
-            CASE step->>'type' WHEN 'say' THEN 'private' ELSE 'public' END, p_origin);
-    IF step->>'type' = 'say' THEN
-      INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
-        (ev_id, p_actor_id, 'actor', 'speaker'),
-        (ev_id, listener,   'actor', 'listener');
-    ELSE
-      INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
-        VALUES (ev_id, p_actor_id, 'actor', 'instigator');
-      INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
-                                  new_value, valid_from_tick, valid_from_seq)
-        VALUES (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.location_id',
-                to_jsonb(step->>'to'), cur_tick, cur_seq);  -- trigger applies the projection
+    -- Delegate to apply_event with p_legacy_types=true to preserve legacy event_type labels.
+    result := apply_event(p_world_id, p_actor_id, attempt, cur_tick, cur_seq, p_origin, true);
+
+    IF result->>'halt_reason' = 'gate_reject' THEN
+      halt := 'gate_reject'; EXIT;
     END IF;
-    PERFORM generate_perceptions(ev_id);
-    committed := committed || to_jsonb(ev_id);
+
+    committed := committed || to_jsonb(result->>'event_id');
 
     -- advance the clock by THIS committed event's duration (ADR-036).
     IF dur > 0 THEN cur_tick := cur_tick + dur; cur_seq := 0; ELSE cur_seq := cur_seq + 1; END IF;
@@ -96,6 +90,131 @@ BEGIN
 
   RETURN jsonb_build_object('committed', committed, 'halt_reason', halt,
                             'ticks_advanced', cur_tick - start_tick);
+END $$;
+
+
+--
+-- Name: apply_event(uuid, uuid, jsonb, bigint, integer, text, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_event(p_world_id uuid, p_actor_id uuid, p_attempt jsonb, p_tick bigint, p_seq integer, p_origin text, p_legacy_types boolean DEFAULT false) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  ev_type     text;
+  ev_id       uuid;
+  listener    uuid;
+  to_loc      uuid;
+  object_eid  uuid;
+  dest_eid    uuid;
+  target_eid  uuid;
+  here        uuid;
+  vis_scope   text;
+  final_type  text;
+BEGIN
+  ev_type := p_attempt->>'type';
+
+  -- ── STRUCTURAL FLOOR ───────────────────────────────────────────────────────
+  -- Every type: actor must exist in entity_registry with kind='actor'.
+  IF NOT EXISTS (
+    SELECT 1 FROM entity_registry
+    WHERE entity_id = p_actor_id
+      AND world_id  = p_world_id
+      AND entity_kind = 'actor'
+  ) THEN
+    RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+  END IF;
+
+  -- Type-specific floor checks.
+  IF ev_type = 'ActorMoved' THEN
+    to_loc := (p_attempt->>'to_location_id')::uuid;
+    IF NOT EXISTS (
+      SELECT 1 FROM entity_registry
+      WHERE entity_id = to_loc AND world_id = p_world_id
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'Communicated' THEN
+    listener := (p_attempt->>'listener_id')::uuid;
+    SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
+      WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
+    IF NOT EXISTS (
+      SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = listener
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'ObjectRelocated' THEN
+    object_eid := (p_attempt->>'object_id')::uuid;
+    dest_eid   := (p_attempt->>'dest_id')::uuid;
+    IF NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = object_eid AND world_id = p_world_id)
+    OR NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = dest_eid  AND world_id = p_world_id)
+    THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type IN ('OwnershipAccessChanged', 'EntityDestroyed', 'AttributeChanged') THEN
+    target_eid := (p_attempt->>'target_id')::uuid;
+    IF NOT EXISTS (
+      SELECT 1 FROM entity_registry WHERE entity_id = target_eid AND world_id = p_world_id
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'EntityCreated' THEN
+    -- No target check required (adjudicated intent; actor floor above covers the writer).
+    NULL;
+
+  ELSE
+    -- Unknown type: reject.
+    RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+  END IF;
+
+  -- ── COMMIT ─────────────────────────────────────────────────────────────────
+  ev_id := gen_random_uuid();
+
+  -- Determine the final event_type string to write.
+  -- p_legacy_types=true: write old labels so apply_beat's delegation is behavior-identical.
+  IF p_legacy_types THEN
+    final_type := CASE ev_type
+      WHEN 'Communicated' THEN 'private_disclosure'
+      WHEN 'ActorMoved'   THEN 'move'
+      ELSE ev_type
+    END;
+  ELSE
+    final_type := ev_type;
+  END IF;
+
+  -- visibility_scope: private for Communicated (or legacy private_disclosure), public otherwise.
+  vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
+
+  INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                           status, accepted_at, visibility_scope, origin)
+  VALUES (ev_id, p_world_id, final_type, p_attempt->>'stated',
+          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
+
+  -- event_participant: Communicated → speaker + listener; all others → instigator.
+  IF ev_type = 'Communicated' THEN
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+      (ev_id, p_actor_id, 'actor', 'speaker'),
+      (ev_id, listener,   'actor', 'listener');
+  ELSE
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+      VALUES (ev_id, p_actor_id, 'actor', 'instigator');
+  END IF;
+
+  -- state_mutation: ActorMoved only — trigger projects it into actor_state.
+  IF ev_type = 'ActorMoved' THEN
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.location_id',
+            to_jsonb(to_loc::text), p_tick, p_seq);
+  END IF;
+
+  PERFORM generate_perceptions(ev_id);
+
+  RETURN jsonb_build_object('event_id', ev_id, 'halt_reason', 'committed');
 END $$;
 
 
@@ -622,7 +741,7 @@ BEGIN
   SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
   IF NOT FOUND THEN RETURN 0; END IF;
 
-  IF ev.event_type = 'private_disclosure' THEN
+  IF ev.event_type IN ('private_disclosure', 'Communicated') THEN
     -- speaker → 'shared'; each listener → 'told' (B-7). Recipients = the addressed listeners
     -- (thin slice; co-present overhearers defer with the broader vocabulary, §3).
     SELECT entity_id INTO spk FROM event_participant
@@ -642,7 +761,7 @@ BEGIN
     END LOOP;
   END IF;
 
-  IF ev.event_type = 'move' THEN
+  IF ev.event_type IN ('move', 'ActorMoved') THEN
     -- mover + destination, from the move's own location mutation.
     DECLARE
       mover uuid;
@@ -1543,4 +1662,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260618090001'),
     ('20260723100001'),
     ('20260723100002'),
-    ('20260723100003');
+    ('20260723100003'),
+    ('20260723100004');
