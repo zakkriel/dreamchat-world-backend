@@ -412,6 +412,35 @@ $$;
 
 
 --
+-- Name: pending_event; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.pending_event (
+    pending_id uuid NOT NULL,
+    world_id uuid NOT NULL,
+    fire_at_tick bigint NOT NULL,
+    magnitude text NOT NULL,
+    payload jsonb NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    CONSTRAINT pending_event_magnitude_check CHECK ((magnitude = ANY (ARRAY['small'::text, 'medium'::text, 'large'::text]))),
+    CONSTRAINT pending_event_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'fired'::text, 'cancelled'::text])))
+);
+
+
+--
+-- Name: fn_due_pending(uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_due_pending(p_world_id uuid, p_tick bigint) RETURNS SETOF public.pending_event
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT * FROM pending_event
+  WHERE world_id = p_world_id AND status = 'pending' AND fire_at_tick <= p_tick
+  ORDER BY fire_at_tick;
+$$;
+
+
+--
 -- Name: fn_entity_visible(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -922,6 +951,19 @@ CREATE TABLE public.perception_subject (
 
 
 --
+-- Name: personality_core; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.personality_core (
+    world_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    traits jsonb NOT NULL,
+    malleability numeric NOT NULL,
+    CONSTRAINT personality_core_malleability_check CHECK (((malleability > (0)::numeric) AND (malleability <= (1)::numeric)))
+);
+
+
+--
 -- Name: provenance_edge; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -972,6 +1014,44 @@ CREATE TABLE public.status_modifier (
     modifier_percent numeric NOT NULL,
     CONSTRAINT status_modifier_action_type_check CHECK ((action_type = 'move'::text)),
     CONSTRAINT status_modifier_modifier_percent_check CHECK ((modifier_percent >= ('-100'::integer)::numeric))
+);
+
+
+--
+-- Name: trait_pool; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trait_pool (
+    world_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    trait_key text NOT NULL,
+    accrued numeric DEFAULT 0 NOT NULL,
+    threshold numeric NOT NULL
+);
+
+
+--
+-- Name: trait_provenance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.trait_provenance (
+    world_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    trait_key text NOT NULL,
+    event_id uuid NOT NULL
+);
+
+
+--
+-- Name: world_pressure; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world_pressure (
+    world_id uuid NOT NULL,
+    tier text NOT NULL,
+    accrued numeric DEFAULT 0 NOT NULL,
+    last_fired_tick bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT world_pressure_tier_check CHECK ((tier = ANY (ARRAY['small'::text, 'medium'::text, 'large'::text])))
 );
 
 
@@ -1048,6 +1128,14 @@ ALTER TABLE ONLY public.movement_type
 
 
 --
+-- Name: pending_event pending_event_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.pending_event
+    ADD CONSTRAINT pending_event_pkey PRIMARY KEY (pending_id);
+
+
+--
 -- Name: perception_record perception_record_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1061,6 +1149,14 @@ ALTER TABLE ONLY public.perception_record
 
 ALTER TABLE ONLY public.perception_subject
     ADD CONSTRAINT perception_subject_pkey PRIMARY KEY (perception_id, entity_id);
+
+
+--
+-- Name: personality_core personality_core_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.personality_core
+    ADD CONSTRAINT personality_core_pkey PRIMARY KEY (actor_id);
 
 
 --
@@ -1101,6 +1197,30 @@ ALTER TABLE ONLY public.state_mutation
 
 ALTER TABLE ONLY public.status_modifier
     ADD CONSTRAINT status_modifier_pkey PRIMARY KEY (world_id, status_type_id, action_type, movement_type_id);
+
+
+--
+-- Name: trait_pool trait_pool_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trait_pool
+    ADD CONSTRAINT trait_pool_pkey PRIMARY KEY (actor_id, trait_key);
+
+
+--
+-- Name: trait_provenance trait_provenance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trait_provenance
+    ADD CONSTRAINT trait_provenance_pkey PRIMARY KEY (actor_id, trait_key, event_id);
+
+
+--
+-- Name: world_pressure world_pressure_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_pressure
+    ADD CONSTRAINT world_pressure_pkey PRIMARY KEY (world_id, tier);
 
 
 --
@@ -1392,6 +1512,14 @@ ALTER TABLE ONLY public.status_modifier
 
 
 --
+-- Name: trait_provenance trait_provenance_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.trait_provenance
+    ADD CONSTRAINT trait_provenance_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.canon_event(event_id);
+
+
+--
 -- PostgreSQL database dump complete
 --
 
@@ -1414,4 +1542,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260615090001'),
     ('20260618090001'),
     ('20260723100001'),
-    ('20260723100002');
+    ('20260723100002'),
+    ('20260723100003');
