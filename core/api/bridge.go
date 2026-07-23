@@ -72,7 +72,14 @@ var (
 	SeatDecompose = Seat{Name: "decompose", Requires: []Capability{CapStructuredOutput}}
 	// narrate: perception-bound free text (ADR-020); cheap high-volume; no schema, no requirement.
 	SeatNarrate = Seat{Name: "narrate", Requires: nil}
-	// SeatResolve (SPEC-013, deferred) drops in here as a new entry — no redesign of the bridge.
+	// resolve: attempt outcome ruling (SPEC-013); REQUIRES structured output for schema-valid ruling.
+	SeatResolve = Seat{Name: "resolve", Requires: []Capability{CapStructuredOutput}}
+	// cognition_batch: NPC decision batch (SPEC-?); REQUIRES structured output.
+	SeatCognitionBatch = Seat{Name: "cognition_batch", Requires: []Capability{CapStructuredOutput}}
+	// cognition_isolated: isolated NPC decision (SPEC-?); REQUIRES structured output.
+	SeatCognitionIsolated = Seat{Name: "cognition_isolated", Requires: []Capability{CapStructuredOutput}}
+	// world_actor: world transformation (SPEC-?); REQUIRES structured output.
+	SeatWorldActor = Seat{Name: "world_actor", Requires: []Capability{CapStructuredOutput}}
 )
 
 // BindSeat validates the driver's REPORTED capabilities satisfy the seat floor; fail CLOSED.
