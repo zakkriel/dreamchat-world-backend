@@ -16,7 +16,7 @@
             "stated": {"type": "string", "minLength": 1},
             "to_location_id": {"type": "string", "format": "uuid"},
             "listener_id": {"type": "string", "format": "uuid"},
-            "content": {"type": "string"},
+            "content": {"type": "string", "minLength": 1},
             "object_id": {"type": "string", "format": "uuid"},
             "dest_kind": {"enum": ["actor", "location", "container"]},
             "dest_id": {"type": "string", "format": "uuid"},

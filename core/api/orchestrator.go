@@ -92,6 +92,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 								if evID, ok := result["event_id"].(string); ok && evID != "" {
 									outcome.Committed = append(outcome.Committed, evID)
 								}
+								curSeq++ // Fix 1: advance seq after each NPC commit to avoid (tick,seq) collision with player events.
 							}
 						case "telegraph":
 							outcome.Telegraphs = append(outcome.Telegraphs, dec.Reaction.Attempt.Stated)
@@ -187,6 +188,20 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			}
 
 		default:
+			// FROZEN-FOUNDATION LIMITATIONS (Station D must resolve this seam deliberately):
+			// 1. Ruled events can only carry target_id-shaped types (AttributeChanged,
+			//    OwnershipAccessChanged, EntityDestroyed) — RuledEvent lacks the
+			//    type-specific fields (to_location_id, listener_id/content, object/dest).
+			//    Anything else halts as ruled_event_rejected (fail-loud, see below).
+			// 2. Ruling.Outcome.AttributeWrites is decoded but NOT applied — no
+			//    attribute-write path exists yet (measurements land in Station D via a
+			//    dedicated apply_ruled_event or equivalent).
+			// 3. RuledEvent.Visible / HiddenSummary are decoded but NOT applied —
+			//    apply_event derives visibility_scope from the event type. The
+			//    visible/hidden split lands with the perception work (Station E).
+			// TODO(Station D): replace the re-pack with a rich apply_ruled_event that
+			// consumes the full RuledEvent + AttributeWrites + visibility.
+
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated, EntityDestroyed.
 			// Gather truth slice for the resolve driver.
 			participantIDs := o.collectParticipantIDs(attempt)
@@ -232,6 +247,18 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 
 			// Commit each ruled event via apply_event.
 			for _, evt := range ruling.Outcome.Events {
+				// Fix 3: fail-loud for unsupported ruled event types (FROZEN-FOUNDATION, see comment above).
+				supportedRuledTypes := map[string]bool{
+					"AttributeChanged":       true,
+					"OwnershipAccessChanged": true,
+					"EntityDestroyed":        true,
+				}
+				if !supportedRuledTypes[evt.Type] {
+					outcome.HaltReason = "ruled_event_rejected"
+					outcome.TicksAdvanced = curTick - startTick
+					return outcome, nil
+				}
+
 				ruledAttempt := Attempt{
 					Type:   evt.Type,
 					Stated: evt.Summary,
@@ -243,6 +270,12 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 				result, applyErr := o.applyEvent(ctx, worldID, actorID, ruledJSON, curTick, curSeq)
 				if applyErr != nil {
 					return outcome, fmt.Errorf("apply_event ruled: %w", applyErr)
+				}
+				// Fix 2: check gate_reject before committed — silently swallowed before this fix.
+				if result["halt_reason"] == "gate_reject" {
+					outcome.HaltReason = "ruled_event_rejected"
+					outcome.TicksAdvanced = curTick - startTick
+					return outcome, nil
 				}
 				if result["halt_reason"] == "committed" {
 					if evID, ok := result["event_id"].(string); ok && evID != "" {
