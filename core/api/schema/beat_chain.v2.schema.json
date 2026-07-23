@@ -1,0 +1,18 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "beat_chain/2 — chain of ATTEMPTS (never outcomes), ids from the candidate whitelist",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "oneOf": [
+      {"properties": {"type": {"const": "ActorMoved"}, "stated": {"type": "string", "minLength": 1}, "to_location_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "to_location_id"], "additionalProperties": false},
+      {"properties": {"type": {"const": "Communicated"}, "stated": {"type": "string", "minLength": 1}, "listener_id": {"type": "string", "format": "uuid"}, "content": {"type": "string", "minLength": 1}}, "required": ["type", "stated", "listener_id", "content"], "additionalProperties": false},
+      {"properties": {"type": {"const": "ObjectRelocated"}, "stated": {"type": "string", "minLength": 1}, "object_id": {"type": "string", "format": "uuid"}, "dest_kind": {"enum": ["actor", "location", "container"]}, "dest_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "object_id", "dest_kind", "dest_id"], "additionalProperties": false},
+      {"properties": {"type": {"const": "OwnershipAccessChanged"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}, "grantee_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
+      {"properties": {"type": {"const": "EntityCreated"}, "stated": {"type": "string", "minLength": 1}, "component_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}}}, "required": ["type", "stated"], "additionalProperties": false},
+      {"properties": {"type": {"const": "EntityDestroyed"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
+      {"properties": {"type": {"const": "AttributeChanged"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
+      {"properties": {"type": {"const": "UNRESOLVED"}, "stated": {"type": "string", "minLength": 1}, "reference": {"type": "string", "minLength": 1}, "candidate_ids": {"type": "array", "minItems": 2, "items": {"type": "string", "format": "uuid"}}}, "required": ["type", "stated", "reference", "candidate_ids"], "additionalProperties": false}
+    ]
+  }
+}
