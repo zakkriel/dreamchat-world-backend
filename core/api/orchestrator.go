@@ -15,7 +15,7 @@ const beatTickCap = 1000
 
 // Orchestrator runs the five-stage per-attempt loop for a beat.
 // Stage 1: World-first hook (CognitionBatch) — NPC decisions.
-// Stage 2: Premise re-check (deterministic) — co-location for Communicated/ObjectRelocated.
+// Stage 2: Premise re-check (deterministic, generalized) — premiseHolds over all six types.
 // Stage 3: Route — passthrough (apply_event) or adjudicate (Resolve driver).
 // Stage 4: Advance clock — ActorMoved adds fn_move_duration ticks; others add seq.
 // Stage 5: UNRESOLVED sentinel — halt immediately with candidate list.
@@ -91,49 +91,32 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			return outcome, nil
 		}
 
-		// ── Stage 2: Premise re-check (deterministic) ────────────────────────────
-		// Read actor location (may have changed from NPC commits above).
-		loc, err := o.actorLocation(ctx, worldID, actorID)
-		if err != nil {
-			return outcome, fmt.Errorf("actor location stage2: %w", err)
+		// ── Beat-end on telegraph (RULINGS-2026-07-24 §1, §3) ────────────────────
+		// A world-first seat telegraphed a disruptive act this action: its wind-up committed as
+		// canon and a held_outcome row was written (possibly several — simultaneous telegraphs all
+		// commit + hold). The beat ENDS here. The player's triggering attempt never resolves — the
+		// world seized the moment before it landed — and every un-run chain step is DISCARDED. The
+		// narration (post-beat perceptions) delivers the moment; the player's next input meets the
+		// held act(s) as a reaction (Task 6).
+		if wf.HeldWritten {
+			outcome.HaltReason = "telegraph"
+			outcome.TicksAdvanced = curTick - startTick
+			return outcome, nil
 		}
 
-		if attempt.Type == "Communicated" {
-			// Listener must be co-located with actor.
-			presentNow, premErr := o.fnActorsAt(ctx, worldID, loc)
-			if premErr != nil {
-				return outcome, fmt.Errorf("fn_actors_at premise: %w", premErr)
-			}
-			found := false
-			for _, id := range presentNow {
-				if id == attempt.ListenerID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				outcome.HaltReason = "premise_broken"
-				outcome.TicksAdvanced = curTick - startTick
-				return outcome, nil
-			}
-		} else if attempt.Type == "ObjectRelocated" && attempt.DestKind == "actor" {
-			// Destination actor must be co-located.
-			presentNow, premErr := o.fnActorsAt(ctx, worldID, loc)
-			if premErr != nil {
-				return outcome, fmt.Errorf("fn_actors_at premise (ObjectRelocated): %w", premErr)
-			}
-			found := false
-			for _, id := range presentNow {
-				if id == attempt.DestID {
-					found = true
-					break
-				}
-			}
-			if !found {
-				outcome.HaltReason = "premise_broken"
-				outcome.TicksAdvanced = curTick - startTick
-				return outcome, nil
-			}
+		// ── Stage 2: Premise re-check (deterministic, generalized — all six types) ──
+		// After the world-first NPC commits, the player's next step may no longer stand: its
+		// listener walked off, its target was destroyed, its destination vanished. premiseHolds
+		// runs floor-shaped reads over whichever type this is; a false return stops the chain
+		// (prefix stands) with premise_broken.
+		holds, premErr := o.premiseHolds(ctx, worldID, actorID, attempt)
+		if premErr != nil {
+			return outcome, fmt.Errorf("premise re-check stage2: %w", premErr)
+		}
+		if !holds {
+			outcome.HaltReason = "premise_broken"
+			outcome.TicksAdvanced = curTick - startTick
+			return outcome, nil
 		}
 
 		// ── Stage 3: Route ────────────────────────────────────────────────────────
@@ -141,7 +124,10 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		case "ActorMoved", "Communicated", "ObjectRelocated":
 			// Passthrough: commit directly via apply_event (gate enforces structural floor).
 			// Capture "from" location before commit (for move duration calculation).
-			fromLoc := loc
+			fromLoc, err := o.actorLocation(ctx, worldID, actorID)
+			if err != nil {
+				return outcome, fmt.Errorf("actor location (pre-move): %w", err)
+			}
 
 			attemptJSONBytes, _ := json.Marshal(attempt)
 			result, err := o.applyEvent(ctx, worldID, actorID, attemptJSONBytes, curTick, curSeq)
@@ -386,12 +372,167 @@ func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, de
 				localSeq += ar.SeqAdvance
 			}
 		case "telegraph":
-			// Task 5 replaces this stub with a held-outcome write + beat-end. For now, surface the
-			// wind-up's stated string the same way the old stage 1 did, so nothing downstream shifts.
+			// A disruptive act: commit the wind-up as perceivable canon and write the paired
+			// held_outcome row (one tx — wind-up + hold land together or not at all). RunBeat ends
+			// the beat once worldFirst returns with HeldWritten set (RULINGS-2026-07-24 §1, §3).
+			evID, err := o.commitTelegraph(ctx, worldID, dec.ActorID, dec.Reaction.Attempt, tick, localSeq)
+			if err != nil {
+				return localSeq - startSeq, fmt.Errorf("commit telegraph: %w", err)
+			}
+			res.Committed = append(res.Committed, evID)
 			res.TelegraphedStated = append(res.TelegraphedStated, dec.Reaction.Attempt.Stated)
+			res.HeldWritten = true
+			// The wind-up consumed a (tick,seq) slot; advance so simultaneous telegraphs
+			// (multiple seats — §3) each commit at a distinct seq.
+			localSeq++
 		}
 	}
 	return localSeq - startSeq, nil
+}
+
+// commitTelegraph commits a disruptive NPC's wind-up as perceivable canon and writes the paired
+// held_outcome row in ONE pgx tx (RULINGS-2026-07-24 §1, §3). The wind-up is ALWAYS an
+// AttributeChanged on the acting NPC (self-targeted, target_id=actor_id) via apply_ruled_event with
+// p_origin='telegraph': the six-type spine carries no dedicated "wind-up" type, and self-targeting
+// yields the perception fan-out + perception_subject rows for free (Station D's machinery — the
+// function derives participant_ids from actor_id for AttributeChanged, so no separate
+// participant_ids field is passed). The NPC's FULL typed act (her real intended move/grab/…, not
+// this stand-in AttributeChanged) is preserved verbatim in held_outcome.attempt so the reaction
+// beat can resolve it on the player's next input. Both writes commit together or roll back together.
+func (o *Orchestrator) commitTelegraph(ctx context.Context, worldID, npcID string, attempt Attempt, tick int64, seq int) (string, error) {
+	tx, err := o.DB.Begin(ctx)
+	if err != nil {
+		return "", fmt.Errorf("begin telegraph tx: %w", err)
+	}
+	// Roll back on any early return; a successful Commit below flips committed so this is a no-op.
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+
+	visible := true
+	windUp := RuledEventV2{
+		Type:     "AttributeChanged",
+		ActorID:  npcID,
+		TargetID: npcID, // self-targeted; participant_ids derive from actor_id in apply_ruled_event
+		Truth:    attempt.Stated,
+		Visible:  &visible,
+	}
+	result, err := applyRuledEventOnQuerier(ctx, tx, worldID, windUp, tick, seq, "telegraph")
+	if err != nil {
+		return "", fmt.Errorf("apply_ruled_event (telegraph): %w", err)
+	}
+	if result["halt_reason"] == "gate_reject" {
+		// A present NPC's self-targeted AttributeChanged always clears the structural floor
+		// (her actor row exists as kind='actor', and it is its own target). A reject here is a real
+		// invariant breach, not a routine outcome — fail loud and write nothing.
+		return "", fmt.Errorf("telegraph wind-up gate_reject for npc %s (self-target must never reject)", npcID)
+	}
+	evID, _ := result["event_id"].(string)
+	if evID == "" {
+		return "", fmt.Errorf("telegraph wind-up returned no event_id for npc %s", npcID)
+	}
+
+	attemptJSON, err := json.Marshal(attempt)
+	if err != nil {
+		return "", fmt.Errorf("marshal held attempt: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO held_outcome (world_id, actor_id, attempt, telegraph_event_id, created_tick)
+		 VALUES ($1::uuid, $2::uuid, $3::jsonb, $4::uuid, $5)`,
+		worldID, npcID, string(attemptJSON), evID, tick); err != nil {
+		return "", fmt.Errorf("insert held_outcome: %w", err)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit telegraph tx: %w", err)
+	}
+	committed = true
+	return evID, nil
+}
+
+// premiseHolds is the generalized, deterministic premise re-check (Stage 2). It verifies the
+// acting actor's next chain attempt still stands after the world-first NPC commits, using only
+// floor-shaped reads — entity existence in entity_registry and co-location via fn_actors_at,
+// mirroring the structural floor apply_event/apply_ruled_event will enforce at commit. It replaces
+// the former two-case switch (Communicated listener + ObjectRelocated→actor dest) with coverage of
+// all six types; a false return drives RunBeat's premise_broken halt.
+//
+// actorID is the acting actor whose current location anchors the co-location reads (Communicated
+// listener, ObjectRelocated→actor dest) — the same location the retired switch read via
+// actorLocation. Existence checks are location-independent so they need only the ids.
+func (o *Orchestrator) premiseHolds(ctx context.Context, worldID, actorID string, a Attempt) (bool, error) {
+	// exists: an entity_registry row for id in this world, optionally constrained to a kind.
+	exists := func(id, kind string) (bool, error) {
+		if id == "" {
+			return false, nil
+		}
+		var ok bool
+		q := `SELECT EXISTS(SELECT 1 FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2::uuid`
+		args := []any{id, worldID}
+		if kind != "" {
+			q += ` AND entity_kind=$3`
+			args = append(args, kind)
+		}
+		q += `)`
+		if err := o.DB.QueryRow(ctx, q, args...).Scan(&ok); err != nil {
+			return false, err
+		}
+		return ok, nil
+	}
+	// coLocated: id is co-located with the acting actor (both at the actor's current location).
+	coLocated := func(id string) (bool, error) {
+		loc, err := o.actorLocation(ctx, worldID, actorID)
+		if err != nil {
+			return false, err
+		}
+		present, err := o.fnActorsAt(ctx, worldID, loc)
+		if err != nil {
+			return false, err
+		}
+		for _, p := range present {
+			if p == id {
+				return true, nil
+			}
+		}
+		return false, nil
+	}
+
+	switch a.Type {
+	case "ActorMoved":
+		// Destination must still exist as a location.
+		return exists(a.ToLocationID, "location")
+	case "Communicated":
+		// Listener must still be co-located with the speaker.
+		return coLocated(a.ListenerID)
+	case "ObjectRelocated":
+		// Object and destination must exist; an actor destination must still be co-located.
+		if ok, err := exists(a.ObjectID, ""); err != nil || !ok {
+			return ok, err
+		}
+		if ok, err := exists(a.DestID, ""); err != nil || !ok {
+			return ok, err
+		}
+		if a.DestKind == "actor" {
+			return coLocated(a.DestID)
+		}
+		return true, nil
+	case "OwnershipAccessChanged", "EntityDestroyed", "AttributeChanged":
+		// Target must still exist.
+		return exists(a.TargetID, "")
+	case "EntityCreated":
+		// Every referenced component must exist.
+		for _, cid := range a.ComponentIDs {
+			if ok, err := exists(cid, ""); err != nil || !ok {
+				return ok, err
+			}
+		}
+		return true, nil
+	}
+	// UNRESOLVED is intercepted before Stage 2; any other type carries no premise gate.
+	return true, nil
 }
 
 // actorLocation returns the actor's current location_id from actor_state.
@@ -692,14 +833,14 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 	return committed, localSeq - curSeq, nil
 }
 
-// applyRuledEvent calls apply_ruled_event and returns the result as a map.
+// applyRuledEvent calls apply_ruled_event (p_origin='ruling') and returns the result as a map.
 func (o *Orchestrator) applyRuledEvent(ctx context.Context, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
-	return applyRuledEventOnQuerier(ctx, o.DB, worldID, evt, tick, seq)
+	return applyRuledEventOnQuerier(ctx, o.DB, worldID, evt, tick, seq, "ruling")
 }
 
-// applyRuledEventTx calls apply_ruled_event inside a transaction.
+// applyRuledEventTx calls apply_ruled_event (p_origin='ruling') inside a transaction.
 func (o *Orchestrator) applyRuledEventTx(ctx context.Context, tx pgx.Tx, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
-	return applyRuledEventOnQuerier(ctx, tx, worldID, evt, tick, seq)
+	return applyRuledEventOnQuerier(ctx, tx, worldID, evt, tick, seq, "ruling")
 }
 
 // dbQuerier is the subset of pgxpool.Pool / pgx.Tx used by applyRuledEventOnQuerier.
@@ -707,14 +848,16 @@ type dbQuerier interface {
 	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
 }
 
-// applyRuledEventOnQuerier is the shared implementation used by both pool and tx paths.
-func applyRuledEventOnQuerier(ctx context.Context, q dbQuerier, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
+// applyRuledEventOnQuerier is the shared implementation used by both pool and tx paths. origin is
+// the p_origin the commit lands under — 'ruling' for adjudicated outcomes, 'telegraph' for a
+// held act's wind-up (Task 5).
+func applyRuledEventOnQuerier(ctx context.Context, q dbQuerier, worldID string, evt RuledEventV2, tick int64, seq int, origin string) (map[string]any, error) {
 	// Marshal evt to JSON (snake_case due to the json tags on RuledEventV2).
 	evtJSON, _ := json.Marshal(evt)
 	var resultJSON []byte
 	err := q.QueryRow(ctx,
-		`SELECT apply_ruled_event($1::uuid, $2::jsonb, $3, $4, 'ruling')`,
-		worldID, string(evtJSON), tick, seq).Scan(&resultJSON)
+		`SELECT apply_ruled_event($1::uuid, $2::jsonb, $3, $4, $5)`,
+		worldID, string(evtJSON), tick, seq, origin).Scan(&resultJSON)
 	if err != nil {
 		return nil, err
 	}

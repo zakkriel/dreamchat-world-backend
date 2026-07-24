@@ -1422,7 +1422,7 @@ CREATE TABLE public.canon_event (
     source_refs jsonb,
     superseded_by uuid,
     CONSTRAINT canon_event_event_type_check CHECK ((event_type = ANY (ARRAY['ActorMoved'::text, 'Communicated'::text, 'ObjectRelocated'::text, 'OwnershipAccessChanged'::text, 'EntityCreated'::text, 'EntityDestroyed'::text, 'AttributeChanged'::text, 'move'::text, 'private_disclosure'::text, 'world_genesis'::text, 'observation'::text, 'publicize'::text]))),
-    CONSTRAINT canon_event_origin_check CHECK ((origin = ANY (ARRAY['fast_path'::text, 'template'::text, 'freeform'::text, 'threshold'::text, 'backstage'::text, 'compensation'::text, 'ruling'::text]))),
+    CONSTRAINT canon_event_origin_check CHECK ((origin = ANY (ARRAY['fast_path'::text, 'template'::text, 'freeform'::text, 'threshold'::text, 'backstage'::text, 'compensation'::text, 'ruling'::text, 'telegraph'::text]))),
     CONSTRAINT canon_event_status_check CHECK ((status = ANY (ARRAY['proposed'::text, 'accepted'::text, 'rejected'::text, 'retconned'::text, 'superseded'::text])))
 );
 
@@ -1492,6 +1492,22 @@ CREATE TABLE public.event_participant (
     entity_kind text NOT NULL,
     role_qualifier text NOT NULL,
     CONSTRAINT event_participant_entity_kind_check CHECK ((entity_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text, 'faction'::text, 'group'::text])))
+);
+
+
+--
+-- Name: held_outcome; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.held_outcome (
+    held_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    attempt jsonb NOT NULL,
+    telegraph_event_id uuid NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    created_tick bigint NOT NULL,
+    CONSTRAINT held_outcome_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'resolved'::text])))
 );
 
 
@@ -1694,6 +1710,14 @@ ALTER TABLE ONLY public.event_participant
 
 
 --
+-- Name: held_outcome held_outcome_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.held_outcome
+    ADD CONSTRAINT held_outcome_pkey PRIMARY KEY (held_id);
+
+
+--
 -- Name: location_state location_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1866,6 +1890,13 @@ CREATE INDEX idx_er_name ON public.entity_registry USING btree (world_id, canoni
 --
 
 CREATE INDEX idx_er_scene ON public.entity_registry USING btree (world_id, current_scene_id);
+
+
+--
+-- Name: idx_held_outcome_pending; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_held_outcome_pending ON public.held_outcome USING btree (world_id) WHERE (status = 'pending'::text);
 
 
 --
@@ -2062,6 +2093,14 @@ ALTER TABLE ONLY public.event_participant
 
 
 --
+-- Name: held_outcome held_outcome_telegraph_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.held_outcome
+    ADD CONSTRAINT held_outcome_telegraph_event_id_fkey FOREIGN KEY (telegraph_event_id) REFERENCES public.canon_event(event_id);
+
+
+--
 -- Name: perception_record perception_record_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2131,4 +2170,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260724100002'),
     ('20260724110001'),
     ('20260724110002'),
-    ('20260724110003');
+    ('20260724110003'),
+    ('20260724110004');
