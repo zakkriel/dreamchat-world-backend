@@ -48,16 +48,35 @@ one seat's entry changes only that seat (D-13).
 make reset      # db-down + db-up + migrate + seed
 ```
 
-`make reset` applies all migrations and then loads the **seed** step.
+`make reset` applies all migrations, then chains the **seed** step: `seed_mara_0A.sql` (the
+deterministic Mara world) followed by `seed_drowned_lantern.sql` (the Drowned Lantern scene, loaded
+append-only on top of it — see the `Makefile` `seed` target). Content canon for the scene lives in
+`docs/superpowers/specs/chunk-5.5-final/FINAL-drowned-lantern-souls.md`.
 
-> ⚠️ **PLACEHOLDER — seed is pending.** `make reset` today loads `core/db/seeds/seed_mara_0A.sql`,
-> which registers the cast this beat needs (`Player`, `Mara`, `Jonas`) and Mara's private
-> harbormaster record. The **richer Drowned Lantern seed** — the full souls, the hooded woman, the
-> layered secrets and backstory drafted in
-> `docs/superpowers/specs/chunk-5.5-final/DRAFT-drowned-lantern-souls.md` — is still a DRAFT and its
-> runnable `.sql` **lands in a later pending task**. When that seed ships, it becomes the `seed` step
-> and this runbook's script plays against the fuller cast unchanged. Until then, play against the
-> Mara-0A seed: the telegraph → reaction loop is identical; only the cast is thinner.
+The cast the founder plays against — what the seed actually places:
+
+- **Kade — the Player.** No personality core: he is a premise, not a mind. He walks in **carrying the
+  sealed note** (gray wax; near-weightless; contents deliberately **unauthored** — Tier-2 flavor only,
+  no canon text behind the seal).
+- **Mara — with her secret.** She knows Kade is *Reyna's brother* — the boy who ran the messages while
+  she hid Reyna's family in the cellar nine days, five winters back — a **life-debt she has never said
+  aloud**. That recognition is a **private `perception_record`** subject-linked to Kade *and* Mara —
+  never a core trait (cores ride the shared cognition prompt, so a secret in a core would leak by
+  construction). Her core is only the guarded-barkeep face a stranger gets. She holds the **cellar key**.
+- **Jonas — knows OF the secret without knowing it.** His private record is only that twice he watched
+  Mara go pale at a harbor face and learned to stand closer instead of asking — no "Reyna", no ledger.
+- **The hooded woman — registered, but deliberately UN-PLACED.** She has a thin core and her own
+  private record (she took the paymaster's contract to confirm a young, dark-haired courier — "The one
+  by the door could be him. I am not sure. Yet."). The founder's script imagines her at the corner
+  table, but the seed writes **no `actor_state`** for world `1111` (the golden 8-actor projection is
+  frozen by pgTAP test 80): her presence is **supplied to the lookups at play time**, not seeded.
+
+The room itself:
+
+- **Tavern tension = `tense`.** The room reads calm, but two of the four people in it are pretending.
+- **Three portals off the tavern** — the **front door** (open, unlocked → Dock Street), the **back
+  door** (closed, unlocked → Alley), and the **cellar hatch** (closed and **LOCKED** — the first
+  Tier-1 lock in play → Cellar; Mara holds the key, and the cellar is where the life-debt happened).
 
 The play world/actor ids from the seed:
 
@@ -67,6 +86,7 @@ The play world/actor ids from the seed:
 | Player (Kade) | `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` |
 | Mara | `bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb` |
 | Jonas | `cccccccc-cccc-cccc-cccc-cccccccccccc` |
+| Hooded Woman (registered, un-placed) | `ffffffff-ffff-ffff-ffff-ffffffffffff` |
 
 ---
 

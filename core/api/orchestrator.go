@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -104,11 +105,6 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		outcome.Committed = append(outcome.Committed, wf.Committed...)
 		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
 		curSeq += wf.SeqAdvance
-		if wf.Halt != "" {
-			outcome.HaltReason = wf.Halt
-			outcome.TicksAdvanced = curTick - startTick
-			return nil
-		}
 
 		// ── Beat-end on telegraph (RULINGS-2026-07-24 §1, §3) ────────────────────
 		// A world-first seat telegraphed a disruptive act this action: its wind-up committed as
@@ -328,15 +324,13 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 }
 
 // worldFirstResult is what the world-first stage produced for one attempt: the NPC events it
-// committed, the wind-up strings it telegraphed (Task 5 turns these into held outcomes), whether
-// a held-outcome row was written, how many (tick,seq) slots it consumed, and a halt (unused in
-// this task — the telegraph→beat-end flow lands in Task 5).
+// committed, the wind-up strings it telegraphed (turned into held outcomes), whether a held-outcome
+// row was written, and how many (tick,seq) slots it consumed.
 type worldFirstResult struct {
 	Committed         []string
 	TelegraphedStated []string
 	HeldWritten       bool
 	SeqAdvance        int
-	Halt              string
 }
 
 // worldFirst is stage 1: the present NPCs get their word before the player's attempt resolves.
@@ -426,16 +420,20 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 		}
 		prompt := buildBatchPrompt(scene, minds, moment, imminentActor, attempt)
 		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
-		if genErr == nil {
+		// A Generate or decode failure degrades DULL (the batch minds do nothing this moment) but is
+		// no longer silent: log it so a mute room is diagnosable. Behavior unchanged — still skipped.
+		if genErr != nil {
+			log.Printf("worldFirst: batch cognition Generate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, imminentActor, genErr)
+		} else if decisions, decErr := DecodeAndValidateNPCDecisions(raw, batchIDs); decErr != nil {
 			// Validated against the BATCH ids only — a decision for an isolated NPC (or the player)
 			// is rejected by DecodeAndValidateNPCDecisions' allowlist (non-present-for-this-call).
-			if decisions, decErr := DecodeAndValidateNPCDecisions(raw, batchIDs); decErr == nil {
-				advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
-				if applyErr != nil {
-					return res, applyErr
-				}
-				localSeq += advance
+			log.Printf("worldFirst: batch cognition decode/validate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, imminentActor, decErr)
+		} else {
+			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
+			if applyErr != nil {
+				return res, applyErr
 			}
+			localSeq += advance
 		}
 	}
 
@@ -455,12 +453,16 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			}
 			prompt := buildIsolatedPrompt(scene, minds[0], private, moment, imminentActor, attempt)
 			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
+			// Degrade DULL (this secret-holder does nothing this moment) but observable — log the
+			// swallowed failure. Behavior unchanged: still a continue.
 			if genErr != nil {
+				log.Printf("worldFirst: isolated cognition Generate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, imminentActor, genErr)
 				continue
 			}
 			// Validated against EXACTLY her own id — her call may speak only for her.
 			decisions, decErr := DecodeAndValidateNPCDecisions(raw, []string{npcID})
 			if decErr != nil {
+				log.Printf("worldFirst: isolated cognition decode/validate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, imminentActor, decErr)
 				continue
 			}
 			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
@@ -775,9 +777,10 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 // co_present union on every actor's location, not just the first — which is what keeps
 // legitimately-witnessed bystanders inside the whitelist (the PR #26 blocker).
 //
-// resolveHeldIDs marks those held_outcome rows 'resolved' inside commitRulingTx's
-// transaction. It is nil for every caller today (the held_outcome table arrives in a later
-// task) and is a no-op when empty.
+// resolveHeldIDs are the held_outcome rows this ruling resolves: RunReactionBeat passes the pending
+// holds' ids so commitRulingTx flips them 'resolved' inside the ruling's own tx (ruling + resolution
+// land together or roll back together). It is empty on every other caller — a normal adjudicate
+// resolves no holds — and the resolution UPDATE is skipped when empty.
 //
 // playerAnswer is empty on every call except RunReactionBeat's empty-chain branch
 // (RULINGS-2026-07-24 §7) — see buildResolvePrompt for the rendering rule.
@@ -929,9 +932,9 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 // that same transaction. Returns (nil, 0, nil) on gate_reject (caller rolls back),
 // (nil, 0, err) on hard error, or (committedIDs, seqAdvance, nil) on success.
 //
-// resolveHeldIDs is nil for every caller today (the held_outcome table is created by a later
-// task); the held-resolution UPDATE is skipped entirely when it is empty so nothing references
-// the not-yet-existent table.
+// resolveHeldIDs are the pending holds a reaction ruling resolves (empty for a normal ruling); the
+// held-resolution UPDATE runs inside this same tx so it commits atomically with the ruling, and is
+// skipped entirely when empty so a hold-free ruling issues no stray statement.
 func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, resolveHeldIDs []string, tick int64, curSeq int) ([]string, int, error) {
 	localSeq := curSeq
 	var committed []string
@@ -965,9 +968,9 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 		}
 	}
 
-	// Held-outcome resolution: mark the named held_outcome rows 'resolved' inside this tx so
-	// the resolution lands atomically with the ruling. Skipped when empty — the held_outcome
-	// table does not exist yet, so the statement must never run with no ids to resolve.
+	// Held-outcome resolution: mark the named held_outcome rows 'resolved' inside this tx so the
+	// resolution lands atomically with the ruling (RunReactionBeat's combined ruling). Skipped when
+	// empty — a normal ruling resolves no holds, so the UPDATE never runs with no ids.
 	if len(resolveHeldIDs) > 0 {
 		if _, err := tx.Exec(ctx,
 			`UPDATE held_outcome SET status = 'resolved' WHERE held_id = ANY($1)`,
