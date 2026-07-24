@@ -9,6 +9,7 @@ import (
 //go:embed schema/ruling.v1.schema.json
 var rulingV1SchemaJSON string
 
+// Handed to the resolve seat as the structured-output leash (wired in Station D Tasks 5–6).
 //go:embed schema/ruling.v2.schema.json
 var rulingV2SchemaJSON string
 

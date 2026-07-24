@@ -63,7 +63,9 @@
                   "dest_kind": {"enum": ["actor", "location", "container"]},
                   "dest_id": {"type": "string"},
                   "target_id": {"type": "string"},
-                  "grantee_id": {"type": "string"}
+                  "grantee_id": {"type": "string"},
+                  "summary": {"type": "string", "description": "v1 compat — removed when the v1 decode path retires (Station D Task 5)"},
+                  "participant_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "v1 compat — removed when the v1 decode path retires (Station D Task 5)"}
                 },
                 "additionalProperties": false
               }
