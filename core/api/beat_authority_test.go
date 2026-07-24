@@ -114,11 +114,12 @@ func TestBeat_CanonAuthority_EveryCommittedEventIsGatedFreeform(t *testing.T) {
 			t.Fatalf("committed event %s has origin %q — canon written outside the gate (D-1/SPEC-015)", id, origin)
 		}
 	}
-	// defense: no canon_event anywhere carries an origin outside the recognized gated set
+	// defense: no canon_event anywhere carries an origin outside the recognized gated set.
+	// 'ruling' was added in Station D (Task 3) for apply_ruled_event outcomes.
 	var illegal int
 	if err := pool.QueryRow(ctx,
 		`SELECT count(*) FROM canon_event WHERE world_id=$1 AND origin NOT IN
-		   ('fast_path','template','freeform','threshold','backstage','compensation')`,
+		   ('fast_path','template','freeform','threshold','backstage','compensation','ruling')`,
 		worldID).Scan(&illegal); err != nil {
 		t.Fatalf("origin scan: %v", err)
 	}
