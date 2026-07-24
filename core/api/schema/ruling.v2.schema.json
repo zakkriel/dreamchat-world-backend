@@ -1,0 +1,92 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ruling/2",
+  "title": "ruling/2 — truth/appearance/variants, typed event slots, tier-checked writes",
+  "type": "object",
+  "required": ["reasoning", "therefore", "outcome"],
+  "properties": {
+    "reasoning": {"type": "string", "minLength": 1},
+    "therefore": {"enum": ["succeeds", "fails", "impossible"]},
+    "outcome": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "reason"],
+          "properties": {
+            "kind": {"const": "bounce"},
+            "reason": {"type": "string", "minLength": 1}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "events"],
+          "properties": {
+            "kind": {"const": "resolved"},
+            "events": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "object",
+                "required": ["type", "actor_id", "truth"],
+                "properties": {
+                  "type": {
+                    "enum": [
+                      "ActorMoved",
+                      "Communicated",
+                      "ObjectRelocated",
+                      "OwnershipAccessChanged",
+                      "EntityDestroyed",
+                      "AttributeChanged"
+                    ]
+                  },
+                  "actor_id": {"type": "string", "minLength": 1},
+                  "truth": {"type": "string", "minLength": 1},
+                  "appearance": {"type": "string"},
+                  "visible": {"type": "boolean", "default": true},
+                  "receiver_variants": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["receiver_id", "text"],
+                      "properties": {
+                        "receiver_id": {"type": "string", "format": "uuid"},
+                        "text": {"type": "string", "minLength": 1}
+                      },
+                      "additionalProperties": false
+                    }
+                  },
+                  "to_location_id": {"type": "string"},
+                  "listener_id": {"type": "string"},
+                  "content": {"type": "string"},
+                  "object_id": {"type": "string"},
+                  "dest_kind": {"enum": ["actor", "location", "container"]},
+                  "dest_id": {"type": "string"},
+                  "target_id": {"type": "string"},
+                  "grantee_id": {"type": "string"}
+                },
+                "additionalProperties": false
+              }
+            },
+            "attribute_writes": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["target_id", "attribute", "value", "tier"],
+                "properties": {
+                  "target_id": {"type": "string", "format": "uuid"},
+                  "attribute": {"type": "string"},
+                  "value": {},
+                  "tier": {"enum": [1, 2]}
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  },
+  "additionalProperties": false
+}

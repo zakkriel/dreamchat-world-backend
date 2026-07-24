@@ -16,8 +16,8 @@ func TestNewSeatsBindWithCapabilityFloor(t *testing.T) {
 	}
 }
 
-// Extra sanity check: NewFakeResolveDriver().Generate should return a valid ruling
-// with participant_id echoing the uuid found in the prompt.
+// Extra sanity check: NewFakeResolveDriver().Generate should return a valid ruling/2
+// with actor_id echoing the uuid found in the prompt (updated from v1 → v2 in Task 1).
 func TestFakeResolveDriverReturnsValidRuling(t *testing.T) {
 	driver := NewFakeResolveDriver()
 	ctx := context.Background()
@@ -29,9 +29,10 @@ func TestFakeResolveDriverReturnsValidRuling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Generate failed: %v", err)
 	}
-	ruling, err := DecodeAndValidateRuling(generated)
+	// Fake now emits ruling/2; validate with the v2 validator.
+	ruling, err := DecodeAndValidateRulingV2(generated)
 	if err != nil {
-		t.Fatalf("DecodeAndValidateRuling failed: %v", err)
+		t.Fatalf("DecodeAndValidateRulingV2 failed: %v", err)
 	}
 	// Verify the outcome is resolved
 	if ruling.Outcome.Kind != "resolved" {
@@ -41,12 +42,9 @@ func TestFakeResolveDriverReturnsValidRuling(t *testing.T) {
 	if len(ruling.Outcome.Events) == 0 {
 		t.Fatalf("expected at least one event, got none")
 	}
-	// Verify the first event has participant_ids containing the uuid
+	// Verify actor_id echoes the prompt uuid (v2 shape: actor_id replaces participant_ids).
 	firstEvent := ruling.Outcome.Events[0]
-	if len(firstEvent.ParticipantIDs) == 0 {
-		t.Fatalf("expected participant_ids in first event, got none")
-	}
-	if firstEvent.ParticipantIDs[0] != "12345678-1234-1234-1234-123456789abc" {
-		t.Fatalf("expected participant_id '12345678-1234-1234-1234-123456789abc', got %q", firstEvent.ParticipantIDs[0])
+	if firstEvent.ActorID != "12345678-1234-1234-1234-123456789abc" {
+		t.Fatalf("expected actor_id '12345678-1234-1234-1234-123456789abc', got %q", firstEvent.ActorID)
 	}
 }
