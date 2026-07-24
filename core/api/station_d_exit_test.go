@@ -35,16 +35,6 @@ const leanOnMaraDecomposeOut = `[{"type":"AttributeChanged","stated":"I lean on 
 const fakeResolveTruth = "The attempt does not land; the target hardens and deflects."
 const fakeResolveAppearance = "The target seems unmoved."
 
-// seedPlayerAndMaraAtTavern co-locates Player + Mara at seedTavernID with ticks ≥ baseTick.
-// Uses the existing seed entity so no entity_registry rows are added (SQL test 40 asserts count=12).
-func seedPlayerAndMaraAtTavern(t *testing.T, ctx context.Context, pool interface {
-	Exec(ctx context.Context, sql string, args ...interface{}) (interface{ RowsAffected() int64 }, error)
-	QueryRow(ctx context.Context, sql string, args ...interface{}) interface{ Scan(dest ...interface{}) error }
-}, baseTick int) {
-	t.Helper()
-	// (unused shim — real seeding below uses pool directly)
-}
-
 // TestStationD_FakeE2E exercises the full HTTP beatHandler pipeline with fake drivers,
 // proving the deception split end-to-end: canon carries TRUTH, player perceives APPEARANCE.
 func TestStationD_FakeE2E(t *testing.T) {
