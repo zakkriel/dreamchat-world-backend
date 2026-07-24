@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -128,15 +129,15 @@ func verdictRuling(r RulingV2, sliceIDs map[string]bool, attemptIDs []string) []
 
 // formatUUIDViolation creates a violation message for an invalid UUID reference
 func formatUUIDViolation(kind string, index int, field string, uuid string) string {
-	return kind + " " + string(rune(48+index)) + ": " + field + " " + uuid + " not in the gathered slice"
+	return kind + " " + strconv.Itoa(index) + ": " + field + " " + uuid + " not in the gathered slice"
 }
 
 // formatAttrViolation creates a violation message for an attribute error
 func formatAttrViolation(kind string, index int, attrName string, actualValue string, expected string) string {
-	return kind + " " + string(rune(48+index)) + ": \"" + attrName + "\" " + actualValue + " " + expected
+	return kind + " " + strconv.Itoa(index) + ": \"" + attrName + "\" " + actualValue + " " + expected
 }
 
 // formatWallViolation creates a violation message for a tier-2 writing a tier-1 attribute
 func formatWallViolation(kind string, index int, attrName string) string {
-	return kind + " " + string(rune(48+index)) + ": \"" + attrName + "\" is a Tier-1 engine attribute — writing it as tier 2 is the wall violation (write both: tier 1 for mechanics, tier 2 for meaning)"
+	return kind + " " + strconv.Itoa(index) + ": \"" + attrName + "\" is a Tier-1 engine attribute — writing it as tier 2 is the wall violation (write both: tier 1 for mechanics, tier 2 for meaning)"
 }

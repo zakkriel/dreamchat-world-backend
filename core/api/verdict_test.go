@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -35,7 +36,7 @@ func TestVerdictRulingActorIDNotInSlice(t *testing.T) {
 	// Should mention the unknown actor_id
 	found := false
 	for _, v := range violations {
-		if contains(v, "unknown-uuid-12345") {
+		if strings.Contains(v, "unknown-uuid-12345") {
 			found = true
 			break
 		}
@@ -118,7 +119,7 @@ func TestVerdictRulingTier1InvalidType(t *testing.T) {
 
 	found := false
 	for _, v := range violations {
-		if contains(v, "locked") {
+		if strings.Contains(v, "locked") {
 			found = true
 			break
 		}
@@ -165,7 +166,7 @@ func TestVerdictRulingTier1UnknownAttribute(t *testing.T) {
 
 	found := false
 	for _, v := range violations {
-		if contains(v, "cursed") {
+		if strings.Contains(v, "cursed") {
 			found = true
 			break
 		}
@@ -212,7 +213,7 @@ func TestVerdictRulingTier2WallViolation(t *testing.T) {
 
 	found := false
 	for _, v := range violations {
-		if contains(v, "Tier-1 engine attribute") || contains(v, "wall violation") {
+		if strings.Contains(v, "Tier-1 engine attribute") || strings.Contains(v, "wall violation") {
 			found = true
 			break
 		}
@@ -258,6 +259,49 @@ func TestVerdictRulingTier2ValidWrite(t *testing.T) {
 	}
 }
 
+// TestVerdictRulingEventIndex10 tests proper formatting of event index 10+
+func TestVerdictRulingEventIndex10(t *testing.T) {
+	events := make([]RuledEventV2, 11)
+	// Populate first 10 events with valid actor IDs
+	for i := 0; i < 10; i++ {
+		events[i] = RuledEventV2{
+			Type:    "ActorMoved",
+			ActorID: "actor-123",
+		}
+	}
+	// Event at index 10 has out-of-slice ActorID
+	events[10] = RuledEventV2{
+		Type:    "ActorMoved",
+		ActorID: "invalid-actor-999",
+	}
+
+	r := RulingV2{
+		Reasoning: "Test index 10 formatting.",
+		Therefore: "succeeds",
+		Outcome: OutcomeV2{
+			Kind:   "resolved",
+			Events: events,
+		},
+	}
+
+	sliceIDs := map[string]bool{"actor-123": true}
+	attemptIDs := []string{}
+
+	violations := verdictRuling(r, sliceIDs, attemptIDs)
+
+	// Should have violation for event 10
+	found := false
+	for _, v := range violations {
+		if strings.Contains(v, "event 10") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("violation does not contain 'event 10': %v", violations)
+	}
+}
+
 // jsonTypeOf tests
 func TestJsonTypeOfString(t *testing.T) {
 	tests := []struct {
@@ -287,7 +331,3 @@ func TestJsonTypeOfString(t *testing.T) {
 	}
 }
 
-// helper to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(substr) > 0)
-}
