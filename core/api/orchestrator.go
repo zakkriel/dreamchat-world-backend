@@ -4,8 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"regexp"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -339,18 +339,33 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 	}
 	sliceJSON := string(sliceRaw)
 
-	// Build sliceIDs: all UUIDs found in the slice JSON union all attempt participant IDs.
-	uuidRegex := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
-	matches := uuidRegex.FindAllString(sliceJSON, -1)
-	sliceIDs := map[string]bool{}
-	for _, m := range matches {
-		sliceIDs[m] = true
+	// Build sliceIDs: entities[].id ∪ co_present[].id (grounded facts shown to the LLM)
+	// ∪ attempt participant IDs ∪ actorID. We unmarshal only the top-level id fields so
+	// that relationship counterparties and UUIDs embedded in event summary text are NOT
+	// whitelisted — those are fetched context, not grounded entities the LLM may claim.
+	var sliceTop struct {
+		Entities  []struct{ ID string `json:"id"` } `json:"entities"`
+		CoPresent []struct{ ID string `json:"id"` } `json:"co_present"`
 	}
+	_ = json.Unmarshal(sliceRaw, &sliceTop) // best-effort; empty on failure is safe
+	sliceIDs := map[string]bool{}
+	for _, e := range sliceTop.Entities {
+		if e.ID != "" {
+			sliceIDs[e.ID] = true
+		}
+	}
+	for _, e := range sliceTop.CoPresent {
+		if e.ID != "" {
+			sliceIDs[e.ID] = true
+		}
+	}
+	// Also include all attempt participant IDs and actorID: these are the direct
+	// inputs to the ruling and are always legitimate whitelist entries.
 	for _, id := range ids {
 		sliceIDs[id] = true
 	}
 
-	// Resolve: one attempt, with one repair retry on decode/verdict failure.
+	// Resolve: one combined judgment over the attempt set, with one repair retry on decode/verdict failure.
 	prompt := buildResolvePrompt(sliceJSON, attempts, nil)
 	var ruling RulingV2
 	var violations []string
@@ -402,16 +417,43 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 		return adjResult{Halt: "bounce"}, nil
 	}
 
-	// Commit each ruled event via apply_ruled_event.
+	// Commit phase — ONE transaction: all apply_ruled_event calls + apply_attribute_writes.
+	// A gate_reject or error anywhere rolls back the entire ruling so zero events land
+	// (preventing the half-committed combined-ruling class of corrupted canon).
+	tx, err := o.DB.Begin(ctx)
+	if err != nil {
+		return adjResult{}, fmt.Errorf("begin ruling tx: %w", err)
+	}
+	committed, seqAdvance, commitErr := o.commitRulingTx(ctx, tx, worldID, ruling, tick, curSeq)
+	if commitErr != nil {
+		_ = tx.Rollback(ctx)
+		return adjResult{}, commitErr
+	}
+	if committed == nil {
+		// gate_reject during one of the events — rollback, halt with zero durable events.
+		_ = tx.Rollback(ctx)
+		return adjResult{Halt: "ruled_event_rejected"}, nil
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return adjResult{}, fmt.Errorf("commit ruling tx: %w", err)
+	}
+	return adjResult{Committed: committed, SeqAdvance: seqAdvance}, nil
+}
+
+// commitRulingTx executes all apply_ruled_event + apply_attribute_writes calls inside
+// the provided transaction. Returns (nil, 0, nil) on gate_reject (caller rolls back),
+// (nil, 0, err) on hard error, or (committedIDs, seqAdvance, nil) on success.
+func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, tick int64, curSeq int) ([]string, int, error) {
 	localSeq := curSeq
 	var committed []string
+
 	for _, evt := range ruling.Outcome.Events {
-		result, err := o.applyRuledEvent(ctx, worldID, evt, tick, localSeq)
+		result, err := o.applyRuledEventTx(ctx, tx, worldID, evt, tick, localSeq)
 		if err != nil {
-			return adjResult{}, fmt.Errorf("apply_ruled_event: %w", err)
+			return nil, 0, fmt.Errorf("apply_ruled_event: %w", err)
 		}
 		if result["halt_reason"] == "gate_reject" {
-			return adjResult{Halt: "ruled_event_rejected"}, nil
+			return nil, 0, nil // signal gate_reject without a hard error
 		}
 		if evID, ok := result["event_id"].(string); ok && evID != "" {
 			committed = append(committed, evID)
@@ -423,26 +465,41 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 	if len(ruling.Outcome.AttributeWrites) > 0 && len(committed) > 0 {
 		writesJSON, _ := json.Marshal(ruling.Outcome.AttributeWrites)
 		var rowsWritten int
-		err := o.DB.QueryRow(ctx,
+		err := tx.QueryRow(ctx,
 			`SELECT apply_attribute_writes($1::uuid, $2::jsonb, $3::uuid, $4, $5)`,
 			worldID, string(writesJSON), committed[0], tick, localSeq).Scan(&rowsWritten)
 		if err != nil {
-			return adjResult{}, fmt.Errorf("apply_attribute_writes: %w", err)
+			return nil, 0, fmt.Errorf("apply_attribute_writes: %w", err)
 		}
 		if rowsWritten != len(ruling.Outcome.AttributeWrites) {
-			return adjResult{}, fmt.Errorf("engine inconsistency: apply_attribute_writes wrote %d rows, expected %d", rowsWritten, len(ruling.Outcome.AttributeWrites))
+			return nil, 0, fmt.Errorf("engine inconsistency: apply_attribute_writes wrote %d rows, expected %d", rowsWritten, len(ruling.Outcome.AttributeWrites))
 		}
 	}
 
-	return adjResult{Committed: committed, SeqAdvance: localSeq - curSeq}, nil
+	return committed, localSeq - curSeq, nil
 }
 
 // applyRuledEvent calls apply_ruled_event and returns the result as a map.
 func (o *Orchestrator) applyRuledEvent(ctx context.Context, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
+	return applyRuledEventOnQuerier(ctx, o.DB, worldID, evt, tick, seq)
+}
+
+// applyRuledEventTx calls apply_ruled_event inside a transaction.
+func (o *Orchestrator) applyRuledEventTx(ctx context.Context, tx pgx.Tx, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
+	return applyRuledEventOnQuerier(ctx, tx, worldID, evt, tick, seq)
+}
+
+// dbQuerier is the subset of pgxpool.Pool / pgx.Tx used by applyRuledEventOnQuerier.
+type dbQuerier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// applyRuledEventOnQuerier is the shared implementation used by both pool and tx paths.
+func applyRuledEventOnQuerier(ctx context.Context, q dbQuerier, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
 	// Marshal evt to JSON (snake_case due to the json tags on RuledEventV2).
 	evtJSON, _ := json.Marshal(evt)
 	var resultJSON []byte
-	err := o.DB.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT apply_ruled_event($1::uuid, $2::jsonb, $3, $4, 'ruling')`,
 		worldID, string(evtJSON), tick, seq).Scan(&resultJSON)
 	if err != nil {

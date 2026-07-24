@@ -56,11 +56,11 @@ func (f *fakeTextDriver) Generate(_ context.Context, req GenRequest) (string, er
 	return out, nil
 }
 
-// fakeResolveDriver: returns a ruling/2 (v1+v2-compatible superset) for CI.
+// fakeResolveDriver: returns a ruling/2 for CI.
 // Extracts UUID from prompt via regex; echoes it as actor_id + target_id in the AttributeChanged
-// event. The JSON includes both v2 fields (actor_id, truth, appearance) AND the v1-required fields
-// (summary, participant_ids) so the orchestrator's DecodeAndValidateRuling (v1) still passes until
-// Task 5 rewires it. This v1+v2-compatible superset approach is intentional scaffolding.
+// event. The JSON includes both v2 fields (actor_id, truth, appearance) AND superset fields
+// (summary, participant_ids) — v1-compat superset fields (summary/participant_ids) retained for
+// any remaining v1 consumers; the orchestrator is v2-only since Station D Task 5.
 // FAKE: CI stand-in for an undelivered station. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
 type fakeResolveDriver struct{ name string }
 

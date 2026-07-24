@@ -391,6 +391,99 @@ func TestAdjudicated_OutOfSliceUUIDRepairThenBounce(t *testing.T) {
 	}
 }
 
+// TestAdjudicated_PartialRulingRollback verifies that a two-event ruling where event[1]
+// fails the structural floor (gate_reject: Communicated to a non-co-located listener)
+// results in halt="ruled_event_rejected" AND zero events durable — event[0] is rolled back.
+//
+// This is the transaction test for Fix 2: the entire commit phase runs in one pgx transaction;
+// a gate_reject mid-loop rolls back even the already-applied events from earlier in the loop.
+func TestAdjudicated_PartialRulingRollback(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	seedOrchestratorEntities(t, ctx)
+
+	bt := nextBaseTick(t, ctx)
+
+	// Player at locA, Mara at locB → NOT co-located.
+	// The two-event ruling will: event[0]=AttributeChanged(player→door) [would pass],
+	// event[1]=Communicated(player→mara) [gate_reject: listener not co-located].
+	seedActorAtLoc(t, ctx, playerID, locA, bt, 0)
+	seedActorAtLoc(t, ctx, maraID, locB, bt, 1)
+
+	// Record canon_event count before — must be unchanged after the rollback.
+	var beforeCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1::uuid`, worldID).Scan(&beforeCount); err != nil {
+		t.Fatalf("count before: %v", err)
+	}
+
+	// Two-event ruling: first event valid, second Communicated to non-co-located Mara.
+	r := map[string]any{
+		"reasoning": "Player acts then speaks to Mara.",
+		"therefore": "succeeds",
+		"outcome": map[string]any{
+			"kind": "resolved",
+			"events": []map[string]any{
+				{
+					"type":      "AttributeChanged",
+					"actor_id":  playerID,
+					"target_id": doorID,
+					"truth":     "The player examines the door.",
+					"visible":   true,
+				},
+				{
+					"type":        "Communicated",
+					"actor_id":    playerID,
+					"listener_id": maraID,
+					"content":     "Hey Mara!",
+					"truth":       "The player shouts across the room to Mara.",
+					"visible":     true,
+				},
+			},
+		},
+	}
+	rJSON, _ := json.Marshal(r)
+
+	driver := &inlineRulingDriver{
+		name:   "partial-ruling-driver",
+		ruling: string(rJSON),
+	}
+
+	orc := &Orchestrator{
+		DB:             pool,
+		Resolve:        driver,
+		CognitionBatch: NewFakeCognitionDriver(),
+		WorldActor:     NewFakeWorldActorDriver(),
+	}
+
+	// Two attempts so both doorID and maraID pass verdictRuling (are in sliceIDs via participant IDs).
+	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
+		{Type: "AttributeChanged", Stated: "I examine the door", TargetID: doorID},
+		{Type: "Communicated", Stated: "I call out to Mara", ListenerID: maraID, Content: "Hey Mara!"},
+	}, bt+2, 0)
+	if err != nil {
+		t.Fatalf("adjudicate: %v", err)
+	}
+	if ar.Halt != "ruled_event_rejected" {
+		t.Fatalf("halt = %q, want %q", ar.Halt, "ruled_event_rejected")
+	}
+	if len(ar.Committed) != 0 {
+		t.Fatalf("expected 0 committed (rollback), got %d: %v", len(ar.Committed), ar.Committed)
+	}
+
+	// Assert canon_event count is unchanged — event[0] must have been rolled back.
+	var afterCount int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1::uuid`, worldID).Scan(&afterCount); err != nil {
+		t.Fatalf("count after: %v", err)
+	}
+	if afterCount != beforeCount {
+		t.Fatalf("canon_event count changed: before=%d after=%d — event[0] was NOT rolled back", beforeCount, afterCount)
+	}
+}
+
 // TestAdjudicated_NAry_TwoAttemptsOneGenCall verifies that adjudicate makes ONE Resolve
 // call for multiple attempts (n-ary judgment).
 func TestAdjudicated_NAry_TwoAttemptsOneGenCall(t *testing.T) {
