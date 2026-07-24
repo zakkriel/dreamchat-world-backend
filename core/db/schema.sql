@@ -800,6 +800,43 @@ $$;
 
 
 --
+-- Name: fn_isolated_npcs(uuid, uuid[], uuid[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_isolated_npcs(p_world_id uuid, p_action_ids uuid[], p_present uuid[], p_npcs uuid[]) RETURNS TABLE(actor_id uuid)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH held AS (
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    FROM perception_record pr
+    WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
+      AND pr.source_event_id IS NOT NULL
+    GROUP BY 1, 2, 3
+  ), shared AS (
+    SELECT h.source_event_id,
+           mode() WITHIN GROUP (ORDER BY h.content) AS modal_content
+    FROM held h
+    GROUP BY h.source_event_id
+    HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+  )
+  -- an NPC is isolated iff she holds >=1 PRIVATE record whose about-ness intersects the action ids
+  SELECT DISTINCT pr.holder_id AS actor_id
+  FROM perception_record pr
+  LEFT JOIN shared s
+    ON s.source_event_id = pr.source_event_id
+   AND s.modal_content   = pr.content        -- matches only the public (modal) face
+  WHERE pr.world_id = p_world_id
+    AND pr.holder_id = ANY(p_npcs)
+    AND s.source_event_id IS NULL             -- private: no matching public face
+    AND EXISTS (
+      SELECT 1 FROM perception_subject ps
+      WHERE ps.perception_id = pr.perception_id
+        AND ps.entity_id = ANY(p_action_ids)  -- one-hop id intersection (ADR-035)
+    )
+$$;
+
+
+--
 -- Name: fn_location_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -854,6 +891,78 @@ CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_en
   WHERE ce.event_type = 'world_genesis'
   ORDER BY vp.acquired_tick
   LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_private_records(uuid, uuid, uuid[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_private_records(p_world_id uuid, p_npc uuid, p_action_ids uuid[], p_present uuid[]) RETURNS TABLE(content text, acquired_tick bigint)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH held AS (
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    FROM perception_record pr
+    WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
+      AND pr.source_event_id IS NOT NULL
+    GROUP BY 1, 2, 3
+  ), shared AS (
+    SELECT h.source_event_id,
+           mode() WITHIN GROUP (ORDER BY h.content) AS modal_content
+    FROM held h
+    GROUP BY h.source_event_id
+    HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+  )
+  SELECT pr.content, pr.acquired_tick
+  FROM perception_record pr
+  LEFT JOIN shared s
+    ON s.source_event_id = pr.source_event_id
+   AND s.modal_content   = pr.content
+  WHERE pr.world_id = p_world_id
+    AND pr.holder_id = p_npc
+    AND s.source_event_id IS NULL             -- private records only
+    AND EXISTS (
+      SELECT 1 FROM perception_subject ps
+      WHERE ps.perception_id = pr.perception_id
+        AND ps.entity_id = ANY(p_action_ids)  -- subjects intersect the action's bound ids
+    )
+  ORDER BY pr.acquired_tick ASC, pr.content ASC, pr.perception_id ASC
+  -- cap is a v1 dial; §10's retrieval assembly refines it in Station I.
+  LIMIT 20
+$$;
+
+
+--
+-- Name: fn_public_moment(uuid, uuid[], integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_public_moment(p_world_id uuid, p_present uuid[], p_k integer) RETURNS TABLE(source_event_id uuid, acquired_tick bigint, content text)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH held AS (
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    FROM perception_record pr
+    WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
+      AND pr.source_event_id IS NOT NULL
+    GROUP BY 1, 2, 3
+  ), shared AS (
+    SELECT h.source_event_id,
+           mode() WITHIN GROUP (ORDER BY h.content) AS modal_content,
+           min(h.tick) AS tick
+    FROM held h
+    GROUP BY h.source_event_id
+    HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+  ), recent AS (
+    -- the LAST p_k shared source events by tick (most recent), deterministic tie-break by id
+    SELECT s.source_event_id, s.tick, s.modal_content
+    FROM shared s
+    ORDER BY s.tick DESC, s.source_event_id DESC
+    LIMIT p_k
+  )
+  SELECT r.source_event_id, r.tick AS acquired_tick, r.modal_content AS content
+  FROM recent r
+  ORDER BY r.tick ASC, r.source_event_id ASC   -- append-only, cache-native
 $$;
 
 
@@ -2005,4 +2114,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260724100001'),
     ('20260724100002'),
     ('20260724110001'),
-    ('20260724110002');
+    ('20260724110002'),
+    ('20260724110003');
