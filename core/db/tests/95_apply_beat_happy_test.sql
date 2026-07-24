@@ -1,9 +1,13 @@
 BEGIN;
 SELECT plan(8);
 
--- Player and Mara co-present at tavern (setup moves). Then a 2-step beat: [say to Mara, move to square].
--- The say-gate is an EXISTS(Mara ∈ actors_at(tavern)) check (tolerant of seed actors also at tavern);
--- the move→square discovery is empty (Player left square via the setup), so no move-discovery rows.
+-- Player and Mara co-present at tavern-uuid (setup moves). Then a 2-step beat:
+-- [say to Mara, move to square-uuid]. The say-gate is an EXISTS(Mara ∈ actors_at(tavern-uuid)) check;
+-- the move→square-uuid discovery is empty (Player left square via the setup), so no move-discovery rows.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-000000000010','11111111-1111-1111-1111-111111111111','location','test-tavern-95'),
+ ('e5ffffff-0000-0000-0000-000000000011','11111111-1111-1111-1111-111111111111','location','test-square-95');
+
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          status, accepted_at, visibility_scope, origin) VALUES
  ('e5000000-0000-0000-0000-000000000040','11111111-1111-1111-1111-111111111111','move','setup P→tavern',400,0,'accepted',now(),'public','fast_path'),
@@ -12,15 +16,15 @@ INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
  ('e5000000-0000-0000-0000-000000000040','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator'),
  ('e5000000-0000-0000-0000-000000000041','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','instigator');
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value, valid_from_tick, valid_from_seq) VALUES
- ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000040','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('tavern'::text),400,0),
- ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000041','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','attrs.location_id', to_jsonb('tavern'::text),401,0);
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000040','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),400,0),
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000041','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),401,0);
 
 SELECT lives_ok($$
   SELECT apply_beat(
     '11111111-1111-1111-1111-111111111111',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
     '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"I saw the note"},
-      {"type":"move","to":"square"}]'::jsonb,
+      {"type":"move","to":"e5ffffff-0000-0000-0000-000000000011"}]'::jsonb,
     500, 100, 'fast_path')
 $$, 'apply_beat runs a 2-step happy beat');
 

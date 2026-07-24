@@ -1,0 +1,32 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "npc_attempts/1",
+  "title": "npc_attempts/1 — one decision per present NPC: none, or an attempt (commit|telegraph)",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["actor_id", "decision"],
+    "properties": {
+      "actor_id": {"type": "string", "format": "uuid"},
+      "decision": {"oneOf": [
+        {"const": "none"},
+        {"type": "object", "required": ["commit_kind", "attempt"], "properties": {
+          "commit_kind": {"enum": ["commit", "telegraph"]},
+          "attempt": {"type": "object", "required": ["type", "stated"], "properties": {
+            "type": {"enum": ["ActorMoved", "Communicated", "ObjectRelocated", "OwnershipAccessChanged", "EntityCreated", "EntityDestroyed", "AttributeChanged"]},
+            "stated": {"type": "string", "minLength": 1},
+            "to_location_id": {"type": "string", "format": "uuid"},
+            "listener_id": {"type": "string", "format": "uuid"},
+            "content": {"type": "string", "minLength": 1},
+            "object_id": {"type": "string", "format": "uuid"},
+            "dest_kind": {"enum": ["actor", "location", "container"]},
+            "dest_id": {"type": "string", "format": "uuid"},
+            "target_id": {"type": "string", "format": "uuid"},
+            "grantee_id": {"type": "string", "format": "uuid"}
+          }, "additionalProperties": false}
+        }, "additionalProperties": false}
+      ]}
+    },
+    "additionalProperties": false
+  }
+}

@@ -39,18 +39,21 @@ NOTNULL_FIELDS = {
 # null, so a future over-tightening is caught here too.
 NULLABLE_FIELDS = {"perceived_name", "group_label", "display_label"}
 
-# Input-contract schemas (chunk-5): published for the frontend to codegen REQUEST shapes from, NOT
-# output projection payloads. They have no SQL payload generator by design (e.g. beat_chain/1 is the
-# decompose REQUEST vocabulary — the leash, ADR-009/D-1), so the Direction-1 payload-coverage check
-# does not apply. They are still loaded (must be valid JSON Schema) and run through Direction 2
-# (vacuous unless they carry a NOT-NULL projection field). Projection schemas remain strictly
-# coverage-required: a new projection schema added without a payload still fails.
-INPUT_CONTRACT_SCHEMAS = {"beat_chain/1"}
+# Input/seat-contract schemas: published for codegen and as the structured-output leash for LLM
+# seats, NOT output projection payloads. They have no SQL payload generator by design (beat_chain/*
+# is the decompose vocabulary; ruling/1 is the resolve seat's explain-first output; npc_attempts/1
+# is the cognition seats' output — the leash, ADR-009/D-1), so the Direction-1 payload-coverage
+# check does not apply. They are still loaded (must be valid JSON Schema) and run through
+# Direction 2 (vacuous unless they carry a NOT-NULL projection field). Projection schemas remain
+# strictly coverage-required: a new projection schema added without a payload still fails.
+INPUT_CONTRACT_SCHEMAS = {"beat_chain/1", "beat_chain/2", "ruling/1", "npc_attempts/1"}
 
 
 def load_schemas(schema_dir):
     by_id = {}
-    for f in sorted(glob.glob(os.path.join(schema_dir, "*.v1.schema.json"))):
+    # All schema versions, not only .v1 — a .v2 file invisible to this check would be a
+    # silent coverage hole (the exact class SPEC-011 exists to prevent).
+    for f in sorted(glob.glob(os.path.join(schema_dir, "*.schema.json"))):
         s = json.load(open(f))
         by_id[s["$id"]] = (f, s)
     return by_id

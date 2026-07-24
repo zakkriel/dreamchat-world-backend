@@ -11,19 +11,25 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// the closed-vocabulary schema, embedded so the decompose seat can constrain generation to it (the
-// leash, generation-time). Same file the frontend codegens from.
+// the v1 closed-vocabulary schema (legacy; kept so beatseats_test.go and bridge_test.go compile).
 //
 //go:embed schema/beat_chain.v1.schema.json
 var beatChainSchema []byte
 
 var beatRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beat$`)
 
+// Candidate is a known entity that the player can reference by ID in a beat chain (v2).
+type Candidate struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Kind string `json:"kind"`
+}
+
 // beatHandler serves POST /worlds/{w}/beat. It orchestrates the per-seat bridge around the
 // deterministic SQL engine: decompose (perception-bound input §14, STRUCTURED against beat_chain =
-// the leash, SPEC-015/D-1) → DecodeAndValidateChain (defense-in-depth belt) → apply_beat (the ONLY
-// canonization point, origin='freeform') → narrate (perception-bound, ADR-020). No canon row crosses
-// the boundary (B-1): the response is narration + a committed-event summary.
+// the leash, SPEC-015/D-1) → DecodeAndValidateChainV2 (defense-in-depth belt) → Orchestrator.RunBeat
+// (the ONLY canonization point, origin='freeform') → narrate (perception-bound, ADR-020). No canon
+// row crosses the boundary (B-1): the response is narration + a committed-event summary.
 type beatHandler struct {
 	pool   *pgxpool.Pool
 	dbg    bool
@@ -69,31 +75,42 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payload", http.StatusInternalServerError)
 		return
 	}
-	// 2. decompose: STRUCTURED generation against the closed vocabulary (the leash). The seat's
-	//    capability floor guarantees a constrained driver; DecodeAndValidateChain is the belt.
+
+	// 2. decompose: STRUCTURED generation against the v2 closed vocabulary (the leash). The seat's
+	//    capability floor guarantees a constrained driver; DecodeAndValidateChainV2 is the belt.
 	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-		GenRequest{Payload: pre, Prompt: in.Text, Schema: beatChainSchema})
+		GenRequest{Payload: pre, Prompt: in.Text, Schema: json.RawMessage(beatChainV2SchemaJSON)})
 	if err != nil {
 		log.Printf("decompose error: %v", err)
 		http.Error(w, "decompose failed", http.StatusBadGateway)
 		return
 	}
-	chain, err := DecodeAndValidateChain(raw)
+	chain, err := DecodeAndValidateChainV2(raw)
 	if err != nil {
 		http.Error(w, "outside the closed vocabulary", http.StatusUnprocessableEntity) // 422
 		return
 	}
-	chainJSON, _ := json.Marshal(chain)
 
-	// 3. apply_beat is the ONLY canonization point (D-1). origin='freeform' = model-proposed, gated.
-	var summary []byte
-	err = h.pool.QueryRow(ctx,
-		`SELECT apply_beat($1,$2,$3::jsonb,
-		          COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1,
-		          $4, 'freeform')::text`,
-		worldID, viewerID, string(chainJSON), beatTickCap).Scan(&summary)
+	// 3. Orchestrator.RunBeat is the ONLY canonization point (D-1). origin='freeform' = model-proposed, gated.
+	orc := &Orchestrator{
+		DB:             h.pool,
+		Resolve:        h.bridge.Driver(SeatResolve.Name),
+		CognitionBatch: h.bridge.Driver(SeatCognitionBatch.Name),
+		WorldActor:     h.bridge.Driver(SeatWorldActor.Name),
+	}
+
+	var startTick int64
+	if err := h.pool.QueryRow(ctx,
+		`SELECT COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1`,
+		worldID).Scan(&startTick); err != nil {
+		http.Error(w, "start tick", http.StatusInternalServerError)
+		return
+	}
+
+	outcome, err := orc.RunBeat(ctx, worldID, viewerID, chain, startTick)
 	if err != nil {
-		http.Error(w, "apply", http.StatusInternalServerError)
+		log.Printf("RunBeat error: %v", err)
+		http.Error(w, "beat failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -112,15 +129,22 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	resp, _ := json.Marshal(map[string]any{
-		"schema_version": "beat_result/1",
+		"schema_version": "beat_result/2",
 		"narration":      narration,
-		"result":         json.RawMessage(summary), // {committed:[...ids], halt_reason, ticks_advanced}
+		"result": map[string]any{
+			"committed":             outcome.Committed,
+			"halt_reason":           outcome.HaltReason,
+			"ticks_advanced":        outcome.TicksAdvanced,
+			"unresolved_candidates": outcome.UnresolvedCandidates,
+			"telegraphs":            outcome.Telegraphs,
+		},
 	})
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp)
 }
 
 // payload builds the perception-bound payload from the WALL (fn_visible_perceptions). No raw canon.
+// Also populates Candidates: present actors + current location.
 func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (PerceptionPayload, error) {
 	rows, err := h.pool.Query(ctx,
 		`SELECT content FROM fn_visible_perceptions($1,$2) ORDER BY acquired_tick`, worldID, viewerID)
@@ -136,8 +160,57 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 		}
 		p.Lines = append(p.Lines, c)
 	}
-	return p, rows.Err()
-}
+	if err := rows.Err(); err != nil {
+		return PerceptionPayload{}, err
+	}
 
-// beatTickCap is the generous hard time-cap backstop (§9; ADR-025 provisional — tune at the gate).
-const beatTickCap = 1000
+	// Build candidate whitelist: present actors + current location.
+	var loc string
+	if err := h.pool.QueryRow(ctx,
+		`SELECT (attrs->>'location_id')::text FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
+		worldID, viewerID).Scan(&loc); err != nil {
+		return PerceptionPayload{}, err
+	}
+
+	if loc != "" {
+		// Present actors at the same location.
+		actorRows, err := h.pool.Query(ctx,
+			`SELECT er.entity_id, er.canonical_name, er.entity_kind
+			 FROM fn_actors_at($1, $2::uuid) fa
+			 JOIN entity_registry er ON er.entity_id=fa.entity_id AND er.world_id=$1`,
+			worldID, loc)
+		if err != nil {
+			return PerceptionPayload{}, err
+		}
+		if actorRows != nil {
+			for actorRows.Next() {
+				var id, name, kind string
+				if err := actorRows.Scan(&id, &name, &kind); err == nil {
+					p.Candidates = append(p.Candidates, Candidate{ID: id, Name: name, Kind: kind})
+				}
+			}
+			if err := actorRows.Err(); err != nil {
+				actorRows.Close()
+				return PerceptionPayload{}, err
+			}
+			actorRows.Close()
+		}
+
+		// Current location entity.
+		var locName string
+		if err := h.pool.QueryRow(ctx,
+			`SELECT canonical_name FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2`,
+			loc, worldID).Scan(&locName); err != nil {
+			return PerceptionPayload{}, err
+		}
+		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location"})
+
+		// Artifacts are deliberately ABSENT from the whitelist: naming reach = the
+		// actor's own perceived/known set (RULINGS-2026-07-23 §3), and no
+		// perception-subject link machinery exists yet to compute "artifacts this
+		// actor knows". Until Station E lands that lookup, artifacts are not
+		// nameable-by-id — fail closed beats leaking world contents.
+	}
+
+	return p, nil
+}

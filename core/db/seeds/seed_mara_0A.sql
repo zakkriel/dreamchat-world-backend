@@ -27,7 +27,10 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
  ('00000000-0000-0000-0000-000000000003','11111111-1111-1111-1111-111111111111','actor',   'O3'),
  ('00000000-0000-0000-0000-000000000004','11111111-1111-1111-1111-111111111111','actor',   'O4'),
  ('00000000-0000-0000-0000-000000000005','11111111-1111-1111-1111-111111111111','actor',   'O5'),
- ('000000a0-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111','location','Square');
+ ('000000a0-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111','location','Square'),
+ ('000000b0-0000-0000-0000-0000000000b1','11111111-1111-1111-1111-111111111111','location','Market'),
+ ('000000c0-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','location','Road'),
+ ('000000d0-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111','location','Dock');
 
 -- E1 @ tick 100: P privately discloses the secret to M (doc 13 §4). No state mutation.
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
@@ -48,23 +51,28 @@ INSERT INTO perception_record (world_id, holder_id, source_event_id, content, ep
 -- event_id = 'e0000000-0000-0000-0000-9' + lpad(i,11,'0')  (collision-free vs E1 ...001 / E102 ...102).
 -- Rule (hand-verifiable): for i in 1..100, tick=100+i,
 --   actor    = (P,M,J,O1,O2,O3,O4,O5)[(i % 8)+1]   (1-based SQL arrays)
---   location = ('tavern','square','market','road','dock')[(i % 5)+1]
+--   location = ('Tavern','Square','Market','Road','Dock')[(i % 5)+1]
 -- Each event: 'move', one ABSOLUTE attrs.location_id set, one 'direct' perception for the mover.
 DO $$
 DECLARE
-  i int; tick bigint; ev uuid; actor uuid; loc text;
+  i int; tick bigint; ev uuid; actor uuid; loc_id uuid; loc_name text;
   actors uuid[] := ARRAY[
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     'cccccccc-cccc-cccc-cccc-cccccccccccc','00000000-0000-0000-0000-000000000001',
     '00000000-0000-0000-0000-000000000002','00000000-0000-0000-0000-000000000003',
     '00000000-0000-0000-0000-000000000004','00000000-0000-0000-0000-000000000005']::uuid[];
-  locs text[] := ARRAY['tavern','square','market','road','dock'];
+  loc_ids uuid[] := ARRAY[
+    'dddddddd-dddd-dddd-dddd-dddddddddddd', '000000a0-0000-0000-0000-0000000000a1',
+    '000000b0-0000-0000-0000-0000000000b1', '000000c0-0000-0000-0000-0000000000c1',
+    '000000d0-0000-0000-0000-0000000000d1']::uuid[];
+  loc_names text[] := ARRAY['Tavern','Square','Market','Road','Dock'];
 BEGIN
   FOR i IN 1..100 LOOP
-    tick  := 100 + i;
-    ev    := ('e0000000-0000-0000-0000-9' || lpad(i::text, 11, '0'))::uuid;
-    actor := actors[(i % 8) + 1];
-    loc   := locs[(i % 5) + 1];
+    tick    := 100 + i;
+    ev      := ('e0000000-0000-0000-0000-9' || lpad(i::text, 11, '0'))::uuid;
+    actor   := actors[(i % 8) + 1];
+    loc_id  := loc_ids[(i % 5) + 1];
+    loc_name := loc_names[(i % 5) + 1];
     INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                              status, accepted_at, visibility_scope, origin)
     VALUES (ev,'11111111-1111-1111-1111-111111111111','move',
@@ -74,10 +82,10 @@ BEGIN
     INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
                                 new_value, valid_from_tick, valid_from_seq)
     VALUES ('11111111-1111-1111-1111-111111111111', ev, actor, 'actor', 'attrs.location_id',
-            to_jsonb(loc), tick, 0);
+            to_jsonb(loc_id::text), tick, 0);
     INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                    acquired_tick, valid_tick)
-    VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to '||loc, 'direct', tick, tick);
+    VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to ' || lower(loc_name), 'direct', tick, tick);
   END LOOP;
 END $$;
 -- E102 @ tick 201: P publicizes the ledger. No state mutation. Present-forward (ADR-016):

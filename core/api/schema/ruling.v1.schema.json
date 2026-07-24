@@ -1,0 +1,30 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ruling/1",
+  "title": "ruling/1 — reasoning FIRST, then a one-word therefore, then the outcome",
+  "type": "object",
+  "required": ["reasoning", "therefore", "outcome"],
+  "properties": {
+    "reasoning": {"type": "string", "minLength": 1},
+    "therefore": {"enum": ["succeeds", "fails", "impossible"]},
+    "outcome": {
+      "oneOf": [
+        {"type": "object", "required": ["kind", "reason"], "properties": {"kind": {"const": "bounce"}, "reason": {"type": "string", "minLength": 1}}, "additionalProperties": false},
+        {"type": "object", "required": ["kind", "events"], "properties": {
+          "kind": {"const": "resolved"},
+          "events": {"type": "array", "minItems": 1, "items": {"type": "object", "required": ["type", "summary", "participant_ids", "visible"], "properties": {
+            "type": {"enum": ["ActorMoved", "Communicated", "ObjectRelocated", "OwnershipAccessChanged", "EntityCreated", "EntityDestroyed", "AttributeChanged"]},
+            "summary": {"type": "string", "minLength": 1},
+            "participant_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "format": "uuid"}},
+            "visible": {"type": "boolean"},
+            "hidden_summary": {"type": "string"}
+          }, "additionalProperties": false}},
+          "attribute_writes": {"type": "array", "items": {"type": "object", "required": ["target_id", "attribute", "value", "tier"], "properties": {"target_id": {"type": "string", "format": "uuid"}, "attribute": {"type": "string"}, "value": {}, "tier": {"enum": [1, 2]}}, "additionalProperties": false}},
+          "mints": {"type": "array", "items": {"type": "object"}},
+          "tension": {"enum": ["frantic", "tense", "normal", "calm", "none"]}
+        }, "additionalProperties": false}
+      ]
+    }
+  },
+  "additionalProperties": false
+}
