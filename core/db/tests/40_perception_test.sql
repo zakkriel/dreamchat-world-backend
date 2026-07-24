@@ -1,8 +1,8 @@
 BEGIN;
 SELECT plan(6);
 SELECT is( (SELECT count(*) FROM entity_registry
-            WHERE world_id='11111111-1111-1111-1111-111111111111')::int, 15,
-       'registry seeded with cast: P,M,J,Tavern,PUB,O1..O5,Square,SealedNote (chunk-4 +1) +3 spine locations (Market,Road,Dock)');
+            WHERE world_id='11111111-1111-1111-1111-111111111111')::int, 24,
+       'registry seeded with cast: P,M,J,Tavern,PUB,O1..O5,Square,SealedNote (chunk-4 +1) +3 spine locations (Market,Road,Dock) +9 Drowned Lantern (hooded woman, dock street, alley, cellar, note, front/back door, cellar hatch, key)');
 SELECT is( (SELECT count(*) FROM perception_record
             WHERE holder_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
               AND source_event_id='e0000000-0000-0000-0000-000000000001'

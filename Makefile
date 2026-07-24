@@ -22,8 +22,9 @@ pgtap:           ## install pgTAP extension into the db
 migrate:         ## apply dbmate migrations + dump schema.sql
 	docker compose run --rm dbmate up
 
-seed:            ## load the deterministic Mara seed
+seed:            ## load the deterministic Mara seed, then the Drowned Lantern scene
 	docker compose exec -T db psql -U postgres -d dreamchat -v ON_ERROR_STOP=1 -f /work/seeds/seed_mara_0A.sql
+	docker compose exec -T db psql -U postgres -d dreamchat -v ON_ERROR_STOP=1 -f /work/seeds/seed_drowned_lantern.sql
 
 test: pgtap      ## run the pgTAP suite (run `make reset` first for seed-dependent tests)
 	docker compose exec -T db sh -c 'pg_prove -U postgres -d dreamchat --ext .sql /work/tests/*_test.sql'
