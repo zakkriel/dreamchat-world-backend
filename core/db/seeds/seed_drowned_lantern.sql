@@ -73,7 +73,7 @@ INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick,
   'J-E2: a prizefighter until he killed a man in the ring with one unlucky blow; never fought clean for money again',55,0,
   'Backstory','accepted',now(),'public','fast_path'),
  ('e0000000-0000-0000-0000-0000000000f7','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'J-E3 (private): twice he watched Mara go grey at a harbor face and learned to stand closer instead of asking',56,0,
+  'J-E3 (private): twice he watched Mara go pale at a harbor face and learned to stand closer instead of asking',56,0,
   'Backstory','accepted',now(),'private','fast_path'),
  ('e0000000-0000-0000-0000-0000000000f8','11111111-1111-1111-1111-111111111111','AttributeChanged',
   'H-E1 (private): took the paymaster''s contract in a counting-house above the silk quay, three days ago',57,0,
@@ -109,7 +109,7 @@ INSERT INTO personality_core (world_id, actor_id, traits, malleability) VALUES
     "loyal_to_jonas":{"value":0.9,"manner":"treats Jonas as family; will not see him harmed"},
     "distrusts_authority":{"value":0.85,"manner":"the harbormaster''s men drink free and learn nothing"},
     "steady_under_pressure":{"value":0.8,"manner":"the last in the room to raise her voice"},
-    "speech_manner":"short sentences; harbor slang; calls strangers sailor; never says a name she was not given"}'::jsonb,
+    "speech_manner":"short sentences; harbor slang; calls strangers sailor regardless of trade; never says a name she was not given"}'::jsonb,
   0.25),
  ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc',
   '{"schema_version":"traits/1",
@@ -158,12 +158,12 @@ INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_
  -- Jonas knows OF a secret without knowing IT: a debt she never explains. (No "Reyna", no "ledger".)
  ('d15ec000-0000-0000-0000-0000000000b1','11111111-1111-1111-1111-111111111111',
   'cccccccc-cccc-cccc-cccc-cccccccccccc','e0000000-0000-0000-0000-0000000000f7',
-  'Mara keeps a knife under the till and a debt she never explains. Twice in four years I have watched her go grey at a face off the harbor. I have learned to stand closer and not to ask. I do not know what it is.',
+  'Mara keeps a knife under the till and a debt she never explains. Twice in four years I have watched her go pale at a face off the harbor. I have learned to stand closer and not to ask. I do not know what it is.',
   'inference',56,56),
  -- The hooded woman''s contract: a description and a purse, and one word of doubt — "Yet."
  ('d15ec000-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111',
   'ffffffff-ffff-ffff-ffff-ffffffffffff','e0000000-0000-0000-0000-0000000000f8',
-  'The paymaster''s coin bought a description: a courier, young, dark-haired, moves like a dock rat, carrying something that would hang the man who paid for the warehouse. There is a purse for whoever names him. The one by the door could be him. I am not sure. Yet.',
+  'The paymaster''s coin bought a description: a courier, young, dark-haired, moves like a dock rat — and a purse for whoever confirms him. The one by the door could be him. I am not sure. Yet.',
   'told',57,57);
 
 -- about-ness (RULINGS §6): Mara''s secret → Kade AND Mara; Jonas → Mara; hooded → Kade.
@@ -183,6 +183,10 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  -- the room reads calm; two of the four people in it are pretending → tension 'tense'
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','dddddddd-dddd-dddd-dddd-dddddddddddd','location','attrs.tension',              to_jsonb('tense'::text),                                                                         58,0),
  -- art_note: sealed, near-weightless, carried by Kade. Contents deliberately UNAUTHORED (Tier-2 flavor only).
+ -- NOTE: chunk-4's seed_mara_0A.sql already registers an older, separate "Sealed Note" entity
+ -- (a4000000-0000-0000-0000-0000000000a1) that co-exists in this world. This art_note
+ -- (d1000000-0000-0000-0000-0000000000b1) is the Drowned Lantern's canonical note for play —
+ -- do not conflate the two when reading state or writing new tests.
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.size',                 to_jsonb(1),                                                                                    58,1),
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.weight',               to_jsonb(0),                                                                                    58,2),
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.sealed_with_gray_wax', to_jsonb(true),                                                                                 58,3),
