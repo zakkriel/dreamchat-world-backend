@@ -807,10 +807,12 @@ CREATE FUNCTION public.fn_isolated_npcs(p_world_id uuid, p_action_ids uuid[], p_
     LANGUAGE sql STABLE
     AS $$
   WITH held AS (
+    -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
     SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
     FROM perception_record pr
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
+      AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
     GROUP BY 1, 2, 3
   ), shared AS (
     SELECT h.source_event_id,
@@ -827,6 +829,8 @@ CREATE FUNCTION public.fn_isolated_npcs(p_world_id uuid, p_action_ids uuid[], p_
    AND s.modal_content   = pr.content        -- matches only the public (modal) face
   WHERE pr.world_id = p_world_id
     AND pr.holder_id = ANY(p_npcs)
+    -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
+    AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
     AND s.source_event_id IS NULL             -- private: no matching public face
     AND EXISTS (
       SELECT 1 FROM perception_subject ps
@@ -902,10 +906,12 @@ CREATE FUNCTION public.fn_private_records(p_world_id uuid, p_npc uuid, p_action_
     LANGUAGE sql STABLE
     AS $$
   WITH held AS (
+    -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
     SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
     FROM perception_record pr
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
+      AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
     GROUP BY 1, 2, 3
   ), shared AS (
     SELECT h.source_event_id,
@@ -913,23 +919,31 @@ CREATE FUNCTION public.fn_private_records(p_world_id uuid, p_npc uuid, p_action_
     FROM held h
     GROUP BY h.source_event_id
     HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+  ), freshest AS (
+    -- cap is a v1 dial; §10's retrieval assembly refines it in Station I. Keep the FRESHEST 20, not
+    -- the oldest: a private cap must drop old records first, never the ones most likely to matter
+    -- now. Full tie-break (content, perception_id) keeps the 20-row cut deterministic.
+    SELECT pr.content, pr.acquired_tick, pr.perception_id
+    FROM perception_record pr
+    LEFT JOIN shared s
+      ON s.source_event_id = pr.source_event_id
+     AND s.modal_content   = pr.content
+    WHERE pr.world_id = p_world_id
+      AND pr.holder_id = p_npc
+      -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
+      AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
+      AND s.source_event_id IS NULL             -- private records only
+      AND EXISTS (
+        SELECT 1 FROM perception_subject ps
+        WHERE ps.perception_id = pr.perception_id
+          AND ps.entity_id = ANY(p_action_ids)  -- subjects intersect the action's bound ids
+      )
+    ORDER BY pr.acquired_tick DESC, pr.content DESC, pr.perception_id DESC
+    LIMIT 20
   )
-  SELECT pr.content, pr.acquired_tick
-  FROM perception_record pr
-  LEFT JOIN shared s
-    ON s.source_event_id = pr.source_event_id
-   AND s.modal_content   = pr.content
-  WHERE pr.world_id = p_world_id
-    AND pr.holder_id = p_npc
-    AND s.source_event_id IS NULL             -- private records only
-    AND EXISTS (
-      SELECT 1 FROM perception_subject ps
-      WHERE ps.perception_id = pr.perception_id
-        AND ps.entity_id = ANY(p_action_ids)  -- subjects intersect the action's bound ids
-    )
-  ORDER BY pr.acquired_tick ASC, pr.content ASC, pr.perception_id ASC
-  -- cap is a v1 dial; §10's retrieval assembly refines it in Station I.
-  LIMIT 20
+  SELECT f.content, f.acquired_tick
+  FROM freshest f
+  ORDER BY f.acquired_tick ASC, f.content ASC, f.perception_id ASC   -- present oldest-of-the-freshest first
 $$;
 
 
@@ -941,10 +955,12 @@ CREATE FUNCTION public.fn_public_moment(p_world_id uuid, p_present uuid[], p_k i
     LANGUAGE sql STABLE
     AS $$
   WITH held AS (
+    -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
     SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
     FROM perception_record pr
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
+      AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
     GROUP BY 1, 2, 3
   ), shared AS (
     SELECT h.source_event_id,
