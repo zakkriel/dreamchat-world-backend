@@ -10,6 +10,47 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: apply_attribute_writes(uuid, jsonb, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_attribute_writes(p_world_id uuid, p_writes jsonb, p_provenance_event uuid, p_tick bigint, p_seq integer) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  w        jsonb;
+  target   uuid;
+  ekind    text;
+  n        int := 0;
+BEGIN
+  FOR w IN SELECT * FROM jsonb_array_elements(p_writes) LOOP
+    target := (w->>'target_id')::uuid;
+
+    -- Look up entity_kind from the registry (required by state_mutation schema).
+    SELECT entity_kind INTO ekind
+      FROM entity_registry
+      WHERE entity_id = target AND world_id = p_world_id
+      LIMIT 1;
+
+    -- Skip writes for unknown entities (defensive; caller validates).
+    IF ekind IS NULL THEN
+      CONTINUE;
+    END IF;
+
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES (p_world_id, p_provenance_event, target, ekind,
+            'attrs.' || (w->>'attribute'),
+            w->'value',
+            p_tick, p_seq);
+
+    n := n + 1;
+  END LOOP;
+
+  RETURN n;
+END $$;
+
+
+--
 -- Name: apply_beat(uuid, uuid, jsonb, bigint, bigint, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -275,6 +316,190 @@ BEGIN
     -- SPEC-001: doc 03 does not define mutation->(a_id,b_id) addressing. NO-OP stub in 0A.
     NULL;
   END IF;
+END $$;
+
+
+--
+-- Name: apply_ruled_event(uuid, jsonb, bigint, integer, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_ruled_event(p_world_id uuid, p_ruled jsonb, p_tick bigint, p_seq integer, p_origin text) RETURNS jsonb
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  ev_type    text;
+  actor_id   uuid;
+  ev_id      uuid;
+  listener   uuid;
+  to_loc     uuid;
+  object_eid uuid;
+  dest_eid   uuid;
+  target_eid uuid;
+  here       uuid;
+  vis_scope  text;
+  truth_text text;
+  appear_txt text;
+  visible    boolean;
+  -- perception fan-out
+  receiver   uuid;
+  recv_text  text;
+  var_text   text;
+  pid        uuid;
+  -- participant ids for about-ness (perception_subject)
+  participant_ids uuid[];
+BEGIN
+  ev_type  := p_ruled->>'type';
+  actor_id := (p_ruled->>'actor_id')::uuid;
+  truth_text := p_ruled->>'truth';
+  appear_txt := NULLIF(TRIM(COALESCE(p_ruled->>'appearance', '')), '');
+  visible    := CASE
+    WHEN p_ruled ? 'visible' AND (p_ruled->>'visible') = 'false' THEN false
+    ELSE true
+  END;
+
+  -- ── STRUCTURAL FLOOR (twin of apply_event floor — keep in sync) ─────────────
+  -- Every type: actor must exist in entity_registry with kind='actor'.
+  IF NOT EXISTS (
+    SELECT 1 FROM entity_registry
+    WHERE entity_id = actor_id
+      AND world_id  = p_world_id
+      AND entity_kind = 'actor'
+  ) THEN
+    RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+  END IF;
+
+  -- Type-specific floor checks.
+  IF ev_type = 'ActorMoved' THEN
+    to_loc := (p_ruled->>'to_location_id')::uuid;
+    IF NOT EXISTS (
+      SELECT 1 FROM entity_registry
+      WHERE entity_id = to_loc AND world_id = p_world_id
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'Communicated' THEN
+    listener := (p_ruled->>'listener_id')::uuid;
+    SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
+      WHERE a.world_id = p_world_id AND a.entity_id = actor_id;
+    IF NOT EXISTS (
+      SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = listener
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'ObjectRelocated' THEN
+    object_eid := (p_ruled->>'object_id')::uuid;
+    dest_eid   := (p_ruled->>'dest_id')::uuid;
+    IF NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = object_eid AND world_id = p_world_id)
+    OR NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = dest_eid  AND world_id = p_world_id)
+    THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type IN ('OwnershipAccessChanged', 'EntityDestroyed', 'AttributeChanged') THEN
+    target_eid := (p_ruled->>'target_id')::uuid;
+    IF NOT EXISTS (
+      SELECT 1 FROM entity_registry WHERE entity_id = target_eid AND world_id = p_world_id
+    ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+  ELSIF ev_type = 'EntityCreated' THEN
+    -- No target check required (actor-only floor above covers it).
+    NULL;
+
+  ELSE
+    -- Unknown type: reject.
+    RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+  END IF;
+
+  -- ── COMMIT ──────────────────────────────────────────────────────────────────
+  ev_id := gen_random_uuid();
+
+  -- visibility_scope: private for Communicated, public otherwise.
+  vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
+
+  -- Canon summary = truth. CANON NEVER LIES.
+  INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                           status, accepted_at, visibility_scope, origin)
+  VALUES (ev_id, p_world_id, ev_type, truth_text,
+          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
+
+  -- event_participant: Communicated → speaker (actor) + listener; all others → instigator.
+  IF ev_type = 'Communicated' THEN
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+      (ev_id, actor_id, 'actor', 'speaker'),
+      (ev_id, listener, 'actor', 'listener');
+    participant_ids := ARRAY[actor_id, listener];
+  ELSE
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+      VALUES (ev_id, actor_id, 'actor', 'instigator');
+    participant_ids := ARRAY[actor_id];
+  END IF;
+
+  -- state_mutation: ActorMoved only — trigger projects it into actor_state.
+  IF ev_type = 'ActorMoved' THEN
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES (p_world_id, ev_id, actor_id, 'actor', 'attrs.location_id',
+            to_jsonb(to_loc::text), p_tick, p_seq);
+  END IF;
+
+  -- ── PERCEPTION FAN-OUT ───────────────────────────────────────────────────────
+  -- visible=false (explicit) → zero perceptions; no further work.
+  IF NOT visible THEN
+    RETURN jsonb_build_object('event_id', ev_id, 'halt_reason', 'committed');
+  END IF;
+
+  -- Receivers = actors co-located with the ruled actor (fn_actors_at on actor's
+  -- current location, NULL-safe) UNION the actor itself (actor already included
+  -- when they are present at their own location; UNION deduplicates).
+  --
+  -- After ActorMoved, the actor's location is already updated in actor_state by
+  -- the trigger above, so fn_actors_at returns the destination set. For non-move
+  -- types the actor is still at their original location — both are correct behavior.
+  SELECT (a.attrs->>'location_id')::uuid INTO here
+    FROM actor_state a
+    WHERE a.world_id = p_world_id AND a.entity_id = actor_id;
+
+  FOR receiver IN
+    SELECT entity_id FROM fn_actors_at(p_world_id, here)
+    UNION
+    SELECT actor_id
+  LOOP
+    -- Determine content for this receiver:
+    -- 1. receiver_variants match → variant text
+    -- 2. appearance (if non-empty) → appearance
+    -- 3. truth
+    var_text := NULL;
+    IF p_ruled ? 'receiver_variants' THEN
+      SELECT rv->>'text' INTO var_text
+        FROM jsonb_array_elements(p_ruled->'receiver_variants') AS rv
+        WHERE (rv->>'receiver_id')::uuid = receiver
+        LIMIT 1;
+    END IF;
+
+    recv_text := COALESCE(var_text, appear_txt, truth_text);
+
+    INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                   acquired_tick, valid_tick)
+    VALUES (p_world_id, receiver, ev_id, recv_text, 'direct', p_tick, p_tick)
+    RETURNING perception_id INTO pid;
+
+    -- About-ness: perception_subject rows for ALL participant ids (engine-written,
+    -- NOT relying on seed backfill).
+    DECLARE
+      part_id uuid;
+    BEGIN
+      FOREACH part_id IN ARRAY participant_ids LOOP
+        INSERT INTO perception_subject (perception_id, entity_id, world_id)
+          VALUES (pid, part_id, p_world_id);
+      END LOOP;
+    END;
+  END LOOP;
+
+  RETURN jsonb_build_object('event_id', ev_id, 'halt_reason', 'committed');
 END $$;
 
 
@@ -726,6 +951,110 @@ END $$;
 
 
 --
+-- Name: gather_slice(uuid, uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.gather_slice(p_world_id uuid, p_ids uuid[]) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT jsonb_build_object(
+    'entities',      COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id',   er.entity_id,
+          'kind', er.entity_kind,
+          'name', er.canonical_name,
+          'attrs', COALESCE(
+            CASE er.entity_kind
+              WHEN 'actor'    THEN (SELECT ast.attrs FROM actor_state    ast WHERE ast.entity_id = er.entity_id)
+              WHEN 'artifact' THEN (SELECT aft.attrs FROM artifact_state aft WHERE aft.entity_id = er.entity_id)
+              WHEN 'location' THEN (SELECT lst.attrs FROM location_state lst WHERE lst.entity_id = er.entity_id)
+              ELSE NULL
+            END,
+            '{}'::jsonb
+          )
+        )
+      )
+      FROM entity_registry er
+      WHERE er.world_id  = p_world_id
+        AND er.entity_id = ANY(p_ids)
+    ), '[]'::jsonb),
+
+    'relationships', COALESCE((
+      SELECT jsonb_agg(to_jsonb(rs))
+      FROM relationship_state rs
+      WHERE rs.world_id = p_world_id
+        AND (rs.a_id = ANY(p_ids) OR rs.b_id = ANY(p_ids))
+    ), '[]'::jsonb),
+
+    'recent_events', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'event_id', sub.event_id,
+          'type',     sub.event_type,
+          'tick',     sub.in_world_tick,
+          'seq',      sub.beat_seq,
+          'summary',  sub.summary
+        )
+        ORDER BY sub.in_world_tick DESC, sub.beat_seq DESC
+      )
+      FROM (
+        SELECT DISTINCT ON (ranked.event_id)
+               ranked.event_id,
+               ranked.event_type,
+               ranked.in_world_tick,
+               ranked.beat_seq,
+               ranked.summary
+        FROM (
+          SELECT
+            ce.event_id,
+            ce.event_type,
+            ce.in_world_tick,
+            ce.beat_seq,
+            ce.summary,
+            ep.entity_id,
+            ROW_NUMBER() OVER (
+              PARTITION BY ep.entity_id
+              ORDER BY ce.in_world_tick DESC, ce.beat_seq DESC
+            ) AS rn
+          FROM event_participant ep
+          JOIN canon_event ce ON ce.event_id = ep.event_id
+          WHERE ep.entity_id = ANY(p_ids)
+            AND ce.world_id  = p_world_id
+        ) ranked
+        WHERE ranked.rn <= 10
+        ORDER BY ranked.event_id, ranked.in_world_tick DESC, ranked.beat_seq DESC
+      ) sub
+    ), '[]'::jsonb),
+
+    'co_present',    COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'id',   er.entity_id,
+          'name', er.canonical_name
+        )
+      )
+      FROM entity_registry er
+      WHERE er.world_id  = p_world_id
+        AND er.entity_id IN (
+          SELECT fa.entity_id
+          FROM fn_actors_at(
+            p_world_id,
+            (
+              SELECT (ast.attrs->>'location_id')::uuid
+              FROM actor_state ast
+              WHERE ast.entity_id = p_ids[1]
+                AND ast.world_id  = p_world_id
+            )
+          ) fa
+        )
+        AND er.entity_id <> p_ids[1]
+    ), '[]'::jsonb)
+  )
+$$;
+
+
+--
 -- Name: generate_perceptions(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -959,7 +1288,7 @@ CREATE TABLE public.canon_event (
     source_refs jsonb,
     superseded_by uuid,
     CONSTRAINT canon_event_event_type_check CHECK ((event_type = ANY (ARRAY['ActorMoved'::text, 'Communicated'::text, 'ObjectRelocated'::text, 'OwnershipAccessChanged'::text, 'EntityCreated'::text, 'EntityDestroyed'::text, 'AttributeChanged'::text, 'move'::text, 'private_disclosure'::text, 'world_genesis'::text, 'observation'::text, 'publicize'::text]))),
-    CONSTRAINT canon_event_origin_check CHECK ((origin = ANY (ARRAY['fast_path'::text, 'template'::text, 'freeform'::text, 'threshold'::text, 'backstage'::text, 'compensation'::text]))),
+    CONSTRAINT canon_event_origin_check CHECK ((origin = ANY (ARRAY['fast_path'::text, 'template'::text, 'freeform'::text, 'threshold'::text, 'backstage'::text, 'compensation'::text, 'ruling'::text]))),
     CONSTRAINT canon_event_status_check CHECK ((status = ANY (ARRAY['proposed'::text, 'accepted'::text, 'rejected'::text, 'retconned'::text, 'superseded'::text])))
 );
 
@@ -1663,4 +1992,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260723100001'),
     ('20260723100002'),
     ('20260723100003'),
-    ('20260723100004');
+    ('20260723100004'),
+    ('20260724100001'),
+    ('20260724100002');

@@ -158,6 +158,8 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 	switch dc.Provider {
 	case "anthropic":
 		return newAnthropicDriver(dc)
+	case "openai-compat":
+		return newOpenAICompatDriver(dc)
 	case "fake-structured":
 		return NewFakeStructuredDriver("fake-structured:"+dc.Model, nil), nil
 	case "fake-text":

@@ -56,8 +56,11 @@ func (f *fakeTextDriver) Generate(_ context.Context, req GenRequest) (string, er
 	return out, nil
 }
 
-// fakeResolveDriver: returns a valid ruling/1 for CI (stand-in for the undelivered resolve station).
-// Extracts UUID from prompt via regex; uses it as the participant_id in the AttributeChanged event.
+// fakeResolveDriver: returns a ruling/2 for CI.
+// Extracts UUID from prompt via regex; echoes it as actor_id + target_id in the AttributeChanged
+// event. The JSON includes both v2 fields (actor_id, truth, appearance) AND superset fields
+// (summary, participant_ids) — v1-compat superset fields (summary/participant_ids) retained for
+// any remaining v1 consumers; the orchestrator is v2-only since Station D Task 5.
 // FAKE: CI stand-in for an undelivered station. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
 type fakeResolveDriver struct{ name string }
 
@@ -73,28 +76,25 @@ func (f *fakeResolveDriver) Generate(_ context.Context, req GenRequest) (string,
 	// Extract UUID from prompt using regex: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 	uuidRegex := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	matches := uuidRegex.FindStringSubmatch(req.Prompt)
-	participantID := "00000000-0000-0000-0000-000000000001"
+	actorID := "00000000-0000-0000-0000-000000000001"
 	if len(matches) > 0 {
-		participantID = matches[0]
+		actorID = matches[0]
 	}
+	const truthText = "The attempt does not land; the target hardens and deflects."
+	// Emit a ruling/2 JSON that ALSO satisfies the v1 validator (v1 uses plain json.Unmarshal so
+	// extra fields are silently ignored). v1-required per-event fields: summary + participant_ids.
+	// v2-required: actor_id + truth. target_id satisfies AttributeChanged per-type check.
+	out := fmt.Sprintf(
+		`{"reasoning":"The attempt does not land; the target hardens.","therefore":"fails","outcome":{"kind":"resolved","events":[{"type":"AttributeChanged","actor_id":%s,"target_id":%s,"truth":%s,"appearance":"The target seems unmoved.","visible":true,"summary":%s,"participant_ids":[%s]}]}}`,
+		jsonStr(actorID), jsonStr(actorID), jsonStr(truthText), jsonStr(truthText), jsonStr(actorID),
+	)
+	return out, nil
+}
 
-	ruling := Ruling{
-		Reasoning: "The attempt does not land; the target hardens.",
-		Therefore: "fails",
-		Outcome: RulingOutcome{
-			Kind: "resolved",
-			Events: []RuledEvent{
-				{
-					Type:           "AttributeChanged",
-					Summary:        "the attempt does not land; the target hardens",
-					ParticipantIDs: []string{participantID},
-					Visible:        true,
-				},
-			},
-		},
-	}
-	data, _ := json.Marshal(ruling)
-	return string(data), nil
+// jsonStr returns a JSON-quoted string literal.
+func jsonStr(s string) string {
+	b, _ := json.Marshal(s)
+	return string(b)
 }
 
 // fakeCognitionDriver: returns empty decision list for CI (stand-in for the undelivered cognition station).
