@@ -75,6 +75,11 @@ func main() {
 // (the decompose seat's structured tool-use is the leash); the live call needs ANTHROPIC_API_KEY at
 // request time (bind succeeds without it — capability is reported, not key-gated). DREAMCHAT_BRIDGE=fake
 // selects deterministic drivers for keyless local dev. Re-pointing one seat's entry changes only it.
+//
+// Resolve-seat override: if DREAMCHAT_RESOLVE_PROVIDER is non-empty, the resolve seat is wired to
+// that provider instead of the global default. Use with DREAMCHAT_RESOLVE_BASE_URL,
+// DREAMCHAT_RESOLVE_MODEL, and DREAMCHAT_RESOLVE_API_KEY (e.g. provider=openai-compat pointing at
+// DeepInfra/DeepSeek/OpenRouter). All other seats are unaffected (D-13).
 func defaultSeatConfig() SeatConfig {
 	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
 		return SeatConfig{
@@ -89,11 +94,30 @@ func defaultSeatConfig() SeatConfig {
 	if model == "" {
 		model = "claude-opus-4-8"
 	}
-	return SeatConfig{
+	cfg := SeatConfig{
 		"decompose":       {Provider: "anthropic", Model: model},
 		"narrate":         {Provider: "anthropic", Model: model},
 		"resolve":         {Provider: "anthropic", Model: model},
 		"cognition_batch": {Provider: "anthropic", Model: model},
 		"world_actor":     {Provider: "anthropic", Model: model},
 	}
+
+	// Per-seat resolve override: DREAMCHAT_RESOLVE_PROVIDER selects an alternate provider for
+	// the resolve seat (e.g. "openai-compat" backed by DeepSeek). base_url and api_key are
+	// carried via Params so DriverConfig stays additive and other call sites are untouched.
+	if resolveProvider := os.Getenv("DREAMCHAT_RESOLVE_PROVIDER"); resolveProvider != "" {
+		resolveModel := os.Getenv("DREAMCHAT_RESOLVE_MODEL")
+		if resolveModel == "" {
+			resolveModel = model // fall back to global model name as a hint
+		}
+		cfg["resolve"] = DriverConfig{
+			Provider: resolveProvider,
+			Model:    resolveModel,
+			Params: map[string]string{
+				"base_url": os.Getenv("DREAMCHAT_RESOLVE_BASE_URL"),
+				"api_key":  os.Getenv("DREAMCHAT_RESOLVE_API_KEY"),
+			},
+		}
+	}
+	return cfg
 }
