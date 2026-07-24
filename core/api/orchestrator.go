@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,10 +20,11 @@ const beatTickCap = 1000
 // Stage 4: Advance clock — ActorMoved adds fn_move_duration ticks; others add seq.
 // Stage 5: UNRESOLVED sentinel — halt immediately with candidate list.
 type Orchestrator struct {
-	DB             *pgxpool.Pool
-	Resolve        Driver
-	CognitionBatch Driver
-	WorldActor     Driver
+	DB                *pgxpool.Pool
+	Resolve           Driver
+	CognitionBatch    Driver
+	CognitionIsolated Driver
+	WorldActor        Driver
 }
 
 // BeatOutcome is the result of RunBeat.
@@ -71,57 +73,27 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			return outcome, nil
 		}
 
-		// ── Stage 1: World-first hook (CognitionBatch) ───────────────────────────
-		// Get actor's current location for fn_actors_at query.
-		loc, err := o.actorLocation(ctx, worldID, actorID)
+		// ── Stage 1: World-first (cognition seats) ───────────────────────────────
+		// Every present NPC's decision runs through the SAME pipeline as the player's — no bypass.
+		// worldFirst does the §5 mechanical split (batch = public moment only; secret-holders
+		// isolated) and commits each NPC decision (passthrough via apply_event, adjudicated via
+		// o.adjudicate). It returns how many (tick,seq) slots the NPC commits consumed.
+		wf, err := o.worldFirst(ctx, worldID, actorID, attempt, curTick, curSeq)
 		if err != nil {
-			return outcome, fmt.Errorf("actor location stage1: %w", err)
+			return outcome, fmt.Errorf("worldFirst stage1: %w", err)
 		}
-
-		presentIDs, err := o.fnActorsAt(ctx, worldID, loc)
-		if err != nil {
-			return outcome, fmt.Errorf("fn_actors_at stage1: %w", err)
-		}
-
-		// Build prompt for cognition batch: present actor IDs + attempt JSON.
-		attemptJSON, _ := json.Marshal(attempt)
-		cogPrompt := fmt.Sprintf("present_actors:%v attempt:%s", presentIDs, string(attemptJSON))
-
-		// Call CognitionBatch for NPC decisions.
-		if o.CognitionBatch != nil {
-			rawDecisions, err := o.CognitionBatch.Generate(ctx, GenRequest{
-				Schema: json.RawMessage(npcAttemptsSchemaJSON),
-				Prompt: cogPrompt,
-			})
-			if err == nil && rawDecisions != "" && rawDecisions != "[]" {
-				decisions, decErr := DecodeAndValidateNPCDecisions(rawDecisions, presentIDs)
-				if decErr == nil {
-					for _, dec := range decisions {
-						if dec.Reaction == nil {
-							continue
-						}
-						switch dec.Reaction.CommitKind {
-						case "commit":
-							// Route NPC commit through apply_event directly (not recursive RunBeat).
-							npcAttemptJSON, _ := json.Marshal(dec.Reaction.Attempt)
-							result, applyErr := o.applyEvent(ctx, worldID, dec.ActorID, npcAttemptJSON, curTick, curSeq)
-							if applyErr == nil && result["halt_reason"] == "committed" {
-								if evID, ok := result["event_id"].(string); ok && evID != "" {
-									outcome.Committed = append(outcome.Committed, evID)
-								}
-								curSeq++ // Fix 1: advance seq after each NPC commit to avoid (tick,seq) collision with player events.
-							}
-						case "telegraph":
-							outcome.Telegraphs = append(outcome.Telegraphs, dec.Reaction.Attempt.Stated)
-						}
-					}
-				}
-			}
+		outcome.Committed = append(outcome.Committed, wf.Committed...)
+		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
+		curSeq += wf.SeqAdvance
+		if wf.Halt != "" {
+			outcome.HaltReason = wf.Halt
+			outcome.TicksAdvanced = curTick - startTick
+			return outcome, nil
 		}
 
 		// ── Stage 2: Premise re-check (deterministic) ────────────────────────────
-		// Re-read actor location (may have changed from NPC commits above).
-		loc, err = o.actorLocation(ctx, worldID, actorID)
+		// Read actor location (may have changed from NPC commits above).
+		loc, err := o.actorLocation(ctx, worldID, actorID)
 		if err != nil {
 			return outcome, fmt.Errorf("actor location stage2: %w", err)
 		}
@@ -224,6 +196,202 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick
 	return outcome, nil
+}
+
+// worldFirstResult is what the world-first stage produced for one attempt: the NPC events it
+// committed, the wind-up strings it telegraphed (Task 5 turns these into held outcomes), whether
+// a held-outcome row was written, how many (tick,seq) slots it consumed, and a halt (unused in
+// this task — the telegraph→beat-end flow lands in Task 5).
+type worldFirstResult struct {
+	Committed         []string
+	TelegraphedStated []string
+	HeldWritten       bool
+	SeqAdvance        int
+	Halt              string
+}
+
+// worldFirst is stage 1: the present NPCs get their word before the player's attempt resolves.
+// It performs the §5 mechanical split — one cognition call per NPC, each in EXACTLY one seat —
+// and commits each decision through the same pipeline the player uses (no trusted-NPC bypass).
+//
+//	present = fn_actors_at(player's location); npcs = present − player.
+//	action ids = the attempt's bound entity ids + the player.
+//	isolated = fn_isolated_npcs (private about-ness intersects the action ids); batch = npcs − isolated.
+//	≤1 batch call (skipped when the batch set is empty), validated against the batch ids only;
+//	one isolated call per flagged NPC, validated against exactly her own id.
+//
+// Deterministic processing order: batch response order first, then isolated NPCs by uuid asc.
+func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string, attempt Attempt, tick int64, seq int) (worldFirstResult, error) {
+	var res worldFirstResult
+
+	// present roster on the player's location; npcs = present − player.
+	loc, err := o.actorLocation(ctx, worldID, playerID)
+	if err != nil {
+		return res, fmt.Errorf("player location: %w", err)
+	}
+	present, err := o.fnActorsAt(ctx, worldID, loc)
+	if err != nil {
+		return res, fmt.Errorf("fn_actors_at: %w", err)
+	}
+	npcs := make([]string, 0, len(present))
+	for _, id := range present {
+		if id != playerID {
+			npcs = append(npcs, id)
+		}
+	}
+	// Skip cognition entirely when no NPC is present — the quiet room has nothing to think.
+	if len(npcs) == 0 {
+		return res, nil
+	}
+
+	// action ids = the attempt's bound ids + the player. The isolation lookup intersects these
+	// with each NPC's private about-ness links, one hop (RULINGS-2026-07-23 §5).
+	actionIDs := append(o.collectParticipantIDs(attempt), playerID)
+
+	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, present, npcs)
+	if err != nil {
+		return res, fmt.Errorf("fn_isolated_npcs: %w", err)
+	}
+	isoSet := make(map[string]bool, len(isolated))
+	for _, id := range isolated {
+		isoSet[id] = true
+	}
+	batchIDs := make([]string, 0, len(npcs))
+	for _, id := range npcs {
+		if !isoSet[id] {
+			batchIDs = append(batchIDs, id)
+		}
+	}
+	sort.Strings(batchIDs) // stable, cache-native DECIDE FOR list
+	sort.Strings(isolated) // isolated NPCs processed by uuid asc (deterministic intra-tick order)
+
+	// The public moment (modal face of every event shared by ALL present holders) and the scene
+	// frame are shared by both seats. The isolated seat adds the flagged NPC's private records.
+	moment, err := o.publicMoment(ctx, worldID, present)
+	if err != nil {
+		return res, fmt.Errorf("fn_public_moment: %w", err)
+	}
+	scene, err := o.loadScene(ctx, worldID, loc, present)
+	if err != nil {
+		return res, fmt.Errorf("load scene: %w", err)
+	}
+	imminentActor := playerID
+	for _, r := range scene.Present {
+		if r.ID == playerID {
+			imminentActor = r.Name
+			break
+		}
+	}
+
+	localSeq := seq
+
+	// ── Shared batch: ONE call for the NPCs whose read needs nothing beyond the public moment.
+	// WALL INVARIANT (RULINGS-2026-07-23 §5): buildBatchPrompt is fed ONLY the batch minds' cores
+	// and the PUBLIC moment — never a private line, never an isolated NPC's core beyond the public
+	// roster name line. Every secret rides its own isolated call below. The wall holds by
+	// construction: a secret that never enters a shared prompt cannot bleed into another mind.
+	if len(batchIDs) > 0 && o.CognitionBatch != nil {
+		minds, err := o.loadMinds(ctx, worldID, batchIDs)
+		if err != nil {
+			return res, fmt.Errorf("load batch minds: %w", err)
+		}
+		prompt := buildBatchPrompt(scene, minds, moment, imminentActor, attempt)
+		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
+		if genErr == nil {
+			// Validated against the BATCH ids only — a decision for an isolated NPC (or the player)
+			// is rejected by DecodeAndValidateNPCDecisions' allowlist (non-present-for-this-call).
+			if decisions, decErr := DecodeAndValidateNPCDecisions(raw, batchIDs); decErr == nil {
+				advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
+				if applyErr != nil {
+					return res, applyErr
+				}
+				localSeq += advance
+			}
+		}
+	}
+
+	// ── Isolated calls: one per flagged NPC, her secret riding alone. Processed by uuid asc.
+	if o.CognitionIsolated != nil {
+		for _, npcID := range isolated {
+			minds, err := o.loadMinds(ctx, worldID, []string{npcID})
+			if err != nil {
+				return res, fmt.Errorf("load isolated mind %s: %w", npcID, err)
+			}
+			if len(minds) == 0 {
+				continue
+			}
+			private, err := o.privateRecords(ctx, worldID, npcID, actionIDs, present)
+			if err != nil {
+				return res, fmt.Errorf("fn_private_records %s: %w", npcID, err)
+			}
+			prompt := buildIsolatedPrompt(scene, minds[0], private, moment, imminentActor, attempt)
+			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
+			if genErr != nil {
+				continue
+			}
+			// Validated against EXACTLY her own id — her call may speak only for her.
+			decisions, decErr := DecodeAndValidateNPCDecisions(raw, []string{npcID})
+			if decErr != nil {
+				continue
+			}
+			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
+			if applyErr != nil {
+				return res, applyErr
+			}
+			localSeq += advance
+		}
+	}
+
+	res.SeqAdvance = localSeq - seq
+	return res, nil
+}
+
+// applyNPCDecisions commits a validated decision set (in response order) into canon and returns
+// how many (tick,seq) slots it consumed. NO BYPASS: a `commit` of a passthrough type
+// (ActorMoved|Communicated|ObjectRelocated) goes through apply_event; every other (adjudicated)
+// type goes through o.adjudicate with the NPC as the ActorAttempt actor — the same resolve
+// pipeline the player's attempts use. `none` is a skip; `telegraph` is recorded (Task 5 replaces
+// this stub with the held-outcome write + beat-end).
+func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, decisions []NPCDecision, tick int64, startSeq int, res *worldFirstResult) (int, error) {
+	localSeq := startSeq
+	for _, dec := range decisions {
+		if dec.Reaction == nil {
+			continue // "none" — the mind does nothing this moment
+		}
+		switch dec.Reaction.CommitKind {
+		case "commit":
+			switch dec.Reaction.Attempt.Type {
+			case "ActorMoved", "Communicated", "ObjectRelocated":
+				// Passthrough: the structural floor is the gate; no ruling needed.
+				attemptJSON, _ := json.Marshal(dec.Reaction.Attempt)
+				result, err := o.applyEvent(ctx, worldID, dec.ActorID, attemptJSON, tick, localSeq)
+				if err != nil {
+					return localSeq - startSeq, fmt.Errorf("npc apply_event: %w", err)
+				}
+				if result["halt_reason"] == "committed" {
+					if evID, ok := result["event_id"].(string); ok && evID != "" {
+						res.Committed = append(res.Committed, evID)
+					}
+					localSeq++ // advance so the next event never collides on (tick,seq)
+				}
+			default:
+				// Adjudicated types (OwnershipAccessChanged|EntityDestroyed|AttributeChanged, …):
+				// the SAME resolve pipeline the player uses — a "trusted NPC" fast path is a named
+				// consistency hole (FINAL-world-npc-cognition "No bypass").
+				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq)
+				if err != nil {
+					return localSeq - startSeq, fmt.Errorf("npc adjudicate: %w", err)
+				}
+				res.Committed = append(res.Committed, ar.Committed...)
+				localSeq += ar.SeqAdvance
+			}
+		case "telegraph":
+			// Task 5 replaces this stub with a held-outcome write + beat-end. For now, surface the
+			// wind-up's stated string the same way the old stage 1 did, so nothing downstream shifts.
+			res.TelegraphedStated = append(res.TelegraphedStated, dec.Reaction.Attempt.Stated)
+		}
+	}
+	return localSeq - startSeq, nil
 }
 
 // actorLocation returns the actor's current location_id from actor_state.
@@ -369,8 +537,12 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	// that relationship counterparties and UUIDs embedded in event summary text are NOT
 	// whitelisted — those are fetched context, not grounded entities the LLM may claim.
 	var sliceTop struct {
-		Entities  []struct{ ID string `json:"id"` } `json:"entities"`
-		CoPresent []struct{ ID string `json:"id"` } `json:"co_present"`
+		Entities []struct {
+			ID string `json:"id"`
+		} `json:"entities"`
+		CoPresent []struct {
+			ID string `json:"id"`
+		} `json:"co_present"`
 	}
 	_ = json.Unmarshal(sliceRaw, &sliceTop) // best-effort; empty on failure is safe
 	sliceIDs := map[string]bool{}

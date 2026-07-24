@@ -93,10 +93,11 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 3. Orchestrator.RunBeat is the ONLY canonization point (D-1). origin='freeform' = model-proposed, gated.
 	orc := &Orchestrator{
-		DB:             h.pool,
-		Resolve:        h.bridge.Driver(SeatResolve.Name),
-		CognitionBatch: h.bridge.Driver(SeatCognitionBatch.Name),
-		WorldActor:     h.bridge.Driver(SeatWorldActor.Name),
+		DB:                h.pool,
+		Resolve:           h.bridge.Driver(SeatResolve.Name),
+		CognitionBatch:    h.bridge.Driver(SeatCognitionBatch.Name),
+		CognitionIsolated: h.bridge.Driver(SeatCognitionIsolated.Name),
+		WorldActor:        h.bridge.Driver(SeatWorldActor.Name),
 	}
 
 	var startTick int64

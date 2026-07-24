@@ -46,7 +46,7 @@ func main() {
 	// uses deterministic drivers for keyless local dev. Bind fails closed if a seat's driver underpowers
 	// its capability floor. CI never starts this server; tests inject their own bridge.
 	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory,
-		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatWorldActor)
+		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -83,11 +83,12 @@ func main() {
 func defaultSeatConfig() SeatConfig {
 	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
 		return SeatConfig{
-			"decompose":       {Provider: "fake-structured", Model: "dev"},
-			"narrate":         {Provider: "fake-text", Model: "dev"},
-			"resolve":         {Provider: "fake-structured", Model: "dev"},
-			"cognition_batch": {Provider: "fake-structured", Model: "dev"},
-			"world_actor":     {Provider: "fake-structured", Model: "dev"},
+			"decompose":          {Provider: "fake-structured", Model: "dev"},
+			"narrate":            {Provider: "fake-text", Model: "dev"},
+			"resolve":            {Provider: "fake-structured", Model: "dev"},
+			"cognition_batch":    {Provider: "fake-structured", Model: "dev"},
+			"cognition_isolated": {Provider: "fake-structured", Model: "dev"},
+			"world_actor":        {Provider: "fake-structured", Model: "dev"},
 		}
 	}
 	model := os.Getenv("DREAMCHAT_MODEL")
@@ -95,11 +96,12 @@ func defaultSeatConfig() SeatConfig {
 		model = "claude-opus-4-8"
 	}
 	cfg := SeatConfig{
-		"decompose":       {Provider: "anthropic", Model: model},
-		"narrate":         {Provider: "anthropic", Model: model},
-		"resolve":         {Provider: "anthropic", Model: model},
-		"cognition_batch": {Provider: "anthropic", Model: model},
-		"world_actor":     {Provider: "anthropic", Model: model},
+		"decompose":          {Provider: "anthropic", Model: model},
+		"narrate":            {Provider: "anthropic", Model: model},
+		"resolve":            {Provider: "anthropic", Model: model},
+		"cognition_batch":    {Provider: "anthropic", Model: model},
+		"cognition_isolated": {Provider: "anthropic", Model: model},
+		"world_actor":        {Provider: "anthropic", Model: model},
 	}
 
 	// Per-seat resolve override: DREAMCHAT_RESOLVE_PROVIDER selects an alternate provider for
@@ -118,6 +120,27 @@ func defaultSeatConfig() SeatConfig {
 				"api_key":  os.Getenv("DREAMCHAT_RESOLVE_API_KEY"),
 			},
 		}
+	}
+
+	// Per-seat cognition override (mirror of the resolve block): DREAMCHAT_COGNITION_PROVIDER
+	// re-points BOTH cognition seats — batch AND isolated — at one alternate provider (one env
+	// family, since the two seats are the same NPC-decision workload split only by the wall). Other
+	// seats are unaffected (D-13). base_url/api_key ride Params so DriverConfig stays additive.
+	if cogProvider := os.Getenv("DREAMCHAT_COGNITION_PROVIDER"); cogProvider != "" {
+		cogModel := os.Getenv("DREAMCHAT_COGNITION_MODEL")
+		if cogModel == "" {
+			cogModel = model // fall back to the global model name as a hint
+		}
+		cogCfg := DriverConfig{
+			Provider: cogProvider,
+			Model:    cogModel,
+			Params: map[string]string{
+				"base_url": os.Getenv("DREAMCHAT_COGNITION_BASE_URL"),
+				"api_key":  os.Getenv("DREAMCHAT_COGNITION_API_KEY"),
+			},
+		}
+		cfg["cognition_batch"] = cogCfg
+		cfg["cognition_isolated"] = cogCfg
 	}
 	return cfg
 }

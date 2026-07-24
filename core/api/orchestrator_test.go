@@ -280,11 +280,15 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 	npcJSON := `[{"actor_id":"` + maraID + `","decision":{"commit_kind":"commit","attempt":{"type":"Communicated","stated":"Mara greets the player","listener_id":"` + playerID + `","content":"greetings traveller"}}}]`
 	fakeCog := &inlineCommitCognitionDriver{json: npcJSON}
 
+	// Mara holds a private record about the player (seed E1), so the §5 split flags her into the
+	// ISOLATED seat for this player-directed action. Bind the same inline driver to both seats so
+	// her one decision is produced by whichever seat she lands in (here: isolated).
 	orc := &Orchestrator{
-		DB:             pool,
-		Resolve:        NewFakeResolveDriver(),
-		CognitionBatch: fakeCog,
-		WorldActor:     NewFakeWorldActorDriver(),
+		DB:                pool,
+		Resolve:           NewFakeResolveDriver(),
+		CognitionBatch:    fakeCog,
+		CognitionIsolated: fakeCog,
+		WorldActor:        NewFakeWorldActorDriver(),
 	}
 
 	// Player's chain: Communicated to Mara (passthrough).
@@ -334,8 +338,10 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 // inlineCommitCognitionDriver returns a fixed NPC decision JSON for CI.
 type inlineCommitCognitionDriver struct{ json string }
 
-func (f *inlineCommitCognitionDriver) Name() string                { return "inline-commit-cognition" }
-func (f *inlineCommitCognitionDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *inlineCommitCognitionDriver) Name() string { return "inline-commit-cognition" }
+func (f *inlineCommitCognitionDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (f *inlineCommitCognitionDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("inline-commit-cognition: used without schema")
