@@ -55,14 +55,33 @@ type ActorAttempt struct {
 // RunBeat executes the five-stage loop for each attempt in chain, starting at startTick.
 // It commits passthrough types via apply_event and routes adjudicated types through the
 // Resolve driver. Returns BeatOutcome describing what was committed and why halted.
+//
+// The per-attempt loop itself lives in runChain, which RunReactionBeat's post-collision remainder
+// also uses — a normal chain is a normal chain wherever it runs (RULINGS-2026-07-24 §2).
 func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64) (BeatOutcome, error) {
-	curTick := startTick
-	curSeq := 0
 	outcome := BeatOutcome{
 		Committed:            []string{},
 		UnresolvedCandidates: []string{},
 		Telegraphs:           []string{},
 	}
+	if err := o.runChain(ctx, worldID, actorID, chain, startTick, 0, &outcome); err != nil {
+		return outcome, err
+	}
+	return outcome, nil
+}
+
+// runChain is the shared per-attempt loop: it advances curTick/curSeq from (startTick, startSeq),
+// appending every commit/telegraph into outcome and setting outcome.HaltReason + TicksAdvanced when
+// it stops (halt) or reaches the end (completed). TicksAdvanced is measured from the startTick
+// passed in, so a reaction beat's remainder — which starts at the reaction's own startTick (the
+// combined ruling advances seq only) — reports the whole beat's tick span.
+//
+// This is the identical five-stage loop RunBeat always ran; extracting it is a pure refactor for
+// the existing path so RunReactionBeat can run "a normal chain against the post-collision world"
+// (RULINGS-2026-07-24 §2) through the very same code.
+func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, outcome *BeatOutcome) error {
+	curTick := startTick
+	curSeq := startSeq
 
 	for _, attempt := range chain {
 		// ── Stage 5: UNRESOLVED sentinel (check first — no commit, just halt) ────
@@ -70,7 +89,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			outcome.HaltReason = "unresolved"
 			outcome.UnresolvedCandidates = attempt.CandidateIDs
 			outcome.TicksAdvanced = curTick - startTick
-			return outcome, nil
+			return nil
 		}
 
 		// ── Stage 1: World-first (cognition seats) ───────────────────────────────
@@ -80,7 +99,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		// o.adjudicate). It returns how many (tick,seq) slots the NPC commits consumed.
 		wf, err := o.worldFirst(ctx, worldID, actorID, attempt, curTick, curSeq)
 		if err != nil {
-			return outcome, fmt.Errorf("worldFirst stage1: %w", err)
+			return fmt.Errorf("worldFirst stage1: %w", err)
 		}
 		outcome.Committed = append(outcome.Committed, wf.Committed...)
 		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
@@ -88,7 +107,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		if wf.Halt != "" {
 			outcome.HaltReason = wf.Halt
 			outcome.TicksAdvanced = curTick - startTick
-			return outcome, nil
+			return nil
 		}
 
 		// ── Beat-end on telegraph (RULINGS-2026-07-24 §1, §3) ────────────────────
@@ -97,11 +116,12 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		// commit + hold). The beat ENDS here. The player's triggering attempt never resolves — the
 		// world seized the moment before it landed — and every un-run chain step is DISCARDED. The
 		// narration (post-beat perceptions) delivers the moment; the player's next input meets the
-		// held act(s) as a reaction (Task 6).
+		// held act(s) as a reaction (Task 6). A remainder chain (RunReactionBeat) reaching this same
+		// branch legally ends the reaction beat on its own fresh telegraph.
 		if wf.HeldWritten {
 			outcome.HaltReason = "telegraph"
 			outcome.TicksAdvanced = curTick - startTick
-			return outcome, nil
+			return nil
 		}
 
 		// ── Stage 2: Premise re-check (deterministic, generalized — all six types) ──
@@ -111,12 +131,12 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		// (prefix stands) with premise_broken.
 		holds, premErr := o.premiseHolds(ctx, worldID, actorID, attempt)
 		if premErr != nil {
-			return outcome, fmt.Errorf("premise re-check stage2: %w", premErr)
+			return fmt.Errorf("premise re-check stage2: %w", premErr)
 		}
 		if !holds {
 			outcome.HaltReason = "premise_broken"
 			outcome.TicksAdvanced = curTick - startTick
-			return outcome, nil
+			return nil
 		}
 
 		// ── Stage 3: Route ────────────────────────────────────────────────────────
@@ -126,18 +146,18 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			// Capture "from" location before commit (for move duration calculation).
 			fromLoc, err := o.actorLocation(ctx, worldID, actorID)
 			if err != nil {
-				return outcome, fmt.Errorf("actor location (pre-move): %w", err)
+				return fmt.Errorf("actor location (pre-move): %w", err)
 			}
 
 			attemptJSONBytes, _ := json.Marshal(attempt)
 			result, err := o.applyEvent(ctx, worldID, actorID, attemptJSONBytes, curTick, curSeq)
 			if err != nil {
-				return outcome, fmt.Errorf("apply_event passthrough: %w", err)
+				return fmt.Errorf("apply_event passthrough: %w", err)
 			}
 			if result["halt_reason"] == "gate_reject" {
 				outcome.HaltReason = "gate_reject"
 				outcome.TicksAdvanced = curTick - startTick
-				return outcome, nil
+				return nil
 			}
 			evID, _ := result["event_id"].(string)
 			if evID != "" {
@@ -148,7 +168,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			if attempt.Type == "ActorMoved" {
 				dur, durErr := o.fnMoveDuration(ctx, worldID, fromLoc, attempt.ToLocationID)
 				if durErr != nil {
-					return outcome, fmt.Errorf("fn_move_duration: %w", durErr)
+					return fmt.Errorf("fn_move_duration: %w", durErr)
 				}
 				curTick += dur
 				curSeq = 0
@@ -156,7 +176,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 				if curTick-startTick > beatTickCap {
 					outcome.HaltReason = "turn_budget"
 					outcome.TicksAdvanced = curTick - startTick
-					return outcome, nil
+					return nil
 				}
 			} else {
 				curSeq++
@@ -167,13 +187,13 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
 			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq)
 			if adjErr != nil {
-				return outcome, adjErr
+				return adjErr
 			}
 			outcome.Committed = append(outcome.Committed, ar.Committed...)
 			if ar.Halt != "" {
 				outcome.HaltReason = ar.Halt
 				outcome.TicksAdvanced = curTick - startTick
-				return outcome, nil
+				return nil
 			}
 			curSeq += ar.SeqAdvance
 		}
@@ -181,6 +201,118 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick
+	return nil
+}
+
+// HeldOutcome is one pending held act read back from the held_outcome table: the NPC whose
+// disruptive move was telegraphed (ActorID), her FULL typed intended act (Attempt), the held row's
+// id (HeldID — flipped to 'resolved' inside the reaction's ruling tx), and the committed wind-up it
+// is paired to (TelegraphEventID). It is LOOP STATE the world carries, not canon (RULINGS-2026-07-24 §3).
+type HeldOutcome struct {
+	HeldID           string
+	ActorID          string
+	Attempt          Attempt
+	TelegraphEventID string
+}
+
+// pendingHeldOutcomes reads this world's pending held acts fresh from the table — no server memory,
+// no session machine: the world (the table) carries the reaction state (RULINGS-2026-07-24 §3). The
+// order is deterministic (created_tick, held_id) so simultaneous telegraphs enter the combined
+// ruling in a stable order; a beat that errored after committing a telegraph leaves a pending row
+// that this same query surfaces, so the very next input still resolves it (§3 — the wind-up IS canon).
+func pendingHeldOutcomes(ctx context.Context, db *pgxpool.Pool, worldID string) ([]HeldOutcome, error) {
+	rows, err := db.Query(ctx,
+		`SELECT held_id::text, actor_id::text, attempt::text, telegraph_event_id::text
+		 FROM held_outcome
+		 WHERE world_id = $1 AND status = 'pending'
+		 ORDER BY created_tick, held_id`,
+		worldID)
+	if err != nil {
+		return nil, fmt.Errorf("query pending held_outcome: %w", err)
+	}
+	defer rows.Close()
+
+	var out []HeldOutcome
+	for rows.Next() {
+		var h HeldOutcome
+		var attemptJSON string
+		if err := rows.Scan(&h.HeldID, &h.ActorID, &attemptJSON, &h.TelegraphEventID); err != nil {
+			return nil, fmt.Errorf("scan held_outcome: %w", err)
+		}
+		if err := json.Unmarshal([]byte(attemptJSON), &h.Attempt); err != nil {
+			return nil, fmt.Errorf("held_outcome %s attempt not valid Attempt JSON: %w", h.HeldID, err)
+		}
+		out = append(out, h)
+	}
+	return out, rows.Err()
+}
+
+// RunReactionBeat resolves the player's next input against the pending held act(s) (RULINGS-2026-07-24
+// §2 + §3, and §9's collision rule). It is the reaction path RunBeat is not: the check that chose it
+// already read the held rows fresh from the world (§3), so this method is handed them.
+//
+//	(1) chain[0].Type == "UNRESOLVED" → clarify halt; the holds STAY pending. The clarify answer is
+//	    the NEXT input and re-enters this same reaction path — nothing about the held rows changes.
+//	(2) The collision: ALL held acts + the reaction's FIRST action → ONE combined ruling
+//	    (§2; N-ary via Task 1's adjudicate). NO cognition fires first — the collision IS the world's
+//	    move, and depth-1 forbids re-reactions. The reaction's first action is adjudicated whatever
+//	    its type (a Communicated "ask for ale" is not a passthrough here — it is the player's answer
+//	    to the moment; §2 no-special-case). The held rows flip to 'resolved' INSIDE the ruling's tx
+//	    (resolveHeldIDs). A bounce (or gate_reject) returns before/rolls back that tx untouched, so
+//	    the holds STAY pending and the same next-input door reopens.
+//	(3) The remainder chain[1:] runs as a NORMAL chain against the post-collision world — the shared
+//	    runChain (world-first, generalized premise re-check, route, clock all apply). curSeq carries
+//	    the ruling's seq advance so the remainder never collides on (tick,seq); the tick is unchanged
+//	    (the combined ruling advances seq only).
+func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID string, chain []Attempt, held []HeldOutcome, startTick int64) (BeatOutcome, error) {
+	outcome := BeatOutcome{
+		Committed:            []string{},
+		UnresolvedCandidates: []string{},
+		Telegraphs:           []string{},
+	}
+
+	// (1) UNRESOLVED first action → clarify halt; holds stay pending.
+	if len(chain) > 0 && chain[0].Type == "UNRESOLVED" {
+		outcome.HaltReason = "unresolved"
+		outcome.UnresolvedCandidates = chain[0].CandidateIDs
+		outcome.TicksAdvanced = 0
+		return outcome, nil
+	}
+
+	// (2) Combined ruling: held acts (deterministic order) + the reaction's first action.
+	set := make([]ActorAttempt, 0, len(held)+1)
+	heldIDs := make([]string, 0, len(held))
+	for _, h := range held {
+		set = append(set, ActorAttempt{ActorID: h.ActorID, Attempt: h.Attempt})
+		heldIDs = append(heldIDs, h.HeldID)
+	}
+	if len(chain) > 0 {
+		set = append(set, ActorAttempt{ActorID: playerID, Attempt: chain[0]})
+	}
+
+	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0)
+	if err != nil {
+		return outcome, err
+	}
+	outcome.Committed = append(outcome.Committed, ar.Committed...)
+	if ar.Halt != "" {
+		// bounce | ruled_event_rejected — the ruling's tx (which also carries the resolveHeldIDs
+		// UPDATE) never committed, so the holds STAY pending. Nothing landed.
+		outcome.HaltReason = ar.Halt
+		outcome.TicksAdvanced = 0
+		return outcome, nil
+	}
+
+	// (3) The remainder runs as a normal chain against the post-collision world.
+	if len(chain) > 1 {
+		if err := o.runChain(ctx, worldID, playerID, chain[1:], startTick, ar.SeqAdvance, &outcome); err != nil {
+			return outcome, err
+		}
+		return outcome, nil
+	}
+
+	outcome.HaltReason = "completed"
+	outcome.TicksAdvanced = 0
 	return outcome, nil
 }
 

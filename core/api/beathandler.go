@@ -108,9 +108,25 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, viewerID, chain, startTick)
+	// Held check BEFORE decompose routing (RULINGS-2026-07-24 §3): read the world's pending holds
+	// fresh from the table — no server memory, no session machine, the world carries the state. Any
+	// pending hold ⇒ this input is a REACTION (§2 — first action + all held acts → one combined
+	// ruling; remainder a normal chain). None ⇒ a normal beat.
+	held, err := pendingHeldOutcomes(ctx, h.pool, worldID)
 	if err != nil {
-		log.Printf("RunBeat error: %v", err)
+		log.Printf("pendingHeldOutcomes error: %v", err)
+		http.Error(w, "held lookup failed", http.StatusInternalServerError)
+		return
+	}
+
+	var outcome BeatOutcome
+	if len(held) > 0 {
+		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick)
+	} else {
+		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick)
+	}
+	if err != nil {
+		log.Printf("beat error: %v", err)
 		http.Error(w, "beat failed", http.StatusInternalServerError)
 		return
 	}
