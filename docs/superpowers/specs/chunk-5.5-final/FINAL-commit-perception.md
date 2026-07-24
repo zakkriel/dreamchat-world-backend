@@ -21,5 +21,8 @@
 
 ## OPEN (remaining)
 1. Fan-out fidelity rules (who perceives what, with what degradation — distance, senses, language).
+   **Hook ruled 2026-07-24** (RULINGS-2026-07-24-reaction-beat.md §4): fan-out writes each receiver's
+   perception from per-receiver variant → default appearance → truth; appearance is NOT a second
+   canon. Fidelity rules will ride this same per-receiver hook.
 2. The perception payload composition for the narrator (and for NPC cognition — same wall?).
 3. How hidden truths later surface (inference, discovery) without violating the wall.

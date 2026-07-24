@@ -44,7 +44,11 @@ here. CONFIDENCE AT CHECKPOINT: ~35% — the call mechanics are the least-design
 
 ## OPEN (remaining)
 2. The OUTPUT schema, exactly (events + tension + visible/hidden split + minted rows — one shape;
-   now must also carry the reasoning-first structure).
+   now must also carry the reasoning-first structure). **Semantic half ruled 2026-07-24** (see
+   RULINGS-2026-07-24-reaction-beat.md §4, §6): each ruled event = TRUTH (canon, never lies) +
+   optional default APPEARANCE + optional per-receiver variants (+ visible=false ⇒ no perceptions);
+   attribute writes land as state_mutation attrs paths, Tier-1 strictly validated in code, Tier-2
+   free. Remaining: the concrete JSON schema revision + prompt shape (Station D).
 4. The repair loop concretely (what errors are attached, what the second pass may change).
 5. (narrowed) Coherence beyond the gathered slice — cases where nothing in the action links the
    contradicted fact. The naming/gather rules close the known cases; watch play for residue.

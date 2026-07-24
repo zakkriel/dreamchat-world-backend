@@ -15,6 +15,12 @@ the orchestration is locked; the seats themselves are SPEC-012, undesigned.
 - **Tension review rides these seats** on their steps (no dedicated call).
 - **Held outcome / telegraph:** a disruptive act commits its wind-up, the player gets a reaction beat,
   resolution runs with the reaction in it. No fait accompli.
+  **Machinery ruled 2026-07-24** (see RULINGS-2026-07-24-reaction-beat.md): telegraph ends the beat,
+  remaining chain DISCARDED, next input free; held outcome = dedicated pending record (state lives in
+  the world — no session machine, no timeout); reaction's FIRST action + all pending held acts → the
+  one combined ruling, the rest run as a normal chain after; three response tiers (none / commit /
+  telegraph) sorted by the cognition seat, interruption is the exception; medium/large world eruptions
+  also cut the beat (no held outcome — the world seizes the scene).
 - **One cognition call PER ACTION (2026-07-23):** not per text, not per NPC. Per action each present NPC
   sits in exactly ONE seat — the shared batch (public moment only) or an isolated call (her private
   knowledge rides alone). Split decided by id-intersection over about-ness links (mechanical, no
