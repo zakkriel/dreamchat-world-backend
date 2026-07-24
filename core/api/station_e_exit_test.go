@@ -151,6 +151,27 @@ func stationECombinedRuling(heldActor, playerActor, target string) string {
 	return string(b)
 }
 
+// actorAttemptSegment returns the slice of a buildResolvePrompt prompt running from
+// "ACTOR <actorID> ATTEMPTS: " up to (but not including) the NEXT "ACTOR " marker, or the end of the
+// prompt if none follows. This is buildResolvePrompt's own per-attempt line format
+// (resolveprompt.go:24-31: "ACTOR " + actorID + " ATTEMPTS: " + attempt JSON, one line per attempt).
+// Scoping an assertion to this segment — rather than the whole prompt — is what actually pins content
+// to its actor: the id and other attempt fields are also echoed independently in the FACTS/
+// gather_slice section, so a whole-prompt substring check cannot distinguish "attributed to this
+// actor" from "appears somewhere in the prompt". ok is false if the actor has no ATTEMPTS line.
+func actorAttemptSegment(prompt, actorID string) (segment string, ok bool) {
+	marker := "ACTOR " + actorID + " ATTEMPTS: "
+	start := strings.Index(prompt, marker)
+	if start == -1 {
+		return "", false
+	}
+	rest := prompt[start+len(marker):]
+	if next := strings.Index(rest, "ACTOR "); next != -1 {
+		return rest[:next], true
+	}
+	return rest, true
+}
+
 func TestStationE_FakeE2E(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -339,15 +360,33 @@ func TestStationE_FakeE2E(t *testing.T) {
 	}
 
 	// (2b) EXACTLY ONE combined ruling, whose prompt carries BOTH Jonas's held attempt content and
-	// the reaction's first action, each actor-attributed (ACTOR <id> ATTEMPTS: … in buildResolvePrompt).
+	// the reaction's first action, each pinned to ITS OWN "ACTOR <id> ATTEMPTS: …" line
+	// (buildResolvePrompt, resolveprompt.go:24-31). A bare substring check on the whole prompt is not
+	// enough: windUp, pressText, id.J and id.K are all ALSO independently recoverable from the FACTS/
+	// gather_slice section above the ATTEMPT(S) block, so mis-attribution inside the ACTOR lines
+	// themselves (e.g. Jonas's wind-up wrongly landing on the player's line) would slip past it.
 	if resolve2.calls != 1 {
 		t.Fatalf("beat 2 resolve calls = %d, want 1 (held act + first action → ONE combined ruling)", resolve2.calls)
 	}
 	p := resolve2.prompts[0]
-	for _, want := range []string{windUp, pressText, id.J, id.K} {
-		if !strings.Contains(p, want) {
-			t.Fatalf("beat 2 combined ruling prompt missing %q\nprompt:\n%s", want, p)
-		}
+	jSeg, ok := actorAttemptSegment(p, id.J)
+	if !ok {
+		t.Fatalf("beat 2 combined ruling prompt missing an \"ACTOR %s ATTEMPTS: \" line\nprompt:\n%s", id.J, p)
+	}
+	kSeg, ok := actorAttemptSegment(p, id.K)
+	if !ok {
+		t.Fatalf("beat 2 combined ruling prompt missing an \"ACTOR %s ATTEMPTS: \" line\nprompt:\n%s", id.K, p)
+	}
+	if !strings.Contains(jSeg, windUp) {
+		t.Fatalf("beat 2 Jonas's ACTOR %s ATTEMPTS line does not carry his held wind-up %q\nsegment:\n%s", id.J, windUp, jSeg)
+	}
+	if !strings.Contains(kSeg, pressText) {
+		t.Fatalf("beat 2 the player's ACTOR %s ATTEMPTS line does not carry the press %q\nsegment:\n%s", id.K, pressText, kSeg)
+	}
+	// Pin the swap case: Jonas's wind-up must NOT leak into the player's ACTOR line — that is exactly
+	// the mis-attribution a bare prompt-wide substring check would miss.
+	if strings.Contains(kSeg, windUp) {
+		t.Fatalf("beat 2 the player's ACTOR %s ATTEMPTS line wrongly carries Jonas's wind-up %q (mis-attribution)\nsegment:\n%s", id.K, windUp, kSeg)
 	}
 	// The remainder whisper must NOT be inside the collision (only the FIRST action joins it).
 	if strings.Contains(p, whisperText) {

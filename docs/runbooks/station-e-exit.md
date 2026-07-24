@@ -115,7 +115,11 @@ http://localhost:5173/#/play
 
 ## 4. The founder's script
 
-Play as the Player (Kade). In debug mode the page forwards `?viewer=<Player uuid>` verbatim.
+Play as the Player (Kade). The `?viewer=<uuid>` override is only forwarded by the play page's
+**compendium** reads (`#/actors`, `#/timeline`, …) — `postBeat` in the frontend (`src/api.ts`) never
+appends it to the beat POST. On the beat endpoint, viewer resolution instead falls back server-side to
+the seed's sole `Player` actor (`ResolveViewer` in `core/api/viewer.go`), which is exactly Kade in this
+seed. Switching which actor you play from the play page is not supported today.
 
 1. **Walk in** to the Drowned Lantern. Mara and Jonas are present.
 2. **Lean on Mara about the harbormaster** — e.g. type: *"I lean on Mara and press her about the
