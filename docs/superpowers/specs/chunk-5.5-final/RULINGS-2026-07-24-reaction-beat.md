@@ -118,6 +118,26 @@ dramatically dead. Disruption at the wrong moment is the feature.
   Station D replaces the foundations' fail-loud `ruled_event_rejected` guard with the full
   `apply_ruled_event` — carrying §4's truth/appearance/variants and this section's writes.
 
+## 7. The empty reaction: the player's WORDS enter the ruling even when no act does
+   (ruled 2026-07-24, Station E execution session)
+
+Decompose can legitimately emit ZERO attempts from a reaction ("I do nothing", "I just watch") —
+the schema has no minimum, and stillness is a real answer. Ruling: the player's raw text still
+enters the combined ruling as their stated answer, marked as words-not-an-act. No typed attempt is
+invented for it, and it commits no canon event of its own.
+
+**Example.** Jonas's cut-in is held. The player types "I just watch." Decompose emits `[]`. The
+combined ruling's prompt carries the held act plus: `THE PLAYER'S ANSWER (stated, not an act): "I
+just watch"`. The referee reads it as not-contesting; Jonas's act likely completes.
+
+**Why not held-acts-alone (what the code briefly did):** it drops the player's words entirely —
+the referee never sees the answer, violating §2's "still enters the combined ruling as the
+player's answer to the moment."
+
+**Why not bounce-and-ask ("say what you do"):** stillness, silence, and watching are legitimate
+answers; forcing a typed act punishes exactly the non-resisting case §2 protects. The clarify
+bounce stays reserved for UNRESOLVED reference ties, where the engine genuinely cannot proceed.
+
 ---
 
 ## What this closes / what stays open
