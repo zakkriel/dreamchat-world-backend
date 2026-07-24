@@ -121,7 +121,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var outcome BeatOutcome
 	if len(held) > 0 {
-		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick)
+		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, in.Text)
 	} else {
 		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick)
 	}

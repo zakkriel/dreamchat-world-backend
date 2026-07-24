@@ -185,7 +185,7 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		default:
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated,
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
-			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq)
+			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "")
 			if adjErr != nil {
 				return adjErr
 			}
@@ -264,7 +264,13 @@ func pendingHeldOutcomes(ctx context.Context, db *pgxpool.Pool, worldID string) 
 //	    runChain (world-first, generalized premise re-check, route, clock all apply). curSeq carries
 //	    the ruling's seq advance so the remainder never collides on (tick,seq); the tick is unchanged
 //	    (the combined ruling advances seq only).
-func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID string, chain []Attempt, held []HeldOutcome, startTick int64) (BeatOutcome, error) {
+//
+// playerAnswer is the player's raw input text (beathandler passes in.Text). It is forwarded into
+// the combined ruling ONLY when chain is empty — decompose emitted ZERO attempts, e.g. "I just
+// watch" (RULINGS-2026-07-24 §7). When a first attempt exists, its own `stated` field already
+// carries the player's words per §2, so forwarding the raw text too would double-inject; it is
+// dropped in that branch.
+func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID string, chain []Attempt, held []HeldOutcome, startTick int64, playerAnswer string) (BeatOutcome, error) {
 	outcome := BeatOutcome{
 		Committed:            []string{},
 		UnresolvedCandidates: []string{},
@@ -286,11 +292,16 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		set = append(set, ActorAttempt{ActorID: h.ActorID, Attempt: h.Attempt})
 		heldIDs = append(heldIDs, h.HeldID)
 	}
+	// answer rides into the ruling ONLY on the empty-chain branch (§7); a non-empty chain's first
+	// attempt already carries the player's words in its own `stated` field (§2 — no double-inject).
+	answer := ""
 	if len(chain) > 0 {
 		set = append(set, ActorAttempt{ActorID: playerID, Attempt: chain[0]})
+	} else {
+		answer = playerAnswer
 	}
 
-	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0)
+	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0, answer)
 	if err != nil {
 		return outcome, err
 	}
@@ -496,7 +507,7 @@ func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, de
 				// Adjudicated types (OwnershipAccessChanged|EntityDestroyed|AttributeChanged, …):
 				// the SAME resolve pipeline the player uses — a "trusted NPC" fast path is a named
 				// consistency hole (FINAL-world-npc-cognition "No bypass").
-				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq)
+				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq, "")
 				if err != nil {
 					return localSeq - startSeq, fmt.Errorf("npc adjudicate: %w", err)
 				}
@@ -767,7 +778,10 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 // resolveHeldIDs marks those held_outcome rows 'resolved' inside commitRulingTx's
 // transaction. It is nil for every caller today (the held_outcome table arrives in a later
 // task) and is a no-op when empty.
-func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int) (adjResult, error) {
+//
+// playerAnswer is empty on every call except RunReactionBeat's empty-chain branch
+// (RULINGS-2026-07-24 §7) — see buildResolvePrompt for the rendering rule.
+func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string) (adjResult, error) {
 	// Flatten the raw attempts for participant-ID collection and slice gathering.
 	attempts := make([]Attempt, 0, len(set))
 	for _, aa := range set {
@@ -836,7 +850,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	}
 
 	// Resolve: one combined judgment over the attempt set, with one repair retry on decode/verdict failure.
-	prompt := buildResolvePrompt(sliceJSON, set, nil)
+	prompt := buildResolvePrompt(sliceJSON, set, nil, playerAnswer)
 	var ruling RulingV2
 	var violations []string
 	var decodeErr error
@@ -850,7 +864,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 			} else {
 				repairErrs = violations
 			}
-			p = buildResolvePrompt(sliceJSON, set, repairErrs)
+			p = buildResolvePrompt(sliceJSON, set, repairErrs, playerAnswer)
 		}
 
 		rawRuling, genErr := o.Resolve.Generate(ctx, GenRequest{

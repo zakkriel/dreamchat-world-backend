@@ -213,7 +213,11 @@ func TestReactionBeat_WorkedExample(t *testing.T) {
 		{Type: "AttributeChanged", Stated: "I shove him back", TargetID: id.J},                                             // first action → combined ruling
 		{Type: "ObjectRelocated", Stated: "I still slip her the note", ObjectID: id.Note, DestKind: "actor", DestID: id.W}, // remainder → normal step
 	}
-	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick)
+	// playerAnswer is deliberately non-empty here to prove suppression is real: with a non-empty
+	// chain, chain[0]'s own `stated` field already carries the player's words (RULINGS-2026-07-24
+	// §2), so RunReactionBeat must NOT also forward the raw text — that would double-inject.
+	const rawText = "I shove him back, and still slip her the note"
+	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, rawText)
 	if err != nil {
 		t.Fatalf("beat 2 RunReactionBeat: %v", err)
 	}
@@ -235,6 +239,12 @@ func TestReactionBeat_WorkedExample(t *testing.T) {
 	// The note-slip must NOT be inside the collision (it runs as a normal remainder step).
 	if strings.Contains(p, "I still slip her the note") {
 		t.Fatalf("combined ruling prompt wrongly contains the remainder note-slip (only the FIRST action joins the collision)")
+	}
+	// (a1b) RULINGS-2026-07-24 §7: a non-empty chain must NOT render "THE PLAYER'S ANSWER" — the
+	// first attempt's own `stated` field already carries the player's words (§2); double-injecting
+	// the raw text would be redundant and is explicitly forbidden.
+	if strings.Contains(p, "THE PLAYER'S ANSWER") {
+		t.Fatalf("combined ruling prompt wrongly renders the answer line for a non-empty chain (double-inject)\nprompt:\n%s", p)
 	}
 
 	// (a2) the held row flipped to resolved INSIDE the ruling's tx.
@@ -277,7 +287,7 @@ func TestReactionBeat_NonResisting(t *testing.T) {
 
 	const ask = "I ask the barkeep for ale"
 	reactionChain := []Attempt{{Type: "Communicated", Stated: ask, ListenerID: id.W, Content: "an ale, please"}}
-	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick)
+	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, ask)
 	if err != nil {
 		t.Fatalf("RunReactionBeat: %v", err)
 	}
@@ -295,6 +305,102 @@ func TestReactionBeat_NonResisting(t *testing.T) {
 	}
 	if s := heldStatus(t, ctx, pool, id.World, id.J); s != "resolved" {
 		t.Fatalf("held status = %q, want resolved", s)
+	}
+}
+
+// TestReactionBeat_EmptyReactionAnswerEntersRuling is RULINGS-2026-07-24 §7: decompose can
+// legitimately emit ZERO attempts from a reaction ("I just watch") — stillness is a real answer.
+// The player's raw text still enters the combined ruling as their stated answer, marked
+// words-not-an-act: no typed attempt is invented for it (D-1 untouched), and it commits no canon
+// event of its own — the held act's own ruling is what lands.
+func TestReactionBeat_EmptyReactionAnswerEntersRuling(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupReactionWorld(t, ctx, pool)
+
+	// ── Beat 1: the telegraph. Jonas telegraphs his cut-in → held. ──
+	const windUp = "Jonas pushes off the bar, moving to cut in"
+	baseTick := reactionBaseTick(t, ctx, pool, id.World)
+	batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
+		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUp +
+		`","to_location_id":"` + id.L2 + `"}}}]`}
+	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[]`}
+	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
+	chain1 := []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2}}
+	out1, err := orc1.RunBeat(ctx, id.World, id.P, chain1, baseTick)
+	if err != nil {
+		t.Fatalf("beat 1 RunBeat: %v", err)
+	}
+	if out1.HaltReason != "telegraph" {
+		t.Fatalf("beat 1 HaltReason = %q, want telegraph", out1.HaltReason)
+	}
+
+	held, err := pendingHeldOutcomes(ctx, pool, id.World)
+	if err != nil {
+		t.Fatalf("pendingHeldOutcomes: %v", err)
+	}
+	if len(held) != 1 {
+		t.Fatalf("pending held = %d, want 1", len(held))
+	}
+
+	// ── Beat 2: the reaction. Decompose emitted [] — the player typed "I just watch" and it
+	// decomposed to no attempts. The held act alone is what the referee rules on; the player's raw
+	// words ride along as the stated (not-an-act) answer. ──
+	reactTick := reactionBaseTick(t, ctx, pool, id.World)
+	const answer = "I just watch"
+	ruling := validRulingJSON(id.J, id.J, "Jonas's cut-in completes uncontested; the player only watches.", "Jonas cuts in; the player doesn't move.")
+	resolve := &capturingResolveDriver{name: "capture-resolve", ruling: ruling}
+	orc2 := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: NewFakeCognitionDriver(), CognitionIsolated: NewFakeCognitionDriver(), WorldActor: NewFakeWorldActorDriver()}
+
+	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, []Attempt{}, held, reactTick, answer)
+	if err != nil {
+		t.Fatalf("beat 2 RunReactionBeat: %v", err)
+	}
+	if out2.HaltReason != "completed" {
+		t.Fatalf("reaction HaltReason = %q, want completed", out2.HaltReason)
+	}
+
+	// (f1) EXACTLY ONE resolve Generate — the held act alone still runs the combined ruling.
+	if resolve.calls != 1 {
+		t.Fatalf("resolve calls = %d, want 1 (empty reaction still runs one combined ruling over the held act)", resolve.calls)
+	}
+	p := resolve.prompts[0]
+
+	// (f2) The prompt carries the held attempt's own ACTOR line...
+	jSeg, ok := actorAttemptSegment(p, id.J)
+	if !ok {
+		t.Fatalf("combined ruling prompt missing an \"ACTOR %s ATTEMPTS: \" line\nprompt:\n%s", id.J, p)
+	}
+	if !strings.Contains(jSeg, windUp) {
+		t.Fatalf("Jonas's ACTOR %s ATTEMPTS line does not carry his held wind-up %q\nsegment:\n%s", id.J, windUp, jSeg)
+	}
+	// ...AND the literal answer line carrying "I just watch" (RULINGS-2026-07-24 §7's exact shape).
+	wantLine := `THE PLAYER'S ANSWER (stated, not an act): "` + answer + `"`
+	if !strings.Contains(p, wantLine) {
+		t.Fatalf("combined ruling prompt missing the player's-answer line %q\nprompt:\n%s", wantLine, p)
+	}
+	// No second "ACTOR <player> ATTEMPTS:" line exists — no typed attempt was invented for the
+	// player (D-1 untouched): the only actor line present is Jonas's held act.
+	if _, ok := actorAttemptSegment(p, id.P); ok {
+		t.Fatalf("combined ruling prompt wrongly synthesizes an ACTOR %s ATTEMPTS line for the player — no attempt should be invented for an empty reaction", id.P)
+	}
+
+	// (f3) held row flips resolved; halt already asserted "completed" above.
+	if s := heldStatus(t, ctx, pool, id.World, id.J); s != "resolved" {
+		t.Fatalf("held status = %q, want resolved", s)
+	}
+
+	// (f4) no canon event anywhere in this world contains "I just watch" — the words are not an
+	// act and commit no canon event of their own.
+	var wordsInCanon int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1 AND summary LIKE '%' || $2 || '%'`,
+		id.World, answer).Scan(&wordsInCanon); err != nil {
+		t.Fatalf("scan canon summaries for player's words: %v", err)
+	}
+	if wordsInCanon != 0 {
+		t.Fatalf("canon events containing %q = %d, want 0 (words are not an act — no canon event of their own)", answer, wordsInCanon)
 	}
 }
 
@@ -318,7 +424,7 @@ func TestReactionBeat_UnresolvedFirst(t *testing.T) {
 	orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: NewFakeCognitionDriver(), CognitionIsolated: NewFakeCognitionDriver(), WorldActor: NewFakeWorldActorDriver()}
 
 	reactionChain := []Attempt{{Type: "UNRESOLVED", Stated: "I go to him", Reference: "him", CandidateIDs: []string{id.J, id.W}}}
-	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick)
+	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, "")
 	if err != nil {
 		t.Fatalf("RunReactionBeat: %v", err)
 	}
@@ -361,7 +467,7 @@ func TestReactionBeat_BounceKeepsHoldsPending(t *testing.T) {
 	orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: NewFakeCognitionDriver(), CognitionIsolated: NewFakeCognitionDriver(), WorldActor: NewFakeWorldActorDriver()}
 
 	reactionChain := []Attempt{{Type: "AttributeChanged", Stated: "I shove him back", TargetID: id.J}}
-	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick)
+	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, "")
 	if err != nil {
 		t.Fatalf("RunReactionBeat: %v", err)
 	}
@@ -426,7 +532,7 @@ func TestReactionBeat_TwoSimultaneousTelegraphs(t *testing.T) {
 	orc2 := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: NewFakeCognitionDriver(), CognitionIsolated: NewFakeCognitionDriver(), WorldActor: NewFakeWorldActorDriver()}
 
 	reactionChain := []Attempt{{Type: "AttributeChanged", Stated: "I shove him back", TargetID: id.J}}
-	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick)
+	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, "")
 	if err != nil {
 		t.Fatalf("beat 2 RunReactionBeat: %v", err)
 	}

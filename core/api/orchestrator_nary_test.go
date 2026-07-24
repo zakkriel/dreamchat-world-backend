@@ -97,7 +97,7 @@ func TestAdjudicateTwoActorsTwoLocations(t *testing.T) {
 	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
 		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "I lean on Jonas", TargetID: jonasID}},
 		{ActorID: jonasID, Attempt: Attempt{Type: "AttributeChanged", Stated: "I push back at the player", TargetID: playerID}},
-	}, nil, bt+4, 0)
+	}, nil, bt+4, 0, "")
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}

@@ -371,7 +371,7 @@ func TestWall_RefereeStaysSighted(t *testing.T) {
 	}
 	reactionChain := []Attempt{{Type: "AttributeChanged", Stated: "I confront Mara over what she's hiding", TargetID: id.M}}
 
-	out, err := orc.RunReactionBeat(ctx, id.World, id.K, reactionChain, held, 70000)
+	out, err := orc.RunReactionBeat(ctx, id.World, id.K, reactionChain, held, 70000, "")
 	if err != nil {
 		t.Fatalf("RunReactionBeat: %v", err)
 	}
