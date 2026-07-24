@@ -614,3 +614,134 @@ func TestReactionBeat_TwoSimultaneousTelegraphs(t *testing.T) {
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
 }
+
+// TestReactionBeat_TelegraphDuringRemainder is the cross-task proof: a telegraph beat holds Jonas's
+// cut-in (hold A); on the reaction, the first action collides with hold A in the combined ruling,
+// then the REMAINDER runs as a normal chain — and on the remainder's first step the world-first
+// cognition telegraphs a SECOND NPC act (the hooded woman → hold B). This proves three things at
+// once: (i) telegraphs are legal DURING a remainder, (ii) cognition genuinely runs on remainders
+// (driver call count), and (iii) cross-beat pending coexistence works via pendingHeldOutcomes —
+// hold A resolves inside the combined ruling while hold B is created fresh and stays pending, and
+// the reaction beat ends on 'telegraph' with the un-run remainder steps discarded.
+func TestReactionBeat_TelegraphDuringRemainder(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupReactionWorld(t, ctx, pool)
+
+	// ── Beat 1: Jonas telegraphs his cut-in → hold A. ──
+	const windUpA = "Jonas pushes off the bar, moving to cut in"
+	baseTick := reactionBaseTick(t, ctx, pool, id.World)
+	batch1 := &scriptedCognitionDriver{name: "b1-batch", body: `[{"actor_id":"` + id.J +
+		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUpA +
+		`","to_location_id":"` + id.L2 + `"}}}]`}
+	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch1, CognitionIsolated: &scriptedCognitionDriver{name: "b1-iso", body: `[]`}, WorldActor: NewFakeWorldActorDriver()}
+	out1, err := orc1.RunBeat(ctx, id.World, id.P, []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2}}, baseTick)
+	if err != nil {
+		t.Fatalf("beat 1 RunBeat: %v", err)
+	}
+	if out1.HaltReason != "telegraph" {
+		t.Fatalf("beat 1 HaltReason = %q, want telegraph", out1.HaltReason)
+	}
+	held, err := pendingHeldOutcomes(ctx, pool, id.World)
+	if err != nil {
+		t.Fatalf("pendingHeldOutcomes: %v", err)
+	}
+	if len(held) != 1 || held[0].ActorID != id.J {
+		t.Fatalf("after beat 1: pending held = %v, want exactly Jonas's hold A", held)
+	}
+
+	// ── Beat 2: the reaction. First action collides with hold A; the remainder's world-first
+	// telegraphs the hooded woman (hold B). The reaction's cognition fires ONLY on the remainder
+	// (the combined ruling runs no cognition — §2 depth-1). ──
+	const windUpB = "the hooded woman rises, moving to intercept"
+	reactTick := reactionBaseTick(t, ctx, pool, id.World)
+	ruling := validRulingJSON(id.P, id.J, "The player shoves Jonas back; his cut-in is checked.", "A scuffle at the bar.")
+	resolve := &capturingResolveDriver{name: "capture-resolve", ruling: ruling}
+	// The remainder's batch cognition telegraphs the hooded woman (W has no private record → batch).
+	remainderBatch := &scriptedCognitionDriver{name: "remainder-batch", body: `[{"actor_id":"` + id.W +
+		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUpB +
+		`","to_location_id":"` + id.L2 + `"}}}]`}
+	orc2 := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: remainderBatch, CognitionIsolated: &scriptedCognitionDriver{name: "b2-iso", body: `[]`}, WorldActor: NewFakeWorldActorDriver()}
+
+	// chain: [ first action → combined ruling ] + [ remainderStep1 (world-first telegraphs here),
+	// remainderStep2 (must be DISCARDED — the beat ends before it) ].
+	const discardedStated = "and then I order an ale — this must never commit"
+	reactionChain := []Attempt{
+		{Type: "AttributeChanged", Stated: "I shove Jonas back", TargetID: id.J},
+		{Type: "Communicated", Stated: "I turn to whisper to the woman", ListenerID: id.W, Content: "later"},
+		{Type: "Communicated", Stated: discardedStated, ListenerID: id.J, Content: "ale"},
+	}
+	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, "")
+	if err != nil {
+		t.Fatalf("beat 2 RunReactionBeat: %v", err)
+	}
+
+	// (1) The reaction beat ends on the remainder's OWN fresh telegraph.
+	if out2.HaltReason != "telegraph" {
+		t.Fatalf("reaction HaltReason = %q, want telegraph (the remainder's world-first telegraphed)", out2.HaltReason)
+	}
+	if len(out2.Telegraphs) != 1 || out2.Telegraphs[0] != windUpB {
+		t.Fatalf("reaction Telegraphs = %v, want [%q] (hold B's wind-up surfaced)", out2.Telegraphs, windUpB)
+	}
+
+	// (2) The combined ruling fired exactly ONCE and carried hold A + the first action, attributed.
+	if resolve.calls != 1 {
+		t.Fatalf("resolve calls = %d, want 1 (one combined ruling over hold A + the first action)", resolve.calls)
+	}
+	jSeg, ok := actorAttemptSegment(resolve.prompts[0], id.J)
+	if !ok || !strings.Contains(jSeg, windUpA) {
+		t.Fatalf("combined ruling missing Jonas's hold-A act line\nprompt:\n%s", resolve.prompts[0])
+	}
+	pSeg, ok := actorAttemptSegment(resolve.prompts[0], id.P)
+	if !ok || !strings.Contains(pSeg, "I shove Jonas back") {
+		t.Fatalf("combined ruling missing the player's first-action line\nprompt:\n%s", resolve.prompts[0])
+	}
+
+	// (3) The remainder's world-first cognition GENUINELY fired — exactly once (on the remainder's
+	// first step). The combined ruling itself runs no cognition, so this call count is the remainder's.
+	if remainderBatch.calls != 1 {
+		t.Fatalf("remainder batch cognition calls = %d, want 1 (cognition must run on the remainder)", remainderBatch.calls)
+	}
+
+	// (4) Cross-beat pending coexistence: hold A resolved inside the combined ruling; hold B is a
+	// NEW pending row (created during the remainder). Exactly one hold pending now.
+	if s := heldStatus(t, ctx, pool, id.World, id.J); s != "resolved" {
+		t.Fatalf("hold A (Jonas) status = %q, want resolved (the combined ruling resolved hold A only)", s)
+	}
+	if s := heldStatus(t, ctx, pool, id.World, id.W); s != "pending" {
+		t.Fatalf("hold B (hooded woman) status = %q, want pending (fresh telegraph during the remainder)", s)
+	}
+	if n := pendingCount(t, ctx, pool, id.World); n != 1 {
+		t.Fatalf("pending held after reaction = %d, want 1 (only the new hold B)", n)
+	}
+
+	// (5) Hold B's wind-up committed as canon (origin='telegraph'), distinct from hold A's.
+	var windUpBCanon int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1 AND origin='telegraph' AND summary=$2`,
+		id.World, windUpB).Scan(&windUpBCanon); err != nil {
+		t.Fatalf("scan telegraph canon for hold B: %v", err)
+	}
+	if windUpBCanon != 1 {
+		t.Fatalf("hold B wind-up canon (origin=telegraph, summary=windUpB) = %d, want 1", windUpBCanon)
+	}
+
+	// (6) The un-run remainder steps are DISCARDED: exactly one ruling/freeform commit (the combined
+	// ruling's single event) — neither remainder step routed a passthrough — and the discarded step's
+	// text is nowhere in canon.
+	if n := committedCount(t, ctx, pool, id.World); n != 1 {
+		t.Fatalf("ruling/freeform canon = %d, want 1 (only the combined ruling; the remainder committed nothing)", n)
+	}
+	var discardedCanon int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1 AND summary LIKE '%' || $2 || '%'`,
+		id.World, discardedStated).Scan(&discardedCanon); err != nil {
+		t.Fatalf("scan canon for the discarded step: %v", err)
+	}
+	if discardedCanon != 0 {
+		t.Fatalf("the discarded remainder step committed canon (%d rows) — steps after the remainder's telegraph must be dropped", discardedCanon)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
+}
