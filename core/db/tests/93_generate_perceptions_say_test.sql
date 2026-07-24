@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(5);
+SELECT plan(6);
 
 -- A SAY event (private_disclosure) P→M with both at tavern; J elsewhere. generate_perceptions writes
 -- speaker 'shared' + listener 'told' (B-7), nothing for J. acquired_tick = event tick (I-9).
@@ -29,6 +29,14 @@ SELECT is((SELECT acquired_tick FROM perception_record
            WHERE source_event_id='e5000000-0000-0000-0000-000000000020'
              AND holder_id='bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'),
           300::bigint, 'acquired_tick = event tick (I-9: cannot learn before it happened)');
+-- about-ness (RULINGS-2026-07-23 §6, engine-written): both perceptions (speaker 'shared' +
+-- listener 'told') carry subject rows for the source event's participants (P and M).
+-- 2 perceptions x 2 subjects = 4 rows.
+SELECT is((SELECT count(*)::int FROM perception_record pr
+           JOIN perception_subject ps ON ps.perception_id = pr.perception_id
+           WHERE pr.source_event_id='e5000000-0000-0000-0000-000000000020'
+             AND ps.entity_id IN ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')),
+          4, 'both SAY perceptions (shared+told) carry subject rows for speaker P and listener M');
 
 SELECT * FROM finish();
 ROLLBACK;

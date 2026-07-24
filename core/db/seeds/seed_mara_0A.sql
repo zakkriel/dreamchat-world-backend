@@ -41,12 +41,20 @@ VALUES ('e0000000-0000-0000-0000-000000000001','11111111-1111-1111-1111-11111111
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
  ('e0000000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','speaker'),
  ('e0000000-0000-0000-0000-000000000001','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','listener');
-INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
-                               acquired_tick, valid_tick) VALUES
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+-- Fixed perception_ids so the hand-authored subject links below are unambiguous (backfill
+-- mask removed; about-ness for these ORIGINAL event-derived perceptions is now hand-linked =
+-- the source event's participants, P and M, the same semantics the engine now writes itself).
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick) VALUES
+ ('e1000000-0000-0000-0000-00000000000a','11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
   'e0000000-0000-0000-0000-000000000001','P told me the mayor keeps a hidden ledger','told',100,100),
- ('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+ ('e1000000-0000-0000-0000-00000000000b','11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   'e0000000-0000-0000-0000-000000000001','I told Mara the mayor keeps a hidden ledger','shared',100,100);
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('e1000000-0000-0000-0000-00000000000a','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
+ ('e1000000-0000-0000-0000-00000000000a','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111'),
+ ('e1000000-0000-0000-0000-00000000000b','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
+ ('e1000000-0000-0000-0000-00000000000b','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111');
 -- 100 noise events, ticks 101..200, beat_seq 0 (each tick unique => total order). FULLY DETERMINISTIC:
 -- event_id = 'e0000000-0000-0000-0000-9' + lpad(i,11,'0')  (collision-free vs E1 ...001 / E102 ...102).
 -- Rule (hand-verifiable): for i in 1..100, tick=100+i,
@@ -55,7 +63,7 @@ INSERT INTO perception_record (world_id, holder_id, source_event_id, content, ep
 -- Each event: 'move', one ABSOLUTE attrs.location_id set, one 'direct' perception for the mover.
 DO $$
 DECLARE
-  i int; tick bigint; ev uuid; actor uuid; loc_id uuid; loc_name text;
+  i int; tick bigint; ev uuid; actor uuid; loc_id uuid; loc_name text; pid uuid;
   actors uuid[] := ARRAY[
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
     'cccccccc-cccc-cccc-cccc-cccccccccccc','00000000-0000-0000-0000-000000000001',
@@ -85,7 +93,12 @@ BEGIN
             to_jsonb(loc_id::text), tick, 0);
     INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                    acquired_tick, valid_tick)
-    VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to ' || lower(loc_name), 'direct', tick, tick);
+    VALUES ('11111111-1111-1111-1111-111111111111', actor, ev, 'I moved to ' || lower(loc_name), 'direct', tick, tick)
+    RETURNING perception_id INTO pid;
+    -- hand-linked about-ness (backfill mask removed): subject = the source event's sole
+    -- participant (the mover itself), same semantics the engine now writes for the move branch.
+    INSERT INTO perception_subject (perception_id, entity_id, world_id)
+    VALUES (pid, actor, '11111111-1111-1111-1111-111111111111');
   END LOOP;
 END $$;
 -- E102 @ tick 201: P publicizes the ledger. No state mutation. Present-forward (ADR-016):
@@ -98,11 +111,15 @@ VALUES ('e0000000-0000-0000-0000-000000000102','11111111-1111-1111-1111-11111111
         'Day 2', 'accepted', now(), 'public', 'fast_path');
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
  ('e0000000-0000-0000-0000-000000000102','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator');
-INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
-                               acquired_tick, valid_tick, visibility_scope) VALUES
- ('11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
+-- Fixed perception_id so the hand-authored subject link below is unambiguous (backfill mask
+-- removed): subject = the source event's sole participant (P, the instigator who publicized it).
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick, visibility_scope) VALUES
+ ('e1020000-0000-0000-0000-000000000001','11111111-1111-1111-1111-111111111111','eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',
   'e0000000-0000-0000-0000-000000000102','It is now common knowledge that the mayor keeps a hidden ledger',
   'public',201,201,'public');
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('e1020000-0000-0000-0000-000000000001','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111');
 -- =====================================================================================
 -- Chunk-3 additions (design 2026-06-14). Deterministic. Chosen to miss every existing
 -- scoped 0A assertion: name perceptions are 'public' sourced to world_genesis (≠ E102);
@@ -187,15 +204,5 @@ INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_
 INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
  ('dca70000-0000-0000-0000-000000000b01','a4000000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111'),
  ('dca70000-0000-0000-0000-000000000c01','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111');
-
--- (B) Generic about-ness backfill for the ORIGINAL event-derived perceptions only (ADR-035:
--- subjects = source event participants). NOT EXISTS skips rows that already carry explicit subjects
--- (the names and the about-Mara fixture), so those stay precise and are never over-attributed.
-INSERT INTO perception_subject (perception_id, entity_id, world_id)
-SELECT pr.perception_id, ep.entity_id, pr.world_id
-FROM perception_record pr
-JOIN event_participant ep ON ep.event_id = pr.source_event_id
-WHERE NOT EXISTS (SELECT 1 FROM perception_subject ps WHERE ps.perception_id = pr.perception_id)
-ON CONFLICT (perception_id, entity_id) DO NOTHING;
 
 COMMIT;

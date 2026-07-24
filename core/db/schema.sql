@@ -1059,6 +1059,7 @@ DECLARE
   n    integer := 0;
   spk  uuid;
   lst  uuid;
+  pid  uuid;
 BEGIN
   SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
   IF NOT FOUND THEN RETURN 0; END IF;
@@ -1071,14 +1072,23 @@ BEGIN
     IF spk IS NOT NULL THEN
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
-      VALUES (ev.world_id, spk, p_event_id, ev.summary, 'shared', ev.in_world_tick, ev.in_world_tick);
+      VALUES (ev.world_id, spk, p_event_id, ev.summary, 'shared', ev.in_world_tick, ev.in_world_tick)
+      RETURNING perception_id INTO pid;
+      -- about-ness: subjects = the source event's participants (RULINGS-2026-07-23 §6).
+      INSERT INTO perception_subject (perception_id, entity_id, world_id)
+      SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
+      WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
       n := n + 1;
     END IF;
     FOR lst IN SELECT entity_id FROM event_participant
                  WHERE event_id = p_event_id AND role_qualifier = 'listener' LOOP
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
-      VALUES (ev.world_id, lst, p_event_id, ev.summary, 'told', ev.in_world_tick, ev.in_world_tick);
+      VALUES (ev.world_id, lst, p_event_id, ev.summary, 'told', ev.in_world_tick, ev.in_world_tick)
+      RETURNING perception_id INTO pid;
+      INSERT INTO perception_subject (perception_id, entity_id, world_id)
+      SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
+      WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
       n := n + 1;
     END LOOP;
   END IF;
@@ -1099,10 +1109,16 @@ BEGIN
         -- witnessing: the mover perceives their own move ('direct').
         INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                        acquired_tick, valid_tick)
-        VALUES (ev.world_id, mover, p_event_id, ev.summary, 'direct', ev.in_world_tick, ev.in_world_tick);
+        VALUES (ev.world_id, mover, p_event_id, ev.summary, 'direct', ev.in_world_tick, ev.in_world_tick)
+        RETURNING perception_id INTO pid;
+        -- about-ness: subjects = the source event's participants (RULINGS-2026-07-23 §6).
+        INSERT INTO perception_subject (perception_id, entity_id, world_id)
+        SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
+        WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
         n := n + 1;
         -- discovery-on-arrival (§4 trigger 2): the mover perceives each actor ALREADY at dest
         -- (exclude self). Each carries an explicit subject link → the stop-check reads about-ness.
+        -- UNTOUCHED: this loop already wrote subjects before this migration.
         IF dest IS NOT NULL THEN
           FOR other IN SELECT entity_id FROM fn_actors_at(ev.world_id, dest)
                         WHERE entity_id <> mover LOOP
@@ -1988,4 +2004,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260723100004'),
     ('20260724100001'),
     ('20260724100002'),
-    ('20260724110001');
+    ('20260724110001'),
+    ('20260724110002');

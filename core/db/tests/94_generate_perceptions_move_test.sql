@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(4);
+SELECT plan(5);
 
 -- Pre-position Jonas at cellar-uuid (a seed-clean location uuid). Then a MOVE of Player → cellar-uuid
 -- (with its location mutation applied). The cellar uuid has no seed occupant, so discovery at the
@@ -40,6 +40,16 @@ SELECT is((SELECT count(*) FROM perception_record
            WHERE source_event_id='e5000000-0000-0000-0000-000000000031'
              AND holder_id='cccccccc-cccc-cccc-cccc-cccccccccccc')::int,
           0, 'thin slice: only the mover perceives (others-witness-mover deferred)');
+-- about-ness (RULINGS-2026-07-23 §6, engine-written): the mover-direct perception (Player's
+-- own-move, content = the event summary, NOT the discovery boilerplate) carries a subject row
+-- for Player (the source event's sole participant).
+SELECT ok(EXISTS(
+  SELECT 1 FROM perception_record pr
+  JOIN perception_subject ps ON ps.perception_id = pr.perception_id
+  WHERE pr.source_event_id='e5000000-0000-0000-0000-000000000031'
+    AND pr.content='P moves to cellar'
+    AND ps.entity_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'mover-direct perception (Player''s own move) carries a subject row for Player');
 
 SELECT * FROM finish();
 ROLLBACK;
