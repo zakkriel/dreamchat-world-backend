@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "ruling/1",
   "title": "ruling/1 — reasoning FIRST, then a one-word therefore, then the outcome",
   "type": "object",
   "required": ["reasoning", "therefore", "outcome"],

@@ -1,5 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "beat_chain/2",
   "title": "beat_chain/2 — chain of ATTEMPTS (never outcomes), ids from the candidate whitelist",
   "type": "array",
   "items": {
