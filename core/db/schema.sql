@@ -1027,28 +1027,21 @@ CREATE FUNCTION public.gather_slice(p_world_id uuid, p_ids uuid[]) RETURNS jsonb
       ) sub
     ), '[]'::jsonb),
 
-    'co_present',    COALESCE((
-      SELECT jsonb_agg(
-        jsonb_build_object(
-          'id',   er.entity_id,
-          'name', er.canonical_name
-        )
-      )
+    -- co_present: DISTINCT union of actors at EVERY location any actor in p_ids occupies,
+    -- minus p_ids themselves (they already appear in 'entities').
+    'co_present', COALESCE((
+      SELECT jsonb_agg(DISTINCT jsonb_build_object('id', er.entity_id, 'name', er.canonical_name))
       FROM entity_registry er
-      WHERE er.world_id  = p_world_id
+      WHERE er.world_id = p_world_id
         AND er.entity_id IN (
           SELECT fa.entity_id
-          FROM fn_actors_at(
-            p_world_id,
-            (
-              SELECT (ast.attrs->>'location_id')::uuid
-              FROM actor_state ast
-              WHERE ast.entity_id = p_ids[1]
-                AND ast.world_id  = p_world_id
-            )
-          ) fa
-        )
-        AND er.entity_id <> p_ids[1]
+          FROM ( SELECT DISTINCT (ast.attrs->>'location_id')::uuid AS loc
+                 FROM actor_state ast
+                 WHERE ast.world_id = p_world_id
+                   AND ast.entity_id = ANY(p_ids)
+                   AND ast.attrs ? 'location_id' ) locs,
+          LATERAL fn_actors_at(p_world_id, locs.loc) fa )
+        AND NOT (er.entity_id = ANY(p_ids))
     ), '[]'::jsonb)
   )
 $$;
@@ -1994,4 +1987,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260723100003'),
     ('20260723100004'),
     ('20260724100001'),
-    ('20260724100002');
+    ('20260724100002'),
+    ('20260724110001');

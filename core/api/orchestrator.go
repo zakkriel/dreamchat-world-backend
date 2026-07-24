@@ -41,6 +41,15 @@ type adjResult struct {
 	SeqAdvance int
 }
 
+// ActorAttempt pairs an attempt with the actor who makes it. A single beat can carry
+// attempts from several actors at once (multi-actor collisions), so adjudicate takes a
+// set of these rather than one actorID + a flat attempt list. Each ActorID is folded into
+// the gathered slice so its entity — and every bystander co-located with it — is whitelisted.
+type ActorAttempt struct {
+	ActorID string
+	Attempt Attempt
+}
+
 // RunBeat executes the five-stage loop for each attempt in chain, starting at startTick.
 // It commits passthrough types via apply_event and routes adjudicated types through the
 // Resolve driver. Returns BeatOutcome describing what was committed and why halted.
@@ -198,7 +207,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		default:
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated,
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
-			ar, adjErr := o.adjudicate(ctx, worldID, actorID, []Attempt{attempt}, curTick, curSeq)
+			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq)
 			if adjErr != nil {
 				return outcome, adjErr
 			}
@@ -305,24 +314,40 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 	return ids
 }
 
-// adjudicate resolves one or more attempts using the Resolve driver + apply_ruled_event.
-// It gathers the relevant slice, calls Generate (with one repair retry), verifies the
-// ruling against sliceIDs, commits all events, and applies attribute writes.
-// actorID is the entity initiating the action (always included in the slice).
-func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, attempts []Attempt, tick int64, curSeq int) (adjResult, error) {
-	// Collect participant IDs from all attempts, including the acting actor.
-	ids := collectParticipantIDsFromAttempts(attempts)
-	// Ensure the actor is in the slice (their entity appears in the facts, and
-	// verdictRuling checks that actor_id is in sliceIDs).
-	actorAlreadyIn := false
-	for _, id := range ids {
-		if id == actorID {
-			actorAlreadyIn = true
-			break
+// adjudicate resolves an actor-attributed set of attempts using the Resolve driver +
+// apply_ruled_event. It gathers the relevant slice, calls Generate (with one repair retry),
+// verifies the ruling against sliceIDs, commits all events, and applies attribute writes.
+//
+// Every attempt carries its own actor (set[i].ActorID), so a single beat may resolve a
+// multi-actor collision at once. Each actor is folded into the slice — anchoring the
+// co_present union on every actor's location, not just the first — which is what keeps
+// legitimately-witnessed bystanders inside the whitelist (the PR #26 blocker).
+//
+// resolveHeldIDs marks those held_outcome rows 'resolved' inside commitRulingTx's
+// transaction. It is nil for every caller today (the held_outcome table arrives in a later
+// task) and is a no-op when empty.
+func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int) (adjResult, error) {
+	// Flatten the raw attempts for participant-ID collection and slice gathering.
+	attempts := make([]Attempt, 0, len(set))
+	for _, aa := range set {
+		attempts = append(attempts, aa.Attempt)
+	}
+
+	// Participant ids = every actor first (deterministic — actor[0] anchors p_ids[1]),
+	// then the attempt targets. verdictRuling checks that each actor_id is in sliceIDs.
+	seen := map[string]bool{}
+	var ids []string
+	add := func(id string) {
+		if id != "" && !seen[id] {
+			seen[id] = true
+			ids = append(ids, id)
 		}
 	}
-	if actorID != "" && !actorAlreadyIn {
-		ids = append(ids, actorID)
+	for _, aa := range set {
+		add(aa.ActorID)
+	}
+	for _, id := range collectParticipantIDsFromAttempts(attempts) {
+		add(id)
 	}
 
 	// Gather slice from DB.
@@ -366,7 +391,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 	}
 
 	// Resolve: one combined judgment over the attempt set, with one repair retry on decode/verdict failure.
-	prompt := buildResolvePrompt(sliceJSON, attempts, nil)
+	prompt := buildResolvePrompt(sliceJSON, set, nil)
 	var ruling RulingV2
 	var violations []string
 	var decodeErr error
@@ -380,7 +405,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 			} else {
 				repairErrs = violations
 			}
-			p = buildResolvePrompt(sliceJSON, attempts, repairErrs)
+			p = buildResolvePrompt(sliceJSON, set, repairErrs)
 		}
 
 		rawRuling, genErr := o.Resolve.Generate(ctx, GenRequest{
@@ -424,7 +449,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 	if err != nil {
 		return adjResult{}, fmt.Errorf("begin ruling tx: %w", err)
 	}
-	committed, seqAdvance, commitErr := o.commitRulingTx(ctx, tx, worldID, ruling, tick, curSeq)
+	committed, seqAdvance, commitErr := o.commitRulingTx(ctx, tx, worldID, ruling, resolveHeldIDs, tick, curSeq)
 	if commitErr != nil {
 		_ = tx.Rollback(ctx)
 		return adjResult{}, commitErr
@@ -441,9 +466,14 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID, actorID string, 
 }
 
 // commitRulingTx executes all apply_ruled_event + apply_attribute_writes calls inside
-// the provided transaction. Returns (nil, 0, nil) on gate_reject (caller rolls back),
+// the provided transaction, then marks any resolveHeldIDs held_outcome rows 'resolved' in
+// that same transaction. Returns (nil, 0, nil) on gate_reject (caller rolls back),
 // (nil, 0, err) on hard error, or (committedIDs, seqAdvance, nil) on success.
-func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, tick int64, curSeq int) ([]string, int, error) {
+//
+// resolveHeldIDs is nil for every caller today (the held_outcome table is created by a later
+// task); the held-resolution UPDATE is skipped entirely when it is empty so nothing references
+// the not-yet-existent table.
+func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, resolveHeldIDs []string, tick int64, curSeq int) ([]string, int, error) {
 	localSeq := curSeq
 	var committed []string
 
@@ -473,6 +503,17 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 		}
 		if rowsWritten != len(ruling.Outcome.AttributeWrites) {
 			return nil, 0, fmt.Errorf("engine inconsistency: apply_attribute_writes wrote %d rows, expected %d", rowsWritten, len(ruling.Outcome.AttributeWrites))
+		}
+	}
+
+	// Held-outcome resolution: mark the named held_outcome rows 'resolved' inside this tx so
+	// the resolution lands atomically with the ruling. Skipped when empty — the held_outcome
+	// table does not exist yet, so the statement must never run with no ids to resolve.
+	if len(resolveHeldIDs) > 0 {
+		if _, err := tx.Exec(ctx,
+			`UPDATE held_outcome SET status = 'resolved' WHERE held_id = ANY($1)`,
+			resolveHeldIDs); err != nil {
+			return nil, 0, fmt.Errorf("resolve held_outcome: %w", err)
 		}
 	}
 

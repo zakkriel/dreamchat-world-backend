@@ -139,9 +139,9 @@ func TestAdjudicated_DeceptionE2E(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "AttributeChanged", Stated: "I try to bribe the guard", TargetID: doorID},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "I try to bribe the guard", TargetID: doorID}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
@@ -231,9 +231,9 @@ func TestAdjudicated_CommunicatedCommits(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "Communicated", Stated: "I shout my success to Mara", ListenerID: maraID, Content: "I did it!"},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "Communicated", Stated: "I shout my success to Mara", ListenerID: maraID, Content: "I did it!"}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
@@ -296,9 +296,9 @@ func TestAdjudicated_AttributeWriteLandsInAttrs(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "AttributeChanged", Stated: "I open the door", TargetID: doorID},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "I open the door", TargetID: doorID}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
@@ -374,9 +374,9 @@ func TestAdjudicated_OutOfSliceUUIDRepairThenBounce(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "AttributeChanged", Stated: "test", TargetID: doorID},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "test", TargetID: doorID}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
@@ -459,10 +459,10 @@ func TestAdjudicated_PartialRulingRollback(t *testing.T) {
 	}
 
 	// Two attempts so both doorID and maraID pass verdictRuling (are in sliceIDs via participant IDs).
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "AttributeChanged", Stated: "I examine the door", TargetID: doorID},
-		{Type: "Communicated", Stated: "I call out to Mara", ListenerID: maraID, Content: "Hey Mara!"},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "I examine the door", TargetID: doorID}},
+		{ActorID: playerID, Attempt: Attempt{Type: "Communicated", Stated: "I call out to Mara", ListenerID: maraID, Content: "Hey Mara!"}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
@@ -527,10 +527,10 @@ func TestAdjudicated_NAry_TwoAttemptsOneGenCall(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	ar, err := orc.adjudicate(ctx, worldID, playerID, []Attempt{
-		{Type: "AttributeChanged", Stated: "first attempt", TargetID: doorID},
-		{Type: "AttributeChanged", Stated: "second attempt", TargetID: doorID},
-	}, bt+2, 0)
+	ar, err := orc.adjudicate(ctx, worldID, []ActorAttempt{
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "first attempt", TargetID: doorID}},
+		{ActorID: playerID, Attempt: Attempt{Type: "AttributeChanged", Stated: "second attempt", TargetID: doorID}},
+	}, nil, bt+2, 0)
 	if err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}

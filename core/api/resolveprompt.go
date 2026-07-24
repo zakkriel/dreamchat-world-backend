@@ -13,14 +13,22 @@ Every event carries: actor_id (who causes it) + truth (what REALLY happens — c
 Use ONLY entity ids that appear in the FACTS section.
 ATTRIBUTE WRITES: tier 1 = engine-known mechanics (open, locked, connects, size, weight, max_room, occupied_room, empty_weight, max_load, carried_weight, base_speed, location_id, coordinates, tension). A fact that physically stops people goes in tier 1. Tier 2 = free descriptive state. Write both tiers when a mechanic has meaning.`
 
-func buildResolvePrompt(slice string, attempts []Attempt, repairErrs []string) string {
-	attJSON, _ := json.Marshal(attempts)
+func buildResolvePrompt(slice string, set []ActorAttempt, repairErrs []string) string {
 	var sb strings.Builder
 	sb.WriteString(resolveSystemHeader)
 	sb.WriteString("\n\nFACTS (the gathered slice):\n")
 	sb.WriteString(slice)
 	sb.WriteString("\n\nATTEMPT(S) to resolve (one combined judgment covering all of them):\n")
-	sb.Write(attJSON)
+	// One line per attempt, attributed to its actor — the referee must know who does what
+	// (RULINGS-2026-07-23 §9's wall note licenses the referee to see all involved parties).
+	for _, aa := range set {
+		attJSON, _ := json.Marshal(aa.Attempt)
+		sb.WriteString("ACTOR ")
+		sb.WriteString(aa.ActorID)
+		sb.WriteString(" ATTEMPTS: ")
+		sb.Write(attJSON)
+		sb.WriteString("\n")
+	}
 	if len(repairErrs) > 0 {
 		sb.WriteString("\n\nYOUR PREVIOUS ANSWER WAS REJECTED — fix exactly these violations and answer again:\n- ")
 		sb.WriteString(strings.Join(repairErrs, "\n- "))
