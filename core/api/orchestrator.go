@@ -167,7 +167,14 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 					return fmt.Errorf("fn_move_duration: %w", durErr)
 				}
 				curTick += dur
-				curSeq = 0
+				if dur > 0 {
+					// The clock advanced to a fresh tick — seq restarts at 0.
+					curSeq = 0
+				} else {
+					// Zero-duration (same-location) move: the tick did NOT advance, so seq must keep
+					// incrementing or the next event collides with the move on (tick,seq).
+					curSeq++
+				}
 				// Backstop: turn budget check.
 				if curTick-startTick > beatTickCap {
 					outcome.HaltReason = "turn_budget"

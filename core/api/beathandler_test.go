@@ -121,6 +121,26 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
 }
 
+// §7 injection bound at the HTTP edge: a request body over the 64KB cap (http.MaxBytesReader in
+// ServeHTTP) fails to decode and returns 400. The player's raw text can ride into the combined-ruling
+// prompt (RULINGS-2026-07-24 §7), so an unbounded body must never become an unbounded prompt.
+func TestBeat_OversizeBodyRejected(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	h := NewBeatHandler(pool, true, mustBridge(t, NewFakeStructuredDriver("fake-structured:test", map[string]string{}), NewFakeTextDriver("fake-text:test")))
+
+	// >64KB body: a text field padded well past the cap. MaxBytesReader trips during decode → 400.
+	// (Decode fails before decompose is ever called, so the driver bodies are irrelevant here.)
+	huge := `{"text":"` + strings.Repeat("a", 70<<10) + `"}`
+	req := httptest.NewRequest(http.MethodPost,
+		"/worlds/"+worldID+"/beat?viewer="+playerID, strings.NewReader(huge))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400 (body over the 64KB cap)", rec.Code)
+	}
+}
+
 // Defense-in-depth: a misbehaving structured driver that emits out-of-vocab is rejected by the
 // handler's belt → 422 (the primary leash is the capability floor + constrained decoding; this is
 // the backstop, SPEC-015/D-1).

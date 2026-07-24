@@ -41,9 +41,13 @@ func buildResolvePrompt(slice string, set []ActorAttempt, repairErrs []string, p
 	// `stated` field already carries the player's words per §2, so forwarding it here too would
 	// double-inject — and on every non-reaction adjudicate call.
 	if playerAnswer != "" {
-		sb.WriteString("\nTHE PLAYER'S ANSWER (stated, not an act): \"")
-		sb.WriteString(playerAnswer)
-		sb.WriteString("\"\n")
+		// Render the answer via json.Marshal, not raw quotes: it escapes newlines and quotes so a
+		// crafted answer cannot forge an `ACTOR <uuid> ATTEMPTS:` line or a repair block by embedding
+		// raw newlines. The marshaled string keeps its own surrounding double-quotes.
+		answerJSON, _ := json.Marshal(playerAnswer)
+		sb.WriteString("\nTHE PLAYER'S ANSWER (stated, not an act): ")
+		sb.Write(answerJSON)
+		sb.WriteString("\n")
 	}
 	if len(repairErrs) > 0 {
 		sb.WriteString("\n\nYOUR PREVIOUS ANSWER WAS REJECTED — fix exactly these violations and answer again:\n- ")

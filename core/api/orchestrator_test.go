@@ -335,6 +335,110 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
 }
 
+// TestRunBeatZeroDurationMoveKeepsSeqMonotonic pins the (tick,seq) fix for same-location moves: a
+// zero-duration ActorMoved does NOT advance the clock, so curSeq must keep incrementing rather than
+// reset to 0 — otherwise the following Communicated collides with the move on (tick,seq) and
+// apply_event trips uq_ce_accepted_order. Both events must commit at the SAME tick with DISTINCT seqs.
+func TestRunBeatZeroDurationMoveKeepsSeqMonotonic(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	seedOrchestratorEntities(t, ctx)
+
+	var baseTick int64
+	if err := pool.QueryRow(ctx,
+		`SELECT GREATEST(COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1,62000)`,
+		worldID).Scan(&baseTick); err != nil {
+		t.Fatalf("base tick: %v", err)
+	}
+
+	// Position player AND Mara at locA: the Communicated listener must be co-located, and the player
+	// must already be at locA so the move to locA is same-location → fn_move_duration(locA,locA)=0.
+	_, err := pool.Exec(ctx, `
+		WITH ev1 AS (
+		  INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+		  VALUES (gen_random_uuid(),$1,'move','P→locA-zerodur',$2,0,'accepted',now(),'public','fast_path')
+		  RETURNING event_id
+		),
+		ep1 AS (
+		  INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier)
+		  SELECT event_id,$3,'actor','instigator' FROM ev1
+		),
+		sm1 AS (
+		  INSERT INTO state_mutation (world_id,event_id,entity_id,entity_kind,attribute_path,new_value,valid_from_tick,valid_from_seq)
+		  SELECT $1,event_id,$3,'actor','attrs.location_id',to_jsonb($5::text),$2,0 FROM ev1
+		),
+		ev2 AS (
+		  INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+		  VALUES (gen_random_uuid(),$1,'move','M→locA-zerodur',$4,0,'accepted',now(),'public','fast_path')
+		  RETURNING event_id
+		),
+		ep2 AS (
+		  INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier)
+		  SELECT event_id,$6,'actor','instigator' FROM ev2
+		),
+		sm2 AS (
+		  INSERT INTO state_mutation (world_id,event_id,entity_id,entity_kind,attribute_path,new_value,valid_from_tick,valid_from_seq)
+		  SELECT $1,event_id,$6,'actor','attrs.location_id',to_jsonb($5::text),$4,0 FROM ev2
+		)
+		SELECT 1`,
+		worldID, baseTick, playerID, baseTick+1, locA, maraID)
+	if err != nil {
+		t.Fatalf("setup positions: %v", err)
+	}
+
+	// Cognition stays quiet so no NPC act interposes a seq between the move and the say.
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           NewFakeResolveDriver(),
+		CognitionBatch:    &scriptedCognitionDriver{name: "quiet-batch", body: `[]`},
+		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		WorldActor:        NewFakeWorldActorDriver(),
+	}
+
+	// [ same-location ActorMoved (dur=0), then Communicated to co-located Mara ].
+	chain := []Attempt{
+		{Type: "ActorMoved", Stated: "I shift my weight but stay put", ToLocationID: locA},
+		{Type: "Communicated", Stated: "I lean in and speak", ListenerID: maraID, Content: "a word"},
+	}
+
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	if err != nil {
+		t.Fatalf("RunBeat (zero-duration move + say must not collide): %v", err)
+	}
+	if outcome.HaltReason != "completed" {
+		t.Fatalf("halt_reason = %q, want completed", outcome.HaltReason)
+	}
+	if len(outcome.Committed) != 2 {
+		t.Fatalf("expected 2 committed events (move + say), got %d: %v", len(outcome.Committed), outcome.Committed)
+	}
+
+	// Both at the SAME tick (dur=0 → clock never advanced), DISTINCT seqs (the fix).
+	type tickSeq struct {
+		tick int64
+		seq  int
+	}
+	pairs := make([]tickSeq, 0, 2)
+	for _, evID := range outcome.Committed {
+		var ts tickSeq
+		if err := pool.QueryRow(ctx,
+			`SELECT in_world_tick, beat_seq FROM canon_event WHERE event_id=$1::uuid`,
+			evID).Scan(&ts.tick, &ts.seq); err != nil {
+			t.Fatalf("query canon_event %s: %v", evID, err)
+		}
+		pairs = append(pairs, ts)
+	}
+	if pairs[0].tick != pairs[1].tick {
+		t.Fatalf("zero-duration move must not advance the tick: got ticks %d and %d", pairs[0].tick, pairs[1].tick)
+	}
+	if pairs[0].seq == pairs[1].seq {
+		t.Fatalf("seq collision at tick=%d seq=%d — a zero-duration move must keep curSeq monotonic", pairs[0].tick, pairs[0].seq)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
+}
+
 // inlineCommitCognitionDriver returns a fixed NPC decision JSON for CI.
 type inlineCommitCognitionDriver struct{ json string }
 

@@ -61,6 +61,10 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// §7 injection bound: the player's raw text can ride into the combined-ruling prompt
+	// (RULINGS-2026-07-24 §7), so an unbounded body is an unbounded prompt. Cap it at 64KB before
+	// decoding; MaxBytesReader makes an over-cap read fail and the decode error below returns 400.
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	var in struct {
 		Text string `json:"text"`
 	}
