@@ -397,8 +397,10 @@ A predefined catalog (the contract) mapping a status (`tied`, `limping`, `gagged
 engine applies it generically — new statuses are new catalog rows, never new gate logic. Feeds
 **`not-blocked` + `fits-time`**.
 - **Source:** Gate & State Model — v2 §5 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
-- **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
-  when built.
+- **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, A11-final)** — there is NO predefined catalog:
+  statuses/modifiers are **LLM-minted typed rows** inside the hardcoded action contracts (percentage
+  modifiers on movement types; floor −100%, no cap). Prevention emerges from the arithmetic
+  (−100% → speed 0), not from a `prevent` table. See `chunk-5.5-final/FINAL-action-contracts.md` §2/§8.
 - **Firing trigger:** when statuses / the status-aware gate land beyond the reachability-only thin
   slice.
 
@@ -409,8 +411,12 @@ tier holds 4× the previous (`size n = 4^(n-1)` base units), with `has-room` ⟺
 container's `max_load`, with `within-load` ⟺ `used_weight + weight ≤ max_load` (a carrier's
 `max_load` is its strength dimension). The two are orthogonal. Feeds **`has-room` + `within-load`**.
 - **Source:** Gate & State Model — v2 §7 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
-- **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
-  when built.
+- **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, founder-ruled)** — the volume half survives
+  (measurements `max_room`/`occupied_room`; `has-room` computed at ask-time, never stored). The weight
+  half changed: **`within-load` is DEAD as a blocker** ("it does not really support the status system,
+  just works around it — get rid of it"). Weight CONSEQUENCES instead: eager recursive `carried_weight`
+  recompute on any carry-chain commit + seeded `encumbered` status (movement −100%). Container formula:
+  `(empty_weight + Σ contents) × modifier`, recursive. See `chunk-5.5-final/FINAL-action-contracts.md` §4.
 - **Firing trigger:** when `ObjectRelocated` / capacity checks land beyond the reachability-only thin
   slice.
 

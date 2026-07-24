@@ -1,5 +1,21 @@
 # Gate & State Model — v2 (DESIGN)
 
+> **⚠ SUPERSEDED IN PART (2026-07-22/23) by the FINAL set**
+> (`docs/superpowers/specs/chunk-5.5-final/`, esp. `FINAL-action-contracts.md` + the RULINGS files).
+> Founder rulings after this doc was written:
+> 1. **`within-load` is DEAD as a gate blocker** (§2 list, §3 ObjectRelocated row, §7). Weight never
+>    blocks — it CONSEQUENCES: the engine eagerly recomputes `carried_weight` on any carry-chain commit
+>    and writes/clears the seeded `encumbered` status (movement −100%). Volume (`has-room` over
+>    `max_room`/`occupied_room`, computed at ask-time) remains the only blocking dimension.
+> 2. **The §5 predefined status-effect catalog is superseded by A11-final:** no enumerable catalogs —
+>    the engine hardcodes the physics grammar; the LLM mints the status/modifier vocabulary as typed
+>    rows inside that grammar. `not-blocked(axis)`-via-catalog moves out of the gate.
+> 3. **"The gate is the canonization point (D-1)" is imprecise** (§1, header): ruled — the gate READS
+>    canon and is structural-only; it writes nothing. The canonization point is COMMIT. D-1's "only the
+>    engine writes canon" refers to the whole pipeline, not the gate stage.
+> Where this doc and the FINAL set conflict, the FINAL set wins. Full doc cleanup deferred (founder:
+> "we will clean the whole documentation later").
+
 **Status:** design proposal. Grounded in §2 (closed sets / compose from primitives), §3 (event spine), §10
 (action-driven time), **SPEC-017** (move-validity), **SPEC-018** (spatial: distance/speed/time),
 **SPEC-013** (adjudication of uncertain outcomes), **D-1** (the gate is the canonization point). **NOT
