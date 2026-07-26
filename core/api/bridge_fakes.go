@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"strings"
 )
 
 // fakeStructuredDriver models CONSTRAINED DECODING for CI: it can ONLY return schema-valid chains
@@ -29,8 +30,17 @@ func (f *fakeStructuredDriver) Generate(_ context.Context, req GenRequest) (stri
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: structured driver used without a schema", f.name)
 	}
+	// The decompose seat now assembles a full Prompt (header + SCENE + CANDIDATES + PLAYER INPUT tail);
+	// the player's raw words ride the tail, not the whole Prompt. Match a table key that is EXACT (the
+	// direct-Generate callers) OR a substring of the assembled prompt (the player's intent embedded at
+	// the tail), so a test keyed by the player's text still resolves to its scripted chain.
 	if out, ok := f.table[req.Prompt]; ok {
 		return out, nil
+	}
+	for key, out := range f.table {
+		if strings.Contains(req.Prompt, key) {
+			return out, nil
+		}
 	}
 	return "[]", nil // unknown prose → empty chain (commits nothing, C-5); never out-of-vocab
 }

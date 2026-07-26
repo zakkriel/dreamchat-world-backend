@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -23,6 +24,52 @@ type Candidate struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
+}
+
+// decomposeSystemHeader is the decompose seat's standing instruction and stable cache prefix. It turns
+// the player's words into a CHAIN OF ATTEMPTS (what the player TRIES — never outcomes; the referee
+// rules outcomes), binds ids ONLY from the CANDIDATES block, emits UNRESOLVED on a genuine reference
+// tie rather than guessing, and adds nothing the player did not state (FINAL-decompose). Foundations
+// plan Task 9: "Decompose prompt = perception lines + candidates (ids) + the v2 schema" — the driver
+// dropping req.Payload made this header + scene + candidates never reach the live model, so a real id
+// could not be bound; assembling the prompt HERE, at the seat boundary, is the fix.
+const decomposeSystemHeader = `You turn the player's words into a chain of ATTEMPTS — what the player TRIES this beat, never what happens (outcomes are the referee's job). Every attempt uses the closed event vocabulary and binds real ids taken ONLY from the CANDIDATES list below. Never invent an id, and never name an entity that is not a candidate.
+When the player's reference genuinely ties between two or more candidates — you cannot tell which one they mean — emit an UNRESOLVED attempt listing those candidate ids rather than guessing.
+Add NOTHING the player did not state: no extra steps, no embellishment, no motive. The player's raw words are at the end, under PLAYER INPUT.`
+
+// buildDecomposePrompt assembles the decompose prompt at the SEAT BOUNDARY — the perception payload's
+// lines and candidate whitelist become the model's world HERE, since the driver drops req.Payload
+// (D-13 keeps provider shaping in the driver; seat semantics stay at the call site). Layout is
+// cache-native (mirrors cognitionprompt.go): the stable header + SCENE + CANDIDATES prefix caches, and
+// the player's raw input rides the MUTABLE TAIL (last), so re-decomposing new input reuses the cached
+// prefix. The v2 Schema (the closed-vocabulary leash) is passed unchanged on the GenRequest.
+func buildDecomposePrompt(payload PerceptionPayload, playerText string) string {
+	var sb strings.Builder
+	sb.WriteString(decomposeSystemHeader)
+
+	// SCENE — the player's perception lines (what they can currently perceive), oldest first.
+	sb.WriteString("\n\nSCENE (what you perceive):\n")
+	for _, l := range payload.Lines {
+		sb.WriteString("- ")
+		sb.WriteString(l)
+		sb.WriteString("\n")
+	}
+
+	// CANDIDATES — the ONLY ids a bound attempt may reference. One per line: id  name  (kind).
+	sb.WriteString("\nCANDIDATES (bind ids ONLY from this list):\n")
+	for _, c := range payload.Candidates {
+		sb.WriteString(c.ID)
+		sb.WriteString("  ")
+		sb.WriteString(c.Name)
+		sb.WriteString("  (")
+		sb.WriteString(c.Kind)
+		sb.WriteString(")\n")
+	}
+
+	// PLAYER INPUT — the mutable tail: the raw words to decompose, LAST so the whole prefix stays cacheable.
+	sb.WriteString("\nPLAYER INPUT:\n")
+	sb.WriteString(playerText)
+	return sb.String()
 }
 
 // beatHandler serves POST /worlds/{w}/beat. It orchestrates the per-seat bridge around the
@@ -83,7 +130,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 2. decompose: STRUCTURED generation against the v2 closed vocabulary (the leash). The seat's
 	//    capability floor guarantees a constrained driver; DecodeAndValidateChainV2 is the belt.
 	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-		GenRequest{Payload: pre, Prompt: in.Text, Schema: json.RawMessage(beatChainV2SchemaJSON)})
+		GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, in.Text), Schema: json.RawMessage(beatChainV2SchemaJSON)})
 	if err != nil {
 		log.Printf("decompose error: %v", err)
 		http.Error(w, "decompose failed", http.StatusBadGateway)
@@ -142,7 +189,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	narration, err := h.bridge.Driver(SeatNarrate.Name).Generate(ctx,
-		GenRequest{Payload: post, Prompt: "Narrate the beat from the player's perceptions only."})
+		GenRequest{Payload: post, Prompt: buildNarratePrompt(post)})
 	if err != nil {
 		http.Error(w, "narrate failed", http.StatusBadGateway)
 		return
