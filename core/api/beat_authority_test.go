@@ -153,11 +153,28 @@ func TestBeat_NoLeak_PrivateE1AbsentFromUninvolvedPayload(t *testing.T) {
 		}
 		return n
 	}
-	var wallTotal int
-	if err := pool.QueryRow(ctx,
-		`SELECT count(*) FROM fn_visible_perceptions($1,$2)`, worldID, jonasID).Scan(&wallTotal); err != nil {
-		t.Fatalf("wall total: %v", err)
+	// the full set of content strings the wall exposes to Jonas. The payload must be a SUBSET of this
+	// BY CONTENT — the recency window drops rows, never adds them — so every payload line has to be one
+	// of these exact strings. Membership, not cardinality: an injected/extra line (a leaked source like
+	// E1) would carry content absent from this set and be caught, which a count comparison cannot do.
+	wallContent := map[string]bool{}
+	wallRows, err := pool.Query(ctx, `SELECT content FROM fn_visible_perceptions($1,$2)`, worldID, jonasID)
+	if err != nil {
+		t.Fatalf("wall content: %v", err)
 	}
+	for wallRows.Next() {
+		var c string
+		if err := wallRows.Scan(&c); err != nil {
+			wallRows.Close()
+			t.Fatalf("scan wall content: %v", err)
+		}
+		wallContent[c] = true
+	}
+	if err := wallRows.Err(); err != nil {
+		wallRows.Close()
+		t.Fatalf("wall content rows: %v", err)
+	}
+	wallRows.Close()
 
 	// the PRIVATE disclosure is forbidden in Jonas's view (provenance, not text)
 	if e1 := countBySource(e1ID); e1 != 0 {
@@ -168,11 +185,16 @@ func TestBeat_NoLeak_PrivateE1AbsentFromUninvolvedPayload(t *testing.T) {
 		t.Fatalf("E102 (public record) missing from Jonas's view: %d (common knowledge should be visible)", e102)
 	}
 	// the payload is built strictly FROM the wall, now windowed to a bounded recent slice (Fix A recency
-	// dials): it is a SUBSET of the wall, never a superset. Since the wall has zero E1 rows, so does the
-	// payload. Assert the payload carries nothing BEYOND the wall (no injected/extra source) — the
-	// no-leak guarantee, restated for the windowed payload.
-	if len(payload.Lines) > wallTotal {
-		t.Fatalf("payload (%d lines) exceeds fn_visible_perceptions (%d rows); payload may carry an extra source",
-			len(payload.Lines), wallTotal)
+	// dials): it is a SUBSET of the wall, never a superset. Assert TRUE subset semantics — every payload
+	// line's content is a MEMBER of the wall's visible-content set. Since the wall carries zero E1 rows,
+	// no payload line can carry E1's content; more generally the payload cannot introduce any source the
+	// wall did not expose. (Restored from a cardinality-only check that could not catch a swapped source.)
+	if len(payload.Lines) == 0 {
+		t.Fatalf("payload has no lines; the subset assertion would be vacuous")
+	}
+	for i, line := range payload.Lines {
+		if !wallContent[line] {
+			t.Fatalf("payload line %d %q is not in fn_visible_perceptions — the payload carries content beyond the wall (B-1/I-3 breach)", i, line)
+		}
 	}
 }

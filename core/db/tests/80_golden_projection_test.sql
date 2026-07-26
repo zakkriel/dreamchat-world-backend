@@ -4,9 +4,7 @@ SELECT plan(1);
 --   actor   = actors[(i % 8) + 1]  (8 actors, 0-based Python mod)
 --   loc_id  = loc_ids[(i % 5) + 1] (5 locs: Tavern,Square,Market,Road,Dock)
 -- Final location = last i where actor was chosen (highest i wins):
---   P  (actor slot 0): last noise at i=96 → Square, BUT seed_drowned_lantern's Kade arrival
---       (ActorMoved @ tick 300 > all noise ticks) re-places the Player → Tavern
---       → dddddddd-dddd-dddd-dddd-dddddddddddd  (founder-gate placement fix)
+--   P  (actor slot 0): last at i=96  → i%5=1 → Square  → 000000a0-0000-0000-0000-0000000000a1
 --   M  (actor slot 1): last at i=97  → i%5=2 → Market  → 000000b0-0000-0000-0000-0000000000b1
 --   J  (actor slot 2): last at i=98  → i%5=3 → Road    → 000000c0-0000-0000-0000-0000000000c1
 --   O1 (actor slot 3): last at i=99  → i%5=4 → Dock    → 000000d0-0000-0000-0000-0000000000d1
@@ -17,7 +15,7 @@ SELECT plan(1);
 -- state_mutations write to_jsonb(loc_id::text) → attrs->>location_id is the UUID string.
 CREATE TEMP TABLE expected (entity_id uuid, location_id text);
 INSERT INTO expected VALUES
- ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','dddddddd-dddd-dddd-dddd-dddddddddddd'),  -- P  → Tavern (Kade arrival @ tick 300)
+ ('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','000000a0-0000-0000-0000-0000000000a1'),  -- P  → Square
  ('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','000000b0-0000-0000-0000-0000000000b1'),  -- M  → Market
  ('cccccccc-cccc-cccc-cccc-cccccccccccc','000000c0-0000-0000-0000-0000000000c1'),  -- J  → Road
  ('00000000-0000-0000-0000-000000000001','000000d0-0000-0000-0000-0000000000d1'),  -- O1 → Dock

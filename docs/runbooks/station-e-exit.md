@@ -49,8 +49,9 @@ make reset      # db-down + db-up + migrate + seed
 ```
 
 `make reset` applies all migrations, then chains the **seed** step: `seed_mara_0A.sql` (the
-deterministic Mara world) followed by `seed_drowned_lantern.sql` (the Drowned Lantern scene, loaded
-append-only on top of it — see the `Makefile` `seed` target). Content canon for the scene lives in
+deterministic Mara **fixture** world `1111…`, for the test suites) followed by
+`seed_drowned_lantern.sql` (the Drowned Lantern scene in its own **play** world `2222…` — the two
+seeds write DISJOINT worlds; see the `Makefile` `seed` target). Content canon for the scene lives in
 `docs/superpowers/specs/chunk-5.5-final/FINAL-drowned-lantern-souls.md`.
 
 The cast the founder plays against — what the seed actually places:
@@ -65,11 +66,11 @@ The cast the founder plays against — what the seed actually places:
   construction). Her core is only the guarded-barkeep face a stranger gets. She holds the **cellar key**.
 - **Jonas — knows OF the secret without knowing it.** His private record is only that twice he watched
   Mara go pale at a harbor face and learned to stand closer instead of asking — no "Reyna", no ledger.
-- **The hooded woman — registered, but deliberately UN-PLACED.** She has a thin core and her own
-  private record (she took the paymaster's contract to confirm a young, dark-haired courier — "The one
-  by the door could be him. I am not sure. Yet."). The founder's script imagines her at the corner
-  table, but the seed writes **no `actor_state`** for world `1111` (the golden 8-actor projection is
-  frozen by pgTAP test 80): her presence is **supplied to the lookups at play time**, not seeded.
+- **The hooded woman — at the corner table.** She has a thin core and her own private record (she took
+  the paymaster's contract to confirm a young, dark-haired courier — "The one by the door could be him.
+  I am not sure. Yet."). In the dedicated play world she is **placed in the room** with the others (the
+  fixture-world compromise that kept her un-placed no longer applies — there is no frozen golden
+  projection to protect here).
 
 The room itself:
 
@@ -78,15 +79,18 @@ The room itself:
   door** (closed, unlocked → Alley), and the **cellar hatch** (closed and **LOCKED** — the first
   Tier-1 lock in play → Cellar; Mara holds the key, and the cellar is where the life-debt happened).
 
-The play world/actor ids from the seed:
+The play world/actor ids from the seed (founder Option B: the play scene has its OWN dedicated world
+`22222222-…`; the legacy fixture world `11111111-…` is for the pgTAP/Go test suites only and no longer
+carries any play content):
 
 | Entity | UUID |
 |---|---|
-| World | `11111111-1111-1111-1111-111111111111` |
-| Player (Kade) | `aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa` |
-| Mara | `bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb` |
-| Jonas | `cccccccc-cccc-cccc-cccc-cccccccccccc` |
-| Hooded Woman (registered, un-placed) | `ffffffff-ffff-ffff-ffff-ffffffffffff` |
+| World (play) | `22222222-2222-2222-2222-222222222222` |
+| Kade (the player) | `2ac70000-0000-0000-0000-0000000000a1` |
+| Mara | `2ac70000-0000-0000-0000-0000000000a2` |
+| Jonas | `2ac70000-0000-0000-0000-0000000000a3` |
+| Hooded Woman (at the corner table) | `2ac70000-0000-0000-0000-0000000000a4` |
+| The Drowned Lantern (tavern) | `210c0000-0000-0000-0000-0000000000d1` |
 
 ---
 
@@ -135,11 +139,13 @@ http://localhost:5173/#/play
 
 ## 4. The founder's script
 
-Play as the Player (Kade). The `?viewer=<uuid>` override is only forwarded by the play page's
-**compendium** reads (`#/actors`, `#/timeline`, …) — `postBeat` in the frontend (`src/api.ts`) never
-appends it to the beat POST. On the beat endpoint, viewer resolution instead falls back server-side to
-the seed's sole `Player` actor (`ResolveViewer` in `core/api/viewer.go`), which is exactly Kade in this
-seed. Switching which actor you play from the play page is not supported today.
+Play as Kade. The play page's `postBeat` (`src/api.ts`) forwards Kade's uuid as `?viewer=` on the beat
+POST — the play world has no name-based `Player` actor to fall back to, so the viewer is passed
+explicitly (`PLAY_VIEWER` in `src/pages/PlayPage.tsx`). The backend honors that override only in debug
+mode (`ResolveViewer` in `core/api/viewer.go`, gated on `DREAMCHAT_MODE=debug`), so keep
+`DREAMCHAT_MODE=debug` set. The Compendium reads (`#/actors`, `#/timeline`, …) still forward the
+page-URL `?viewer=` for inspecting any actor's wall. Switching which actor you play from the play page
+is not supported today — the viewer is pinned to Kade.
 
 1. **Walk in** to the Drowned Lantern. Mara and Jonas are present.
 2. **Lean on Mara about the harbormaster** — e.g. type: *"I lean on Mara and press her about the

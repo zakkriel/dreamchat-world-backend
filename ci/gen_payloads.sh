@@ -17,9 +17,15 @@ PSQL() { docker compose exec -T db psql -U postgres -d dreamchat -Atc "$1" </dev
 
 rm -rf "$OUT"; mkdir -p "$OUT"
 
-WORLD=$(PSQL "SELECT world_id FROM entity_registry LIMIT 1")
-PLAYER=$(PSQL "SELECT entity_id FROM entity_registry WHERE canonical_name='Player'")
-JONAS=$(PSQL "SELECT entity_id FROM entity_registry WHERE canonical_name='Jonas'")
+# The payload contract targets the compendium FIXTURE world — the one that has a 'Player' actor.
+# Anchor WORLD on 'Player' (never LIMIT-1-any-world): the dedicated Drowned Lantern play world
+# (22222222-…) also seeds a 'Mara'/'Jonas' but uses 'Kade', not 'Player', so anchoring here pins the
+# generator to the fixture world and keeps the name lookups from matching across worlds (a raw
+# multi-row result would inject a control character into the payloads/manifest).
+PLAYER_ROW=$(PSQL "SELECT world_id||'|'||entity_id FROM entity_registry WHERE canonical_name='Player' LIMIT 1")
+WORLD=${PLAYER_ROW%%|*}
+PLAYER=${PLAYER_ROW#*|}
+JONAS=$(PSQL "SELECT entity_id FROM entity_registry WHERE canonical_name='Jonas' AND world_id='$WORLD'")
 [ -n "$WORLD" ] && [ -n "$PLAYER" ] && [ -n "$JONAS" ] || { echo "could not read world/Player/Jonas — is the db seeded?" >&2; exit 1; }
 
 VIEWERS="P:$PLAYER J:$JONAS"

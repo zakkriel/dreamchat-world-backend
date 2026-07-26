@@ -1,9 +1,14 @@
 -- =====================================================================================
 -- seed_drowned_lantern.sql — the Drowned Lantern scene (Station E, chunk-5.5).
--- Loaded AFTER seed_mara_0A.sql by `make seed`. APPEND-ONLY: adds rows to the existing
--- world 11111111-… ; never modifies or deletes seed_mara_0A's rows.
+-- Loaded AFTER seed_mara_0A.sql by `make seed`, but writes a DISJOINT, DEDICATED world:
+--   22222222-2222-2222-2222-222222222222 (the PLAY world).
 --
--- Content canon (founder-corrected 2026-07-24):
+-- Founder Option B (2026-07-26): the play scene gets its OWN world so nothing bleeds in from
+-- the legacy test-fixture world 11111111-… (noise actors O2/O5, the 0A noise-loop scatter of
+-- Mara/Jonas, a location literally named 'Tavern', ledger lore in memory). The fixture world
+-- 1111 reverts to pristine 0A; play lives here, in a world this seed owns end to end.
+--
+-- Content canon (founder-corrected; transcribe faithfully, do NOT re-paraphrase):
 --   docs/superpowers/specs/chunk-5.5-final/FINAL-drowned-lantern-souls.md
 --
 -- The shape that matters:
@@ -14,98 +19,113 @@
 --   * every private record references a grounding event and its subject links;
 --   * the first playable room holds a real Tier-1 locked Portal (the cellar hatch).
 --
--- Determinism: fixed uuids, no random(). State that must survive replay (tavern tension,
--- the portals, the note, the key) is written as state_mutation rows under one scene event
--- (the sm_project trigger projects them; replay_0A rebuilds them identically). The ONE actor_state
--- write for world 1111 is Kade's arrival (tick 300): a state_mutation that RE-PLACES an existing
--- golden actor (the Player) into the Tavern — it adds no new actor, so the golden projection (test 80)
--- still holds 8 actors, only the Player's location moves Square→Tavern. The hooded woman is still
--- deliberately un-placed — her presence is supplied to the lookups at play time.
+-- Determinism / replay: fixed uuids, no random(). ALL four actors are PLACED in the Drowned
+-- Lantern by replay-safe state — absolute attrs.location_id state_mutation writes under accepted
+-- canon events (the sm_project trigger projects them on insert; replay_0a rebuilds them identically).
+-- Each (entity, attribute_path) is written EXACTLY ONCE, so live-insert order and replay order agree
+-- (last-writer-wins is a no-op). We own this world's tick space; backstory sits at 30–37, the scene
+-- genesis at 40, Kade's arrival at 50 — all well under the Go tests' 50000 floor.
 --
--- Ticks: backstory events at 50–57 and the scene-set event at 58 (all before E1@100), then Kade's
--- arrival at (300, beat_seq 1) (AFTER the 0A noise ticks 101–200 and E102@201, so it is the last
--- mutation to touch Kade → Tavern wins under replay). beat_seq 1 dodges test 93's transient (300,0)
--- slot under uq_ce_accepted_order(world_id,in_world_tick,beat_seq). Tick 300 is now the seed's max;
--- the live handler mints the next beat after it.
+-- Tick-space note: uq_ce_accepted_order is (world_id,in_world_tick,beat_seq) WHERE status='accepted'
+-- (schema.sql), i.e. WORLD-SCOPED — so this world's tick space is ours. The ONE caveat: pgTAP
+-- test 85 (85_causal_acyclicity_test.sql) uses world 2222… as a transient scratch world inside a
+-- BEGIN/ROLLBACK at ticks 10–22 (beat_seq 0); demo_cycle_0B.sql (not in the *_test.sql suite) uses
+-- ticks 1–2. We deliberately avoid 1–2 and 10–22 so a test-85 run never collides with this seed's
+-- standing rows.
 -- =====================================================================================
 BEGIN;
 
 -- Own idempotence guard: refuse a double-load. `make reset` is the clean re-run path.
+-- Guard on the PLAY world's tavern (the Drowned Lantern) — it exists iff this seed already ran.
 DO $$ BEGIN
   IF EXISTS (SELECT 1 FROM entity_registry
-             WHERE entity_id='ffffffff-ffff-ffff-ffff-ffffffffffff') THEN
-    RAISE EXCEPTION 'seed_drowned_lantern already applied (hooded woman exists) — run `make reset` for a clean load';
+             WHERE entity_id='210c0000-0000-0000-0000-0000000000d1') THEN
+    RAISE EXCEPTION 'seed_drowned_lantern already applied (the Drowned Lantern exists) — run `make reset` for a clean load';
   END IF;
 END $$;
 
--- ── Registry (+9): the hooded woman + the room''s places and objects ──────────────────
--- The named cast (Kade aaaa / Mara bbbb / Jonas cccc / Tavern dddd) already exists.
-INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
- ('ffffffff-ffff-ffff-ffff-ffffffffffff','11111111-1111-1111-1111-111111111111','actor',   'Hooded Woman'),
- ('d1000000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111','location','Dock Street'),
- ('d1000000-0000-0000-0000-0000000000a2','11111111-1111-1111-1111-111111111111','location','Alley'),
- ('d1000000-0000-0000-0000-0000000000a3','11111111-1111-1111-1111-111111111111','location','Cellar'),
- ('d1000000-0000-0000-0000-0000000000b1','11111111-1111-1111-1111-111111111111','artifact','Sealed Note (gray wax)'),
- ('d1000000-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','artifact','Front Door'),
- ('d1000000-0000-0000-0000-0000000000c2','11111111-1111-1111-1111-111111111111','artifact','Back Door'),
- ('d1000000-0000-0000-0000-0000000000c3','11111111-1111-1111-1111-111111111111','artifact','Cellar Hatch'),
- ('d1000000-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111','artifact','Cellar Key');
+-- Physics defaults for the play world (contracts §2: exactly walk 1.4 + encumbered -100 on walk).
+SELECT seed_world_defaults('22222222-2222-2222-2222-222222222222');
 
--- ── Backstory canon events (ticks 50–57, before E1@100) + one scene-set event (tick 58) ──
--- event_type='AttributeChanged' (backstory grounds who they are); origin='fast_path' (matches
--- seed_mara_0A''s authored history and the recognized gated origin set). M-E4 / J-E3 / H-E1 are
--- PRIVATE — each is the grounding source of exactly one NPC''s private perception below.
+-- ── Registry: 4 actors + 4 locations (REAL names) + 5 artifacts ───────────────────────
+-- All-new fixed uuids (entity_registry PK is global). Kade is 'Kade' now — a real name, not the
+-- fixture world's 'Player'. The tavern is 'The Drowned Lantern', not 'Tavern'.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222','actor',   'Kade'),
+ ('2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222','actor',   'Mara'),
+ ('2ac70000-0000-0000-0000-0000000000a3','22222222-2222-2222-2222-222222222222','actor',   'Jonas'),
+ ('2ac70000-0000-0000-0000-0000000000a4','22222222-2222-2222-2222-222222222222','actor',   'Hooded Woman'),
+ ('210c0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','location','The Drowned Lantern'),
+ ('210c0000-0000-0000-0000-0000000000d2','22222222-2222-2222-2222-222222222222','location','Dock Street'),
+ ('210c0000-0000-0000-0000-0000000000d3','22222222-2222-2222-2222-222222222222','location','Alley'),
+ ('210c0000-0000-0000-0000-0000000000d4','22222222-2222-2222-2222-222222222222','location','Cellar'),
+ ('2a7f0000-0000-0000-0000-0000000000b1','22222222-2222-2222-2222-222222222222','artifact','Sealed Note (gray wax)'),
+ ('2a7f0000-0000-0000-0000-0000000000c1','22222222-2222-2222-2222-222222222222','artifact','Front Door'),
+ ('2a7f0000-0000-0000-0000-0000000000c2','22222222-2222-2222-2222-222222222222','artifact','Back Door'),
+ ('2a7f0000-0000-0000-0000-0000000000c3','22222222-2222-2222-2222-222222222222','artifact','Cellar Hatch'),
+ ('2a7f0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','artifact','Cellar Key');
+
+-- ── Backstory canon events (ticks 30–37) + one scene-genesis event (tick 40) ──────────
+-- event_type='AttributeChanged' (backstory grounds who they are); origin='fast_path'. M-E4 / J-E3 /
+-- H-E1 are PRIVATE — each grounds exactly one NPC's private perception below. The scene-genesis event
+-- (f9) is public and carries the room state AND places the three residents (Mara behind the bar,
+-- Jonas by the bar, the hooded woman at the corner table) via absolute location writes.
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          in_world_label, status, accepted_at, visibility_scope, origin) VALUES
- ('e0000000-0000-0000-0000-0000000000f1','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'M-E1: grew up behind this bar; her father taught her a keeper who reacts has already lost',50,0,
+ ('2e000000-0000-0000-0000-0000000000f1','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'M-E1: grew up behind this bar; her father taught her a keeper who reacts has already lost',30,0,
   'Backstory','accepted',now(),'public','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f2','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'M-E2: the harbormaster''s predecessor shook the tavern for protection money; the watch shrugged; her father died that winter',51,0,
+ ('2e000000-0000-0000-0000-0000000000f2','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'M-E2: the harbormaster''s predecessor shook the tavern for protection money; the watch shrugged; her father died that winter',31,0,
   'Backstory','accepted',now(),'public','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f3','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'M-E3: a dock brawl left Jonas half-dead outside her door; she stitched him up and gave him work',52,0,
+ ('2e000000-0000-0000-0000-0000000000f3','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'M-E3: a dock brawl left Jonas half-dead outside her door; she stitched him up and gave him work',32,0,
   'Backstory','accepted',now(),'public','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f4','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'M-E4 (private): she hid Reyna''s family in the cellar nine days; Reyna''s teenage brother ran the messages that got them out',53,0,
+ ('2e000000-0000-0000-0000-0000000000f4','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'M-E4 (private): she hid Reyna''s family in the cellar nine days; Reyna''s teenage brother ran the messages that got them out',33,0,
   'Backstory','accepted',now(),'private','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f5','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'J-E1: beaten near to death over a fixed fight and left in the alley; Mara took him in',54,0,
+ ('2e000000-0000-0000-0000-0000000000f5','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'J-E1: beaten near to death over a fixed fight and left in the alley; Mara took him in',34,0,
   'Backstory','accepted',now(),'public','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f6','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'J-E2: a prizefighter until he killed a man in the ring with one unlucky blow; never fought clean for money again',55,0,
+ ('2e000000-0000-0000-0000-0000000000f6','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'J-E2: a prizefighter until he killed a man in the ring with one unlucky blow; never fought clean for money again',35,0,
   'Backstory','accepted',now(),'public','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f7','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'J-E3 (private): twice he watched Mara go pale at a harbor face and learned to stand closer instead of asking',56,0,
+ ('2e000000-0000-0000-0000-0000000000f7','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'J-E3 (private): twice he watched Mara go pale at a harbor face and learned to stand closer instead of asking',36,0,
   'Backstory','accepted',now(),'private','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f8','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'H-E1 (private): took the paymaster''s contract in a counting-house above the silk quay, three days ago',57,0,
+ ('2e000000-0000-0000-0000-0000000000f8','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'H-E1 (private): took the paymaster''s contract in a counting-house above the silk quay, three days ago',37,0,
   'Backstory','accepted',now(),'private','fast_path'),
- ('e0000000-0000-0000-0000-0000000000f9','11111111-1111-1111-1111-111111111111','AttributeChanged',
-  'the Drowned Lantern is set: tension, the doors, the hatch, the note, the key',58,0,
+ ('2e000000-0000-0000-0000-0000000000f9','22222222-2222-2222-2222-222222222222','AttributeChanged',
+  'the Drowned Lantern is set: Mara behind the bar, Jonas by it, a hooded woman at the corner table; tension, the doors, the hatch, the note, the key',40,0,
   'Scene','accepted',now(),'public','fast_path');
 
 -- Participants (brief: the NPC + any named co-subject). subject ≠ about-ness (perception_subject
--- carries the precise about-ness, ADR-035) — these are the event''s people.
+-- carries the precise about-ness, ADR-035) — these are the event''s people. The scene-genesis event
+-- names the room (setting) and the three residents it places.
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
- ('e0000000-0000-0000-0000-0000000000f1','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f2','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f3','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f4','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f4','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','co_subject'),
- ('e0000000-0000-0000-0000-0000000000f5','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f5','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','co_subject'),
- ('e0000000-0000-0000-0000-0000000000f6','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f7','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f7','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','co_subject'),
- ('e0000000-0000-0000-0000-0000000000f8','ffffffff-ffff-ffff-ffff-ffffffffffff','actor','subject'),
- ('e0000000-0000-0000-0000-0000000000f9','dddddddd-dddd-dddd-dddd-dddddddddddd','location','setting');
+ ('2e000000-0000-0000-0000-0000000000f1','2ac70000-0000-0000-0000-0000000000a2','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f2','2ac70000-0000-0000-0000-0000000000a2','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f3','2ac70000-0000-0000-0000-0000000000a2','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f4','2ac70000-0000-0000-0000-0000000000a2','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f4','2ac70000-0000-0000-0000-0000000000a1','actor','co_subject'),
+ ('2e000000-0000-0000-0000-0000000000f5','2ac70000-0000-0000-0000-0000000000a3','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f5','2ac70000-0000-0000-0000-0000000000a2','actor','co_subject'),
+ ('2e000000-0000-0000-0000-0000000000f6','2ac70000-0000-0000-0000-0000000000a3','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f7','2ac70000-0000-0000-0000-0000000000a3','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f7','2ac70000-0000-0000-0000-0000000000a2','actor','co_subject'),
+ ('2e000000-0000-0000-0000-0000000000f8','2ac70000-0000-0000-0000-0000000000a4','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','setting'),
+ ('2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a2','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a3','actor','subject'),
+ ('2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a4','actor','subject');
 
 -- ── personality_core — WHO THEY ARE IN THE ROOM. No secret ever lives here. ───────────
 -- traits jsonb: real traits are objects {value, manner}; schema_version + speech_manner are
--- strings. Kade gets NO core (premise, not a mind). Malleability per GATE-A.
+-- strings. Kade gets NO core (premise, not a mind). Malleability per FINAL (Mara 0.25 / Jonas 0.45 /
+-- hooded 0.6).
 INSERT INTO personality_core (world_id, actor_id, traits, malleability) VALUES
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb',
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2',
   '{"schema_version":"traits/1",
     "guarded":{"value":0.8,"manner":"answers questions with questions; volunteers nothing"},
     "dry_witted":{"value":0.7,"manner":"deflects with humor before she deflects with silence"},
@@ -114,7 +134,7 @@ INSERT INTO personality_core (world_id, actor_id, traits, malleability) VALUES
     "steady_under_pressure":{"value":0.8,"manner":"the last in the room to raise her voice"},
     "speech_manner":"short sentences; harbor slang; calls strangers sailor regardless of trade; never says a name she was not given"}'::jsonb,
   0.25),
- ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc',
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a3',
   '{"schema_version":"traits/1",
     "protective_of_mara":{"value":0.9,"manner":"reads every stranger as a threat to her first, himself second"},
     "slow_to_speak":{"value":0.7,"manner":"acts before he explains; three words where others use ten"},
@@ -122,7 +142,7 @@ INSERT INTO personality_core (world_id, actor_id, traits, malleability) VALUES
     "debt_of_gratitude":{"value":0.85,"manner":"the tavern is the only place that ever took him back"},
     "speech_manner":"monosyllables; states facts not opinions; uses names only for Mara"}'::jsonb,
   0.45),
- ('11111111-1111-1111-1111-111111111111','ffffffff-ffff-ffff-ffff-ffffffffffff',
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a4',
   '{"schema_version":"traits/1",
     "watchful":{"value":0.8,"manner":"tracks the door and every hand near a purse"},
     "unhurried":{"value":0.7,"manner":"never the first to move, never the last to leave"},
@@ -133,20 +153,20 @@ INSERT INTO personality_core (world_id, actor_id, traits, malleability) VALUES
 -- ── trait_provenance — every trait traces to a backstory event (D-11 for character) ───
 INSERT INTO trait_provenance (world_id, actor_id, trait_key, event_id) VALUES
  -- Mara
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','dry_witted',           'e0000000-0000-0000-0000-0000000000f1'),
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','steady_under_pressure','e0000000-0000-0000-0000-0000000000f1'),
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','guarded',              'e0000000-0000-0000-0000-0000000000f2'),
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','distrusts_authority',  'e0000000-0000-0000-0000-0000000000f2'),
- ('11111111-1111-1111-1111-111111111111','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','loyal_to_jonas',       'e0000000-0000-0000-0000-0000000000f3'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2','dry_witted',           '2e000000-0000-0000-0000-0000000000f1'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2','steady_under_pressure','2e000000-0000-0000-0000-0000000000f1'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2','guarded',              '2e000000-0000-0000-0000-0000000000f2'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2','distrusts_authority',  '2e000000-0000-0000-0000-0000000000f2'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a2','loyal_to_jonas',       '2e000000-0000-0000-0000-0000000000f3'),
  -- Jonas
- ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc','protective_of_mara',   'e0000000-0000-0000-0000-0000000000f5'),
- ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc','debt_of_gratitude',    'e0000000-0000-0000-0000-0000000000f5'),
- ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc','slow_to_speak',        'e0000000-0000-0000-0000-0000000000f6'),
- ('11111111-1111-1111-1111-111111111111','cccccccc-cccc-cccc-cccc-cccccccccccc','brawler_not_killer',   'e0000000-0000-0000-0000-0000000000f6'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a3','protective_of_mara',   '2e000000-0000-0000-0000-0000000000f5'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a3','debt_of_gratitude',    '2e000000-0000-0000-0000-0000000000f5'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a3','slow_to_speak',        '2e000000-0000-0000-0000-0000000000f6'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a3','brawler_not_killer',   '2e000000-0000-0000-0000-0000000000f6'),
  -- Hooded woman (one event grounds her thin core)
- ('11111111-1111-1111-1111-111111111111','ffffffff-ffff-ffff-ffff-ffffffffffff','watchful',   'e0000000-0000-0000-0000-0000000000f8'),
- ('11111111-1111-1111-1111-111111111111','ffffffff-ffff-ffff-ffff-ffffffffffff','unhurried',  'e0000000-0000-0000-0000-0000000000f8'),
- ('11111111-1111-1111-1111-111111111111','ffffffff-ffff-ffff-ffff-ffffffffffff','clean_coin', 'e0000000-0000-0000-0000-0000000000f8');
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a4','watchful',   '2e000000-0000-0000-0000-0000000000f8'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a4','unhurried',  '2e000000-0000-0000-0000-0000000000f8'),
+ ('22222222-2222-2222-2222-222222222222','2ac70000-0000-0000-0000-0000000000a4','clean_coin', '2e000000-0000-0000-0000-0000000000f8');
 
 -- ── Private knowledge — perception_record WITH subject links (the whole point) ────────
 -- Only the holder holds a perception of each private event → private to the lookups. Fixed
@@ -154,99 +174,90 @@ INSERT INTO trait_provenance (world_id, actor_id, trait_key, event_id) VALUES
 INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
                                epistemic_type, acquired_tick, valid_tick) VALUES
  -- Mara''s secret: recognition + the life-debt + how she knows him ("Reyna''s brother").
- ('d15ec000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111',
-  'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','e0000000-0000-0000-0000-0000000000f4',
+ ('2ce50000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a2','2e000000-0000-0000-0000-0000000000f4',
   'Kade is Reyna''s brother — the boy who ran messages while I hid Reyna''s family in the cellar nine days, five winters back. I owe that family a life-debt I have never said aloud. To him, and to this room, I am a stranger; if the wrong people learn I know him, the debt gets us both killed.',
-  'direct',53,53),
+  'direct',33,33),
  -- Jonas knows OF a secret without knowing IT: a debt she never explains. (No "Reyna", no "ledger".)
- ('d15ec000-0000-0000-0000-0000000000b1','11111111-1111-1111-1111-111111111111',
-  'cccccccc-cccc-cccc-cccc-cccccccccccc','e0000000-0000-0000-0000-0000000000f7',
+ ('2ce50000-0000-0000-0000-0000000000b1','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a3','2e000000-0000-0000-0000-0000000000f7',
   'Mara keeps a knife under the till and a debt she never explains. Twice in four years I have watched her go pale at a face off the harbor. I have learned to stand closer and not to ask. I do not know what it is.',
-  'inference',56,56),
- -- The hooded woman''s contract: a description and a purse, and one word of doubt — "Yet."
- ('d15ec000-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111',
-  'ffffffff-ffff-ffff-ffff-ffffffffffff','e0000000-0000-0000-0000-0000000000f8',
+  'inference',36,36),
+ -- The hooded woman''s contract: a description and a purse, and one word of doubt — "Yet." (founder-trimmed;
+ -- NO characterization of the note''s contents.)
+ ('2ce50000-0000-0000-0000-0000000000c1','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a4','2e000000-0000-0000-0000-0000000000f8',
   'The paymaster''s coin bought a description: a courier, young, dark-haired, moves like a dock rat — and a purse for whoever confirms him. The one by the door could be him. I am not sure. Yet.',
-  'told',57,57);
+  'told',37,37);
 
 -- about-ness (RULINGS §6): Mara''s secret → Kade AND Mara; Jonas → Mara; hooded → Kade.
 INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
- ('d15ec000-0000-0000-0000-0000000000a1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
- ('d15ec000-0000-0000-0000-0000000000a1','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111'),
- ('d15ec000-0000-0000-0000-0000000000b1','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','11111111-1111-1111-1111-111111111111'),
- ('d15ec000-0000-0000-0000-0000000000c1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111');
+ ('2ce50000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222'),
+ ('2ce50000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222'),
+ ('2ce50000-0000-0000-0000-0000000000b1','2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222'),
+ ('2ce50000-0000-0000-0000-0000000000c1','2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222');
 
 -- ── Scene state via state_mutation (event f9) — projects through sm_project; replay-safe ──
 -- Single-key absolute sets under attrs (Rider B). Tier-1 keys: open, locked, connects, size,
--- weight, tension (see core/api/tier1.go). carried_by / held_by are Tier-2 (carry-state is
--- deferred — no actor_state is touched, so the golden 8-actor set is unchanged). connects is the
+-- weight, tension (see core/api/tier1.go). carried_by / held_by are Tier-2. connects is the
 -- Portal''s [room, room] pair. The cellar hatch is closed and LOCKED — the first Tier-1 lock in play.
+-- The three residents are PLACED here (absolute attrs.location_id → the Drowned Lantern); Kade arrives
+-- separately below. Each (entity, attribute_path) is written exactly once → replay-order-independent.
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
                             valid_from_tick, valid_from_seq) VALUES
+ -- residents in the room (Mara behind the bar, Jonas by it, the hooded woman at the corner table)
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a2','actor',   'attrs.location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,0),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a3','actor',   'attrs.location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,1),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a4','actor',   'attrs.location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,2),
  -- the room reads calm; two of the four people in it are pretending → tension 'tense'
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','dddddddd-dddd-dddd-dddd-dddddddddddd','location','attrs.tension',              to_jsonb('tense'::text),                                                                         58,0),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.tension',     to_jsonb('tense'::text),                                                                            40,3),
  -- art_note: sealed, near-weightless, carried by Kade. Contents deliberately UNAUTHORED (Tier-2 flavor only).
- -- NOTE: chunk-4's seed_mara_0A.sql already registers an older, separate "Sealed Note" entity
- -- (a4000000-0000-0000-0000-0000000000a1) that co-exists in this world. This art_note
- -- (d1000000-0000-0000-0000-0000000000b1) is the Drowned Lantern's canonical note for play —
- -- do not conflate the two when reading state or writing new tests.
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.size',                 to_jsonb(1),                                                                                    58,1),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.weight',               to_jsonb(0),                                                                                    58,2),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.sealed_with_gray_wax', to_jsonb(true),                                                                                 58,3),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000b1','artifact','attrs.carried_by',           to_jsonb('aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'::text),                                          58,4),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.size',                 to_jsonb(1),                                                                                    40,4),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.weight',               to_jsonb(0),                                                                                    40,5),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.sealed_with_gray_wax', to_jsonb(true),                                                                                 40,6),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.carried_by',           to_jsonb('2ac70000-0000-0000-0000-0000000000a1'::text),                                          40,7),
  -- front door: OPEN, unlocked, tavern↔dock street
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c1','artifact','attrs.open',                 to_jsonb(true),                                                                                 58,5),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c1','artifact','attrs.locked',               to_jsonb(false),                                                                                58,6),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c1','artifact','attrs.connects',             jsonb_build_array('dddddddd-dddd-dddd-dddd-dddddddddddd','d1000000-0000-0000-0000-0000000000a1'), 58,7),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c1','artifact','attrs.open',                 to_jsonb(true),                                                                                 40,8),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c1','artifact','attrs.locked',               to_jsonb(false),                                                                                40,9),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c1','artifact','attrs.connects',             jsonb_build_array('210c0000-0000-0000-0000-0000000000d1','210c0000-0000-0000-0000-0000000000d2'), 40,10),
  -- back door: closed, unlocked, tavern↔alley
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c2','artifact','attrs.open',                 to_jsonb(false),                                                                                58,8),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c2','artifact','attrs.locked',               to_jsonb(false),                                                                                58,9),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c2','artifact','attrs.connects',             jsonb_build_array('dddddddd-dddd-dddd-dddd-dddddddddddd','d1000000-0000-0000-0000-0000000000a2'), 58,10),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c2','artifact','attrs.open',                 to_jsonb(false),                                                                                40,11),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c2','artifact','attrs.locked',               to_jsonb(false),                                                                                40,12),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c2','artifact','attrs.connects',             jsonb_build_array('210c0000-0000-0000-0000-0000000000d1','210c0000-0000-0000-0000-0000000000d3'), 40,13),
  -- cellar hatch: closed and LOCKED (Tier-1), tavern↔cellar. Mara holds the key; the cellar is where M-E4 happened.
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c3','artifact','attrs.open',                 to_jsonb(false),                                                                                58,11),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c3','artifact','attrs.locked',               to_jsonb(true),                                                                                 58,12),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000c3','artifact','attrs.connects',             jsonb_build_array('dddddddd-dddd-dddd-dddd-dddddddddddd','d1000000-0000-0000-0000-0000000000a3'), 58,13),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c3','artifact','attrs.open',                 to_jsonb(false),                                                                                40,14),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c3','artifact','attrs.locked',               to_jsonb(true),                                                                                 40,15),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c3','artifact','attrs.connects',             jsonb_build_array('210c0000-0000-0000-0000-0000000000d1','210c0000-0000-0000-0000-0000000000d4'), 40,16),
  -- the cellar key, held by Mara
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000d1','artifact','attrs.size',                 to_jsonb(1),                                                                                    58,14),
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::text),                                          58,15);
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.size',                 to_jsonb(1),                                                                                    40,17),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('2ac70000-0000-0000-0000-0000000000a2'::text),                                          40,18);
 
--- ── Kade's arrival (tick 300) — the founder-gate placement fix ────────────────────────
--- Founder-gate bug: the 0A noise loop's mover rotation last touches the Player at i=96 (tick 196),
--- leaving Kade in the Square — the founder started OUTSIDE the tavern the scene is set in. This is the
--- canonical arrival that puts him in the room. Replay-safe & append-only: one accepted ActorMoved with
--- an ABSOLUTE attrs.location_id set (the sm_project trigger projects it; replay_0A rebuilds it — and at
--- tick 300, AFTER the noise ticks 101–200 and E102@201, it is the last mutation to touch Kade, so his
--- final location is the Tavern in both the live projection and the replay). Kade IS already one of the
--- golden 8 actors; this re-places an existing actor (no new actor_state actor) — the hooded woman stays
--- deliberately un-placed. Presence of the others reaches Kade via the PLACE/PRESENT orientation the seat
--- computes from candidates each beat, NOT via authored perception rows.
--- beat_seq=1 at tick 300: test 93 (generate_perceptions SAY) transiently inserts a world-1111 event at
--- (tick 300, beat_seq 0) inside its own BEGIN/ROLLBACK — a load-bearing I-9 fixture we must not touch.
--- Taking beat_seq 1 dodges that uq_ce_accepted_order(world,tick,beat_seq) slot, exactly as seed_mara_0A's
--- discovery event sits at (tick 100, beat_seq 1) beside E1 at (100, 0).
+-- ── Kade's arrival (tick 50) — he steps into the room the scene is set in ─────────────
+-- Replay-safe & append-only: one accepted ActorMoved with an ABSOLUTE attrs.location_id set (the
+-- sm_project trigger projects it; replay_0a rebuilds it). Tick 50 is this world's max; the live
+-- handler mints the next beat after it.
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          in_world_label, status, accepted_at, visibility_scope, origin) VALUES
- ('e0000000-0000-0000-0000-0000000000fa','11111111-1111-1111-1111-111111111111','ActorMoved',
-  'Kade steps into the Drowned Lantern.',300,1,
+ ('2e000000-0000-0000-0000-0000000000fa','22222222-2222-2222-2222-222222222222','ActorMoved',
+  'Kade steps into the Drowned Lantern.',50,0,
   'Arrival','accepted',now(),'public','fast_path');
--- Participant: the mover (instigator) — mirrors the 0A move events (mover-only participant).
+-- Participant: the mover (instigator).
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
- ('e0000000-0000-0000-0000-0000000000fa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator');
--- Absolute location set → Tavern. The projection trigger places Kade in the room.
+ ('2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','instigator');
+-- Absolute location set → the Drowned Lantern. The projection trigger places Kade in the room.
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
                             valid_from_tick, valid_from_seq) VALUES
- ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000fa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id',
-  to_jsonb('dddddddd-dddd-dddd-dddd-dddddddddddd'::text),300,0);
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.location_id',
+  to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text),50,0);
 -- Kade's own honest, minimal perception of stepping in. NOT an authored roster of who is present (that
--- would fake fan-out he never received) — just the move itself. Subject rows mirror the move's about-ness:
--- the mover and the room he entered.
+-- would fake fan-out he never received) — just the move itself, subject-linked to the mover + the room.
 INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
                                epistemic_type, acquired_tick, valid_tick) VALUES
- ('ca4e0000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111',
-  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e0000000-0000-0000-0000-0000000000fa',
-  'I stepped into the Drowned Lantern.','direct',300,300);
+ ('2ca40000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a1','2e000000-0000-0000-0000-0000000000fa',
+  'I stepped into the Drowned Lantern.','direct',50,50);
 INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
- ('ca4e0000-0000-0000-0000-0000000000a1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
- ('ca4e0000-0000-0000-0000-0000000000a1','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111');
+ ('2ca40000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222'),
+ ('2ca40000-0000-0000-0000-0000000000a1','210c0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222');
 
 COMMIT;
