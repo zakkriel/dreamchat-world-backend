@@ -19,6 +19,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -116,4 +117,139 @@ func TestBuildNarratePrompt_ZeroLinesSparseNoFabrication(t *testing.T) {
 	if strings.Contains(p, "\n- ") {
 		t.Fatalf("(c) zero-line narrate prompt fabricated a content bullet — nothing must be invented to fill the space:\n%s", p)
 	}
+}
+
+// (d) Unit: the narrate builder renders a PLACE line from the location candidate (kind 'location'),
+// BEFORE PRESENT, and the location does NOT leak into the PRESENT actor roster. This is the founder-gate
+// orientation fix — without PLACE the narrator had no "where", and the location was listed as if present.
+func TestBuildNarratePrompt_PlaceLineFromLocationCandidate(t *testing.T) {
+	payload := PerceptionPayload{
+		Candidates: []Candidate{
+			{ID: "a1", Name: "Mara", Kind: "actor"},
+			{ID: "l1", Name: "The Drowned Lantern", Kind: "location"},
+		},
+		Lines: []string{"Mara watches you from the bar"},
+	}
+	p := buildNarratePrompt(payload)
+
+	// Assert on the RENDERED BODY, not the fixed header (whose rulebook example itself contains the
+	// strings "PLACE: The Drowned Lantern" and "PRESENT: Mara").
+	body := strings.TrimPrefix(p, narrateSystemHeader)
+
+	placeIdx := strings.Index(body, "PLACE: The Drowned Lantern")
+	if placeIdx < 0 {
+		t.Fatalf("(d) narrate prompt missing the rendered PLACE line with the location's name:\n%s", body)
+	}
+	presentIdx := strings.Index(body, "PRESENT:")
+	if presentIdx < 0 || placeIdx > presentIdx {
+		t.Fatalf("(d) PLACE (idx %d) must be rendered BEFORE PRESENT (idx %d):\n%s", placeIdx, presentIdx, body)
+	}
+	// The location must NOT appear inside the PRESENT roster (it is a place, not a present actor).
+	roster := body[presentIdx:strings.Index(body, "PERCEPTIONS")]
+	if strings.Contains(roster, "The Drowned Lantern") {
+		t.Fatalf("(d) location leaked into the PRESENT roster — it belongs only under PLACE:\n%s", roster)
+	}
+	if !strings.Contains(roster, "Mara") {
+		t.Fatalf("(d) actor Mara missing from the PRESENT roster:\n%s", roster)
+	}
+}
+
+// (e) The payload's Lines are a BOUNDED RECENT WINDOW, not the holder's whole remembered life. A viewer
+// with >20 old perceptions plus a run of recent ones gets back only the newest recencyMaxRows within
+// recencyTickWindow ticks of the newest row, oldest-first. Live bug: the narrator recited a full travel
+// log every beat. Fixture uses controlled acquired_ticks; the viewer is placed via a state_mutation
+// (trigger-projected → replay_0A stays diff-free) and every perception gets a subject (SQL test 14).
+func TestPayload_RecencyWindow_KeepsRecentDropsOldBeyondWindow(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	var world, viewer, loc, moveEvt, srcEvt string
+	if err := pool.QueryRow(ctx,
+		`SELECT gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()`,
+	).Scan(&world, &viewer, &loc, &moveEvt, &srcEvt); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+
+	mustExec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, sql)
+		}
+	}
+
+	// Registry: the viewer (actor) + the location entity.
+	mustExec(`INSERT INTO entity_registry (entity_id,world_id,entity_kind,canonical_name) VALUES
+	          ($1,$3,'actor','Recency Viewer'),($2,$3,'location','Recency Room')`, viewer, loc, world)
+
+	// Place the viewer at the location via a move event + state_mutation (trigger projects actor_state).
+	// A DIRECT actor_state insert would have no backing mutation and replay_0A() would fail to rebuild it.
+	mustExec(`INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+	          VALUES ($1,$2,'move','place recency viewer',1,0,'accepted',now(),'public','fast_path')`, moveEvt, world)
+	mustExec(`INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier) VALUES ($1,$2,'actor','instigator')`, moveEvt, viewer)
+	mustExec(`INSERT INTO state_mutation (world_id,event_id,entity_id,entity_kind,attribute_path,new_value,valid_from_tick,valid_from_seq)
+	          VALUES ($1,$2,$3,'actor','attrs.location_id',to_jsonb($4::text),1,0)`, world, moveEvt, viewer, loc)
+
+	// One ACCEPTED source event for the perceptions (so none is an orphan under SQL test 50).
+	mustExec(`INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+	          VALUES ($1,$2,'observation','recency source',1,1,'accepted',now(),'public','fast_path')`, srcEvt, world)
+	mustExec(`INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier) VALUES ($1,$2,'actor','instigator')`, srcEvt, viewer)
+
+	// Each perception is held by the viewer (→ visible), sourced to the accepted event, with a subject.
+	insertPerc := func(tick int, content string) {
+		var pid string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO perception_record (world_id,holder_id,source_event_id,content,epistemic_type,acquired_tick,valid_tick)
+			 VALUES ($1,$2,$3,$4,'direct',$5,$5) RETURNING perception_id`,
+			world, viewer, srcEvt, content, tick).Scan(&pid); err != nil {
+			t.Fatalf("insert perception %s: %v", content, err)
+		}
+		mustExec(`INSERT INTO perception_subject (perception_id,entity_id,world_id) VALUES ($1,$2,$3)`, pid, viewer, world)
+	}
+	// OLD block: ticks 100..124 (25 rows) — far below the newest, must be dropped by the tick window.
+	for tick := 100; tick <= 124; tick++ {
+		insertPerc(tick, fmt.Sprintf("OLD-%d", tick))
+	}
+	// RECENT block: ticks 971..1000 (30 rows, all within 50 of max=1000) — the cap keeps the newest 20.
+	for tick := 971; tick <= 1000; tick++ {
+		insertPerc(tick, fmt.Sprintf("REC-%d", tick))
+	}
+
+	h := &beatHandler{pool: pool, dbg: true}
+	p, err := h.payload(ctx, world, viewer)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+
+	// Cap: at most recencyMaxRows lines.
+	if len(p.Lines) != recencyMaxRows {
+		t.Fatalf("want exactly recencyMaxRows=%d lines (cap), got %d: %v", recencyMaxRows, len(p.Lines), p.Lines)
+	}
+	// Oldest-first + cap boundary: the kept 20 are ticks 981..1000.
+	if p.Lines[0] != "REC-981" {
+		t.Fatalf("oldest kept line = %q, want REC-981 (newest 20, oldest-first)\n%v", p.Lines[0], p.Lines)
+	}
+	if p.Lines[len(p.Lines)-1] != "REC-1000" {
+		t.Fatalf("newest line = %q, want REC-1000\n%v", p.Lines[len(p.Lines)-1], p.Lines)
+	}
+	for _, l := range p.Lines {
+		if strings.HasPrefix(l, "OLD-") {
+			t.Fatalf("recency window leaked an OLD line %q — rows older than the tick window must be dropped\n%v", l, p.Lines)
+		}
+		if l == "REC-971" || l == "REC-980" {
+			t.Fatalf("cap failed: kept %q, older than the newest %d rows\n%v", l, recencyMaxRows, p.Lines)
+		}
+	}
+	if !containsStr(p.Lines, "REC-1000") {
+		t.Fatalf("the recent perception REC-1000 is missing from the payload\n%v", p.Lines)
+	}
+}
+
+func containsStr(ss []string, want string) bool {
+	for _, s := range ss {
+		if s == want {
+			return true
+		}
+	}
+	return false
 }

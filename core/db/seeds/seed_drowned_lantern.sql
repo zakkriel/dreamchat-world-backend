@@ -16,14 +16,17 @@
 --
 -- Determinism: fixed uuids, no random(). State that must survive replay (tavern tension,
 -- the portals, the note, the key) is written as state_mutation rows under one scene event
--- (the sm_project trigger projects them; replay_0A rebuilds them identically). NO actor_state
--- is written for world 1111 (the golden projection, test 80, freezes the 8-actor set; the
--- hooded woman is deliberately un-placed — presence is supplied to the lookups at play time).
+-- (the sm_project trigger projects them; replay_0A rebuilds them identically). The ONE actor_state
+-- write for world 1111 is Kade's arrival (tick 300): a state_mutation that RE-PLACES an existing
+-- golden actor (the Player) into the Tavern — it adds no new actor, so the golden projection (test 80)
+-- still holds 8 actors, only the Player's location moves Square→Tavern. The hooded woman is still
+-- deliberately un-placed — her presence is supplied to the lookups at play time.
 --
--- Ticks: backstory events at 50–57 and the scene-set event at 58 — all before E1@100, and clear
--- of every world-1111 slot the fresh-world tests reserve (smoke tests at ticks 5/7/10/100; scenario
--- setups at 210+) under uq_ce_accepted_order(world_id,in_world_tick,beat_seq). All below the seed's
--- max tick (201), so no max()-based minted tick shifts.
+-- Ticks: backstory events at 50–57 and the scene-set event at 58 (all before E1@100), then Kade's
+-- arrival at (300, beat_seq 1) (AFTER the 0A noise ticks 101–200 and E102@201, so it is the last
+-- mutation to touch Kade → Tavern wins under replay). beat_seq 1 dodges test 93's transient (300,0)
+-- slot under uq_ce_accepted_order(world_id,in_world_tick,beat_seq). Tick 300 is now the seed's max;
+-- the live handler mints the next beat after it.
 -- =====================================================================================
 BEGIN;
 
@@ -206,5 +209,44 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  -- the cellar key, held by Mara
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000d1','artifact','attrs.size',                 to_jsonb(1),                                                                                    58,14),
  ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000f9','d1000000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'::text),                                          58,15);
+
+-- ── Kade's arrival (tick 300) — the founder-gate placement fix ────────────────────────
+-- Founder-gate bug: the 0A noise loop's mover rotation last touches the Player at i=96 (tick 196),
+-- leaving Kade in the Square — the founder started OUTSIDE the tavern the scene is set in. This is the
+-- canonical arrival that puts him in the room. Replay-safe & append-only: one accepted ActorMoved with
+-- an ABSOLUTE attrs.location_id set (the sm_project trigger projects it; replay_0A rebuilds it — and at
+-- tick 300, AFTER the noise ticks 101–200 and E102@201, it is the last mutation to touch Kade, so his
+-- final location is the Tavern in both the live projection and the replay). Kade IS already one of the
+-- golden 8 actors; this re-places an existing actor (no new actor_state actor) — the hooded woman stays
+-- deliberately un-placed. Presence of the others reaches Kade via the PLACE/PRESENT orientation the seat
+-- computes from candidates each beat, NOT via authored perception rows.
+-- beat_seq=1 at tick 300: test 93 (generate_perceptions SAY) transiently inserts a world-1111 event at
+-- (tick 300, beat_seq 0) inside its own BEGIN/ROLLBACK — a load-bearing I-9 fixture we must not touch.
+-- Taking beat_seq 1 dodges that uq_ce_accepted_order(world,tick,beat_seq) slot, exactly as seed_mara_0A's
+-- discovery event sits at (tick 100, beat_seq 1) beside E1 at (100, 0).
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         in_world_label, status, accepted_at, visibility_scope, origin) VALUES
+ ('e0000000-0000-0000-0000-0000000000fa','11111111-1111-1111-1111-111111111111','ActorMoved',
+  'Kade steps into the Drowned Lantern.',300,1,
+  'Arrival','accepted',now(),'public','fast_path');
+-- Participant: the mover (instigator) — mirrors the 0A move events (mover-only participant).
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+ ('e0000000-0000-0000-0000-0000000000fa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','instigator');
+-- Absolute location set → Tavern. The projection trigger places Kade in the room.
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
+                            valid_from_tick, valid_from_seq) VALUES
+ ('11111111-1111-1111-1111-111111111111','e0000000-0000-0000-0000-0000000000fa','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id',
+  to_jsonb('dddddddd-dddd-dddd-dddd-dddddddddddd'::text),300,0);
+-- Kade's own honest, minimal perception of stepping in. NOT an authored roster of who is present (that
+-- would fake fan-out he never received) — just the move itself. Subject rows mirror the move's about-ness:
+-- the mover and the room he entered.
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick) VALUES
+ ('ca4e0000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111',
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','e0000000-0000-0000-0000-0000000000fa',
+  'I stepped into the Drowned Lantern.','direct',300,300);
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('ca4e0000-0000-0000-0000-0000000000a1','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','11111111-1111-1111-1111-111111111111'),
+ ('ca4e0000-0000-0000-0000-0000000000a1','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111');
 
 COMMIT;

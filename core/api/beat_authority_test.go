@@ -167,10 +167,12 @@ func TestBeat_NoLeak_PrivateE1AbsentFromUninvolvedPayload(t *testing.T) {
 	if e102 := countBySource(e102ID); e102 < 1 {
 		t.Fatalf("E102 (public record) missing from Jonas's view: %d (common knowledge should be visible)", e102)
 	}
-	// the payload faithfully equals the wall output → since the wall has zero E1 rows, so does the
-	// payload (no E1-sourced content can be in the lines the seats receive)
-	if len(payload.Lines) != wallTotal {
-		t.Fatalf("payload (%d lines) != fn_visible_perceptions (%d rows); payload may carry extra source",
+	// the payload is built strictly FROM the wall, now windowed to a bounded recent slice (Fix A recency
+	// dials): it is a SUBSET of the wall, never a superset. Since the wall has zero E1 rows, so does the
+	// payload. Assert the payload carries nothing BEYOND the wall (no injected/extra source) — the
+	// no-leak guarantee, restated for the windowed payload.
+	if len(payload.Lines) > wallTotal {
+		t.Fatalf("payload (%d lines) exceeds fn_visible_perceptions (%d rows); payload may carry an extra source",
 			len(payload.Lines), wallTotal)
 	}
 }

@@ -31,9 +31,10 @@ const narrateSparseRuleMarker = "SHORT AND SPARSE"
 //go:embed prompts/narrate.txt
 var narrateSystemHeader string
 
-// buildNarratePrompt assembles the narrate prompt: the bounding header, then the PRESENT roster (names
-// only, from the payload's candidate whitelist), then the PERCEPTIONS the holder can currently perceive
-// (oldest first — payload.Lines is already acquired_tick-ordered). Layout is cache-native like the
+// buildNarratePrompt assembles the narrate prompt: the bounding header, then the PLACE (the location
+// candidate) that sets the scene, then the PRESENT roster (actor names only, from the payload's
+// candidate whitelist), then the PERCEPTIONS the holder can currently perceive (oldest first —
+// payload.Lines is already acquired_tick-ordered). Layout is cache-native like the
 // cognition prompts (stable header prefix; the growing perceptions ride the tail).
 //
 // Scope fence: what the payload CONTAINS (retrieval, fidelity, richness) is Station I's narrator-payload
@@ -44,12 +45,27 @@ func buildNarratePrompt(payload PerceptionPayload) string {
 	var sb strings.Builder
 	sb.WriteString(narrateSystemHeader)
 
-	// PRESENT — names only. Who is here is public; the narrator refers to them by exactly these names.
+	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'). Orientation
+	// the narrator was missing: without it the location was mixed into PRESENT as if it were a person.
+	// Actors go under PRESENT; the location goes here, before PRESENT (§10 orientation, not licence to
+	// describe the room — anti-invention still binds).
+	var place string
 	names := make([]string, 0, len(payload.Candidates))
 	for _, c := range payload.Candidates {
+		if c.Kind == "location" {
+			place = c.Name
+			continue
+		}
 		names = append(names, c.Name)
 	}
-	sb.WriteString("\n\nPRESENT: ")
+	if place != "" {
+		sb.WriteString("\n\nPLACE: ")
+		sb.WriteString(place)
+		sb.WriteString("\nPRESENT: ")
+	} else {
+		sb.WriteString("\n\nPRESENT: ")
+	}
+	// PRESENT — names only. Who is here is public; the narrator refers to them by exactly these names.
 	sb.WriteString(strings.Join(names, ", "))
 
 	// PERCEPTIONS — the ONLY content the narrator may render, oldest first. One bullet per line; with

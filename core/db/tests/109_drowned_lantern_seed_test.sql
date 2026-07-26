@@ -10,7 +10,7 @@
 -- and the first playable room holds a real Tier-1 locked hatch.
 -- =====================================================================================
 BEGIN;
-SELECT plan(8);
+SELECT plan(10);
 
 -- Fixed seed uuids (must match seed_drowned_lantern.sql):
 --   world  11111111-…   kade/Player aaaaaaaa-…   Mara bbbbbbbb-…   Jonas cccccccc-…
@@ -93,6 +93,31 @@ SELECT is(
      AND NOT EXISTS (SELECT 1 FROM perception_subject ps
                      WHERE ps.perception_id=pr.perception_id))::int,
   0, '(g) zero perception_records in world 1111 lack subject rows');
+
+-- (h) founder-gate placement: Kade's LIVE actor_state puts him IN the Tavern — the arrival
+-- ActorMoved @ tick 300 is the last mutation to touch him, so the projection reads the Tavern uuid
+-- (he no longer starts in the Square). This is the fix that lets the founder open play inside the room.
+SELECT is(
+  (SELECT attrs->>'location_id' FROM actor_state
+   WHERE world_id='11111111-1111-1111-1111-111111111111'
+     AND entity_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'),
+  'dddddddd-dddd-dddd-dddd-dddddddddddd',
+  '(h) Kade''s live location_id is the Tavern (arrival @ tick 300 places him in the room)');
+
+-- (i) his arrival perception is real, honest (sourced to the ActorMoved), and subject-linked to BOTH
+-- the mover (Kade) and the room (the Tavern) — mirroring the move's about-ness, never faking who is present.
+SELECT ok(
+  EXISTS (SELECT 1 FROM perception_record
+          WHERE perception_id='ca4e0000-0000-0000-0000-0000000000a1'
+            AND holder_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+            AND source_event_id='e0000000-0000-0000-0000-0000000000fa')
+  AND EXISTS (SELECT 1 FROM perception_subject
+              WHERE perception_id='ca4e0000-0000-0000-0000-0000000000a1'
+                AND entity_id='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+  AND EXISTS (SELECT 1 FROM perception_subject
+              WHERE perception_id='ca4e0000-0000-0000-0000-0000000000a1'
+                AND entity_id='dddddddd-dddd-dddd-dddd-dddddddddddd'),
+  '(i) Kade''s arrival perception exists (held by Kade, sourced to the ActorMoved) and is subject-linked to Kade + the Tavern');
 
 SELECT * FROM finish();
 ROLLBACK;

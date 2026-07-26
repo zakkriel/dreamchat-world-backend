@@ -214,11 +214,31 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write(resp)
 }
 
+// v1 recency dials (RULINGS-2026-07-23 §10 — "nothing is ever unreachable; not everything is always
+// present"): the beat payload shows a BOUNDED RECENT WINDOW of the holder's perceptions, not their
+// entire remembered life. Live bug this fixes: the narrator recited a viewer's whole 12-stop travel
+// log every beat, because payload fed the full fn_visible_perceptions history. This is the MINIMAL
+// stand-in — Station I's retrieval owns the real machinery (relevance, salience, fidelity). Keep
+// fn_visible_perceptions untouched (other consumers/tests depend on it); window at the payload here.
+const (
+	recencyTickWindow = 50 // keep rows within this many ticks of the holder's newest visible row
+	recencyMaxRows    = 20 // then cap to at most this many, newest-first, presented oldest-first
+)
+
 // payload builds the perception-bound payload from the WALL (fn_visible_perceptions). No raw canon.
 // Also populates Candidates: present actors + current location.
 func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (PerceptionPayload, error) {
+	// Recent window, oldest-first: keep rows within recencyTickWindow ticks of the newest visible row,
+	// take the newest recencyMaxRows of those (DESC LIMIT), then reverse to oldest-first for the seats.
 	rows, err := h.pool.Query(ctx,
-		`SELECT content FROM fn_visible_perceptions($1,$2) ORDER BY acquired_tick`, worldID, viewerID)
+		`SELECT content FROM (
+		   SELECT content, acquired_tick
+		   FROM fn_visible_perceptions($1,$2)
+		   WHERE acquired_tick >= (SELECT max(acquired_tick) FROM fn_visible_perceptions($1,$2)) - $3::bigint
+		   ORDER BY acquired_tick DESC
+		   LIMIT $4
+		 ) recent
+		 ORDER BY acquired_tick ASC`, worldID, viewerID, recencyTickWindow, recencyMaxRows)
 	if err != nil {
 		return PerceptionPayload{}, err
 	}
