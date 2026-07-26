@@ -24,6 +24,9 @@ type Candidate struct {
 	ID   string `json:"id"`
 	Name string `json:"name"`
 	Kind string `json:"kind"`
+	// Description carries a location's Tier-2 scene description (empty for actors/artifacts). The
+	// narrate PLACE line renders it so the room's fixed character is DATA, not the narrator's invention.
+	Description string `json:"description,omitempty"`
 }
 
 // decomposeSystemHeader is the decompose seat's standing instruction and stable cache prefix. It turns
@@ -191,8 +194,14 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "payload", http.StatusInternalServerError)
 		return
 	}
+	// Delta-first narration (Defect B): the perceptions the viewer already held BEFORE the beat are the
+	// baseline; anything in `post` not among them is WHAT JUST HAPPENED, the rest is RECENT BACKGROUND.
+	preIDs := make(map[string]bool, len(pre.LineIDs))
+	for _, id := range pre.LineIDs {
+		preIDs[id] = true
+	}
 	narration, err := h.bridge.Driver(SeatNarrate.Name).Generate(ctx,
-		GenRequest{Payload: post, Prompt: buildNarratePrompt(post)})
+		GenRequest{Payload: post, Prompt: buildNarratePrompt(post, viewerID, preIDs)})
 	if err != nil {
 		http.Error(w, "narrate failed", http.StatusBadGateway)
 		return
@@ -231,8 +240,8 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 	// Recent window, oldest-first: keep rows within recencyTickWindow ticks of the newest visible row,
 	// take the newest recencyMaxRows of those (DESC LIMIT), then reverse to oldest-first for the seats.
 	rows, err := h.pool.Query(ctx,
-		`SELECT content FROM (
-		   SELECT content, acquired_tick
+		`SELECT content, perception_id::text FROM (
+		   SELECT content, perception_id, acquired_tick
 		   FROM fn_visible_perceptions($1,$2)
 		   WHERE acquired_tick >= (SELECT max(acquired_tick) FROM fn_visible_perceptions($1,$2)) - $3::bigint
 		   ORDER BY acquired_tick DESC
@@ -245,11 +254,12 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 	defer rows.Close()
 	var p PerceptionPayload
 	for rows.Next() {
-		var c string
-		if err := rows.Scan(&c); err != nil {
+		var c, pid string
+		if err := rows.Scan(&c, &pid); err != nil {
 			return PerceptionPayload{}, err
 		}
 		p.Lines = append(p.Lines, c)
+		p.LineIDs = append(p.LineIDs, pid) // parallel to Lines — the delta baseline for narration
 	}
 	if err := rows.Err(); err != nil {
 		return PerceptionPayload{}, err
@@ -287,14 +297,17 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 			actorRows.Close()
 		}
 
-		// Current location entity.
-		var locName string
+		// Current location entity — plus its Tier-2 scene description (empty when unseeded), so the
+		// narrate PLACE line renders the room's fixed character as DATA (Defect B).
+		var locName, locDesc string
 		if err := h.pool.QueryRow(ctx,
-			`SELECT canonical_name FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2`,
-			loc, worldID).Scan(&locName); err != nil {
+			`SELECT canonical_name,
+			        COALESCE((SELECT attrs->>'description' FROM location_state WHERE entity_id=$1::uuid AND world_id=$2), '')
+			 FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2`,
+			loc, worldID).Scan(&locName, &locDesc); err != nil {
 			return PerceptionPayload{}, err
 		}
-		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location"})
+		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location", Description: locDesc})
 
 		// Artifacts are deliberately ABSENT from the whitelist: naming reach = the
 		// actor's own perceived/known set (RULINGS-2026-07-23 §3), and no

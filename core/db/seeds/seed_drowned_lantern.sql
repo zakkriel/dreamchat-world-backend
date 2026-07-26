@@ -230,7 +230,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c3','artifact','attrs.connects',             jsonb_build_array('210c0000-0000-0000-0000-0000000000d1','210c0000-0000-0000-0000-0000000000d4'), 40,16),
  -- the cellar key, held by Mara
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.size',                 to_jsonb(1),                                                                                    40,17),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('2ac70000-0000-0000-0000-0000000000a2'::text),                                          40,18);
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('2ac70000-0000-0000-0000-0000000000a2'::text),                                          40,18),
+ -- Tier-2 scene DESCRIPTION per location (Defect B): the narrate PLACE line renders it, so the room's
+ -- fixed character is DATA the narrator draws on, never something it invents. The Drowned Lantern text
+ -- is verbatim from FINAL-drowned-lantern-souls.md's scene section; the three stubs are brief, honest
+ -- one-liners so movement has somewhere with a described face to go.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.description', to_jsonb('Low beams, salt-rot, one hearth, a bar with a hatch, a back door to the alley.'::text), 40,19),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.description', to_jsonb('A rain-slick harbor road; gulls, tar, and black water past the pilings.'::text),        40,20),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.description', to_jsonb('A narrow dead-end behind the tavern; stacked crates and standing water.'::text),         40,21),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d4','location','attrs.description', to_jsonb('A cold stone undercroft beneath the tavern; barrels, damp, one shuttered lantern.'::text),   40,22);
 
 -- ── Kade's arrival (tick 50) — he steps into the room the scene is set in ─────────────
 -- Replay-safe & append-only: one accepted ActorMoved with an ABSOLUTE attrs.location_id set (the

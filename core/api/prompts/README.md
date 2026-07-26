@@ -9,7 +9,8 @@ each var's declaration) and is byte-identical to the const it replaced.
   field) at the top of `buildDecomposePrompt` (`beathandler.go`), before the SCENE/CANDIDATES/PLAYER
   INPUT sections.
 - `narrate.txt` — the narrate seat. Injected as the STABLE HEADER (prompt-prefix) at the top of
-  `buildNarratePrompt` (`narrateprompt.go`), before the PRESENT/PERCEPTIONS sections.
+  `buildNarratePrompt` (`narrateprompt.go`), before the PLACE/PRESENT/WHAT JUST HAPPENED/RECENT
+  BACKGROUND sections (delta-first: new events vs already-known context).
 - `cognition.txt` — the cognition seat, shared by BOTH the batch and isolated calls. Injected as the
   STABLE HEADER (prompt-prefix) at the top of `buildCognitionPrompt` (`cognitionprompt.go`), before
   the SCENE/THE MINDS YOU SPEAK FOR/(private)/PUBLIC MOMENT/IMMINENT sections.

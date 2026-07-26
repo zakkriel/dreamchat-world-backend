@@ -12,7 +12,7 @@
 -- Drowned Lantern (the play world is set up ready to open in the room).
 -- =====================================================================================
 BEGIN;
-SELECT plan(10);
+SELECT plan(11);
 
 -- Fixed seed uuids (must match seed_drowned_lantern.sql):
 --   world  22222222-…   Kade 2ac70000-…-a1   Mara …-a2   Jonas …-a3   hooded …-a4
@@ -114,6 +114,15 @@ SELECT is(
      AND world_id='22222222-2222-2222-2222-222222222222'),
   'The Drowned Lantern',
   '(i) the tavern''s canonical_name is ''The Drowned Lantern''');
+
+-- (j) the Drowned Lantern carries its Tier-2 scene DESCRIPTION verbatim from FINAL (Defect B): the
+-- narrate PLACE line renders it, so the room's fixed character is DATA, not the narrator's invention.
+SELECT is(
+  (SELECT attrs->>'description' FROM location_state
+   WHERE entity_id='210c0000-0000-0000-0000-0000000000d1'
+     AND world_id='22222222-2222-2222-2222-222222222222'),
+  'Low beams, salt-rot, one hearth, a bar with a hatch, a back door to the alley.',
+  '(j) the Drowned Lantern has its Tier-2 scene description in location_state');
 
 SELECT * FROM finish();
 ROLLBACK;

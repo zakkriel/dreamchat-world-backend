@@ -9,6 +9,7 @@ import (
 // upstream from fn_visible_perceptions — there is deliberately no field that can carry raw canon.
 type PerceptionPayload struct {
 	Lines      []string    `json:"lines"`                // perception-bound, epistemically framed lines for the holder
+	LineIDs    []string    `json:"line_ids,omitempty"`   // perception_id parallel to Lines (delta-first narration; no external API change — these are ids the holder already perceives, never raw canon)
 	Candidates []Candidate `json:"candidates,omitempty"` // entity whitelist for v2 decompose (beat_chain/2)
 }
 

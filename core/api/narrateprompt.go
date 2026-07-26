@@ -31,50 +31,92 @@ const narrateSparseRuleMarker = "SHORT AND SPARSE"
 //go:embed prompts/narrate.txt
 var narrateSystemHeader string
 
-// buildNarratePrompt assembles the narrate prompt: the bounding header, then the PLACE (the location
-// candidate) that sets the scene, then the PRESENT roster (actor names only, from the payload's
-// candidate whitelist), then the PERCEPTIONS the holder can currently perceive (oldest first —
-// payload.Lines is already acquired_tick-ordered). Layout is cache-native like the
-// cognition prompts (stable header prefix; the growing perceptions ride the tail).
+// buildNarratePrompt assembles the narrate prompt: the bounding header, then PLACE (the location
+// candidate — with its scene description when the payload carries one), then the PRESENT roster (actor
+// names only, the VIEWER excluded), then the delta-first body: WHAT JUST HAPPENED (the perceptions new
+// this beat, oldest first) followed by RECENT BACKGROUND (the rest of the window, labelled as context
+// the narrator must not re-narrate). Layout is cache-native like the cognition prompts (stable header
+// prefix; the growing perceptions ride the tail).
+//
+// Two founder-gate bugs this shape closes:
+//   - Defect A: the viewer appeared in his OWN present roster ("…and Kade" to Kade). viewerID is
+//     threaded in so the candidate whose id IS the viewer is dropped from PRESENT — you never narrate
+//     the person you are narrating TO as someone standing in the room.
+//   - Defect B: the narrator re-rendered the whole window every beat ("You step into the Drowned
+//     Lantern" ×3). preIDs is the set of perception_ids the viewer already held BEFORE the beat; a line
+//     whose id is not in it is NEW (WHAT JUST HAPPENED), the rest is RECENT BACKGROUND the header
+//     forbids re-narrating. An empty delta is a pure look-around — the header renders the scene from
+//     PLACE/PRESENT/description instead.
 //
 // Scope fence: what the payload CONTAINS (retrieval, fidelity, richness) is Station I's narrator-payload
-// map item — this builder does not add retrieval or SQL. It only makes the payload the seat already
-// holds actually reach the model, and bounds what the model may do with it. With zero lines the
-// PERCEPTIONS body is empty and nothing is fabricated — a sparse moment is a short narration.
-func buildNarratePrompt(payload PerceptionPayload) string {
+// map item — this builder adds no retrieval or SQL. With zero lines both bodies are empty and nothing
+// is fabricated — a sparse moment is a short narration.
+func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool) string {
 	var sb strings.Builder
 	sb.WriteString(narrateSystemHeader)
 
-	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'). Orientation
-	// the narrator was missing: without it the location was mixed into PRESENT as if it were a person.
-	// Actors go under PRESENT; the location goes here, before PRESENT (§10 orientation, not licence to
-	// describe the room — anti-invention still binds).
-	var place string
+	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'), with its
+	// Tier-2 description when present. PRESENT — actor names only, the VIEWER dropped (Defect A).
+	var place, placeDesc string
 	names := make([]string, 0, len(payload.Candidates))
 	for _, c := range payload.Candidates {
 		if c.Kind == "location" {
 			place = c.Name
+			placeDesc = c.Description
 			continue
+		}
+		if c.ID == viewerID {
+			continue // the viewer is narrated TO, never listed as present WITH himself.
 		}
 		names = append(names, c.Name)
 	}
 	if place != "" {
 		sb.WriteString("\n\nPLACE: ")
 		sb.WriteString(place)
+		if placeDesc != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(placeDesc)
+		}
 		sb.WriteString("\nPRESENT: ")
 	} else {
 		sb.WriteString("\n\nPRESENT: ")
 	}
-	// PRESENT — names only. Who is here is public; the narrator refers to them by exactly these names.
 	sb.WriteString(strings.Join(names, ", "))
 
-	// PERCEPTIONS — the ONLY content the narrator may render, oldest first. One bullet per line; with
-	// no lines this section is empty (nothing invented to fill it — sparse-is-correct, per the header).
-	sb.WriteString("\nPERCEPTIONS (oldest first):\n")
-	for _, l := range payload.Lines {
-		sb.WriteString("- ")
-		sb.WriteString(l)
-		sb.WriteString("\n")
+	// Delta-first split: a line is NEW (delta) when its perception_id is not among preIDs; the rest is
+	// already-known background. With no baseline (preIDs nil) every line is treated as new — the correct
+	// behaviour for a first render or a direct unit call. Lines are already acquired_tick-ordered.
+	var delta, background []string
+	for i, l := range payload.Lines {
+		var id string
+		if i < len(payload.LineIDs) {
+			id = payload.LineIDs[i]
+		}
+		if preIDs != nil && id != "" && preIDs[id] {
+			background = append(background, l)
+		} else {
+			delta = append(delta, l)
+		}
+	}
+
+	// WHAT JUST HAPPENED — the delta, the ONLY lines narrated as live events. Empty ⇒ the section is
+	// omitted and the header's pure-look-around rule takes over (render the scene as it stands).
+	if len(delta) > 0 {
+		sb.WriteString("\nWHAT JUST HAPPENED (oldest first):\n")
+		for _, l := range delta {
+			sb.WriteString("- ")
+			sb.WriteString(l)
+			sb.WriteString("\n")
+		}
+	}
+	// RECENT BACKGROUND — context the narrator must NOT re-narrate as new. Omitted when empty.
+	if len(background) > 0 {
+		sb.WriteString("\nRECENT BACKGROUND (context only — do NOT re-narrate as new):\n")
+		for _, l := range background {
+			sb.WriteString("- ")
+			sb.WriteString(l)
+			sb.WriteString("\n")
+		}
 	}
 	return sb.String()
 }

@@ -105,7 +105,7 @@ func TestSeatPrompt_NarrateCarriesPerceptionsAndAntiInvention(t *testing.T) {
 // (c) Unit: the narrate builder with ZERO lines still carries the sparse-is-correct rule and
 // fabricates no content — a sparse moment is a short narration, per the header.
 func TestBuildNarratePrompt_ZeroLinesSparseNoFabrication(t *testing.T) {
-	p := buildNarratePrompt(PerceptionPayload{}) // no lines, no candidates
+	p := buildNarratePrompt(PerceptionPayload{}, "", nil) // no lines, no candidates, no baseline
 
 	if !strings.HasPrefix(p, narrateSystemHeader) {
 		t.Fatalf("(c) narrate prompt must open with the bounding header (the stable cache prefix)")
@@ -119,6 +119,23 @@ func TestBuildNarratePrompt_ZeroLinesSparseNoFabrication(t *testing.T) {
 	}
 }
 
+// rosterOf returns the PRESENT roster slice of the rendered body (between PRESENT and the first
+// perception section), so a test can assert who is listed as present without matching the bodies.
+func rosterOf(body string) string {
+	presentIdx := strings.Index(body, "PRESENT:")
+	if presentIdx < 0 {
+		return ""
+	}
+	end := len(body)
+	if i := strings.Index(body, "WHAT JUST HAPPENED"); i >= 0 && i < end {
+		end = i
+	}
+	if i := strings.Index(body, "RECENT BACKGROUND"); i >= 0 && i < end {
+		end = i
+	}
+	return body[presentIdx:end]
+}
+
 // (d) Unit: the narrate builder renders a PLACE line from the location candidate (kind 'location'),
 // BEFORE PRESENT, and the location does NOT leak into the PRESENT actor roster. This is the founder-gate
 // orientation fix — without PLACE the narrator had no "where", and the location was listed as if present.
@@ -130,7 +147,7 @@ func TestBuildNarratePrompt_PlaceLineFromLocationCandidate(t *testing.T) {
 		},
 		Lines: []string{"Mara watches you from the bar"},
 	}
-	p := buildNarratePrompt(payload)
+	p := buildNarratePrompt(payload, "", nil)
 
 	// Assert on the RENDERED BODY, not the fixed header (whose rulebook example itself contains the
 	// strings "PLACE: The Drowned Lantern" and "PRESENT: Mara").
@@ -145,12 +162,79 @@ func TestBuildNarratePrompt_PlaceLineFromLocationCandidate(t *testing.T) {
 		t.Fatalf("(d) PLACE (idx %d) must be rendered BEFORE PRESENT (idx %d):\n%s", placeIdx, presentIdx, body)
 	}
 	// The location must NOT appear inside the PRESENT roster (it is a place, not a present actor).
-	roster := body[presentIdx:strings.Index(body, "PERCEPTIONS")]
+	roster := rosterOf(body)
 	if strings.Contains(roster, "The Drowned Lantern") {
 		t.Fatalf("(d) location leaked into the PRESENT roster — it belongs only under PLACE:\n%s", roster)
 	}
 	if !strings.Contains(roster, "Mara") {
 		t.Fatalf("(d) actor Mara missing from the PRESENT roster:\n%s", roster)
+	}
+}
+
+// (f) Defect A: the VIEWER is excluded from his own PRESENT roster. Given a candidate whose id IS the
+// viewer, that name must not appear under PRESENT (the "…and Kade" to Kade bug); the others stay.
+func TestBuildNarratePrompt_ViewerExcludedFromPresent(t *testing.T) {
+	const viewer = "kade-id"
+	payload := PerceptionPayload{
+		Candidates: []Candidate{
+			{ID: viewer, Name: "Kade", Kind: "actor"},
+			{ID: "m1", Name: "Mara", Kind: "actor"},
+			{ID: "l1", Name: "The Drowned Lantern", Kind: "location"},
+		},
+		Lines: []string{"Mara watches you from the bar"},
+	}
+	roster := rosterOf(strings.TrimPrefix(buildNarratePrompt(payload, viewer, nil), narrateSystemHeader))
+	if strings.Contains(roster, "Kade") {
+		t.Fatalf("(f) the viewer Kade leaked into his own PRESENT roster:\n%s", roster)
+	}
+	if !strings.Contains(roster, "Mara") {
+		t.Fatalf("(f) the other present actor Mara was dropped from PRESENT:\n%s", roster)
+	}
+}
+
+// (g) Defect B: delta-first. A line whose perception_id is in the pre-beat baseline is RECENT
+// BACKGROUND (never re-narrated); a line whose id is new is WHAT JUST HAPPENED. The window is NOT
+// re-rendered wholesale every beat.
+func TestBuildNarratePrompt_DeltaFirstSplitsNewFromBackground(t *testing.T) {
+	payload := PerceptionPayload{
+		Lines:   []string{"You stepped into the Drowned Lantern.", "Mara sets a tankard on the bar."},
+		LineIDs: []string{"p-old", "p-new"},
+	}
+	preIDs := map[string]bool{"p-old": true} // the "stepped in" line was already held before this beat
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", preIDs), narrateSystemHeader)
+
+	jh := strings.Index(body, "WHAT JUST HAPPENED")
+	bg := strings.Index(body, "RECENT BACKGROUND")
+	if jh < 0 || bg < 0 {
+		t.Fatalf("(g) expected both WHAT JUST HAPPENED and RECENT BACKGROUND sections:\n%s", body)
+	}
+	if jh > bg {
+		t.Fatalf("(g) WHAT JUST HAPPENED must precede RECENT BACKGROUND:\n%s", body)
+	}
+	justHappened := body[jh:bg]
+	background := body[bg:]
+	if !strings.Contains(justHappened, "Mara sets a tankard on the bar.") {
+		t.Fatalf("(g) the NEW perception is missing from WHAT JUST HAPPENED:\n%s", justHappened)
+	}
+	if strings.Contains(justHappened, "You stepped into the Drowned Lantern.") {
+		t.Fatalf("(g) the already-known line was re-narrated as new (the ×3 bug):\n%s", justHappened)
+	}
+	if !strings.Contains(background, "You stepped into the Drowned Lantern.") {
+		t.Fatalf("(g) the already-known line must appear under RECENT BACKGROUND:\n%s", background)
+	}
+}
+
+// (h) Defect B part 2: the location candidate's scene description renders on the PLACE line.
+func TestBuildNarratePrompt_PlaceDescriptionRendered(t *testing.T) {
+	const desc = "Low beams, salt-rot, one hearth, a bar with a hatch, a back door to the alley."
+	payload := PerceptionPayload{
+		Candidates: []Candidate{
+			{ID: "l1", Name: "The Drowned Lantern", Kind: "location", Description: desc},
+		},
+	}
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil), narrateSystemHeader)
+	if !strings.Contains(body, "PLACE: The Drowned Lantern — "+desc) {
+		t.Fatalf("(h) PLACE line missing the rendered scene description:\n%s", body)
 	}
 }
 
