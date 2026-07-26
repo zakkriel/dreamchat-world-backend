@@ -14,6 +14,8 @@ Narrate WHAT JUST HAPPENED — the new events this beat, oldest first — as the
 
 If there is no WHAT JUST HAPPENED section, nothing new occurred — a pure look-around. Render the scene as it now stands from PLACE, its description, PRESENT, and YOU ARE: a still, present-tense picture of the room.
 
+If a NOTHING RESOLVED section is present, the attempted action did not happen — nothing committed, and any held tension still hangs unanswered. This is NOT a pure look-around: do not resolve, soften, or move past the standing tension. Narrate stillness — the world holding its breath, the tension exactly where it was — and depict NO change of state: no one relenting, moving, or resolving anything, however natural that would feel to write. Example: a held cut-in and a bounced reply — you may render the silence stretching, the muscle unmoved between you and the bar; you may NOT render him settling back against the bar or the moment passing.
+
 If the perceptions are sparse, the narration is SHORT AND SPARSE — that is correct, not a shortcoming. Two lines of perception become at most a sentence or two; never pad to fill the space.
 
 Output is prose only: no headings, no lists, no notes to the reader.

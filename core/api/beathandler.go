@@ -201,7 +201,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		preIDs[id] = true
 	}
 	narration, err := h.bridge.Driver(SeatNarrate.Name).Generate(ctx,
-		GenRequest{Payload: post, Prompt: buildNarratePrompt(post, viewerID, preIDs)})
+		GenRequest{Payload: post, Prompt: buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason)})
 	if err != nil {
 		http.Error(w, "narrate failed", http.StatusBadGateway)
 		return

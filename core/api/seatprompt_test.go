@@ -105,7 +105,7 @@ func TestSeatPrompt_NarrateCarriesPerceptionsAndAntiInvention(t *testing.T) {
 // (c) Unit: the narrate builder with ZERO lines still carries the sparse-is-correct rule and
 // fabricates no content — a sparse moment is a short narration, per the header.
 func TestBuildNarratePrompt_ZeroLinesSparseNoFabrication(t *testing.T) {
-	p := buildNarratePrompt(PerceptionPayload{}, "", nil) // no lines, no candidates, no baseline
+	p := buildNarratePrompt(PerceptionPayload{}, "", nil, "") // no lines, no candidates, no baseline
 
 	if !strings.HasPrefix(p, narrateSystemHeader) {
 		t.Fatalf("(c) narrate prompt must open with the bounding header (the stable cache prefix)")
@@ -148,7 +148,7 @@ func TestBuildNarratePrompt_PlaceLineFromLocationCandidate(t *testing.T) {
 		},
 		Lines: []string{"Mara watches you from the bar"},
 	}
-	p := buildNarratePrompt(payload, "", nil)
+	p := buildNarratePrompt(payload, "", nil, "")
 
 	// Assert on the RENDERED BODY, not the fixed header (whose rulebook example itself contains the
 	// strings "PLACE: The Drowned Lantern" and "PRESENT: Mara").
@@ -184,7 +184,7 @@ func TestBuildNarratePrompt_ViewerExcludedFromPresent(t *testing.T) {
 		},
 		Lines: []string{"Mara watches you from the bar"},
 	}
-	roster := rosterOf(strings.TrimPrefix(buildNarratePrompt(payload, viewer, nil), narrateSystemHeader))
+	roster := rosterOf(strings.TrimPrefix(buildNarratePrompt(payload, viewer, nil, ""), narrateSystemHeader))
 	if strings.Contains(roster, "Kade") {
 		t.Fatalf("(f) the viewer Kade leaked into his own PRESENT roster:\n%s", roster)
 	}
@@ -202,7 +202,7 @@ func TestBuildNarratePrompt_DeltaFirstSplitsNewFromBackground(t *testing.T) {
 		LineIDs: []string{"p-old", "p-new"},
 	}
 	preIDs := map[string]bool{"p-old": true} // the "stepped in" line was already held before this beat
-	body := strings.TrimPrefix(buildNarratePrompt(payload, "", preIDs), narrateSystemHeader)
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", preIDs, ""), narrateSystemHeader)
 
 	jh := strings.Index(body, "WHAT JUST HAPPENED")
 	bg := strings.Index(body, "RECENT BACKGROUND")
@@ -233,7 +233,7 @@ func TestBuildNarratePrompt_PlaceDescriptionRendered(t *testing.T) {
 			{ID: "l1", Name: "The Drowned Lantern", Kind: "location", Description: desc},
 		},
 	}
-	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil), narrateSystemHeader)
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil, ""), narrateSystemHeader)
 	if !strings.Contains(body, "PLACE: The Drowned Lantern — "+desc) {
 		t.Fatalf("(h) PLACE line missing the rendered scene description:\n%s", body)
 	}
@@ -253,7 +253,7 @@ func TestBuildNarratePrompt_ViewerIdentityBlockAndRule(t *testing.T) {
 		Lines:         []string{"Jonas steps between Mara and the stranger"},
 		ViewerAliases: []string{desc},
 	}
-	p := buildNarratePrompt(payload, "kade-id", nil)
+	p := buildNarratePrompt(payload, "kade-id", nil, "")
 
 	// The viewer-relative rule reached the model (from the fixed header).
 	if !strings.Contains(p, narrateViewerRelativeMarker) {
@@ -286,7 +286,7 @@ func TestBuildNarratePrompt_NoViewerAliasesOmitsYouAre(t *testing.T) {
 		Candidates: []Candidate{{ID: "l1", Name: "The Drowned Lantern", Kind: "location"}},
 		Lines:      []string{"Mara watches you from the bar"},
 	}
-	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil), narrateSystemHeader)
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil, ""), narrateSystemHeader)
 	if strings.Contains(body, "YOU ARE:") {
 		t.Fatalf("(j) YOU ARE rendered though the viewer has no aliases:\n%s", body)
 	}
@@ -476,4 +476,51 @@ func containsStr(ss []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// (l) The smoke-beat finding: a reaction beat BOUNCED (committed=[], a held outcome still pending) and
+// the narrator, handed the resulting empty delta, AUTHORED A RESOLUTION that never happened — "the
+// muscle settles back against the bar... lets the space between you go quiet" — when mechanically
+// nothing happened and the hold still hangs. An empty delta paired with ANY halt reason meaning nothing
+// committed must render NOTHING RESOLVED before the perception blocks, for every such halt reason.
+func TestBuildNarratePrompt_EmptyDeltaFailedHaltsRenderNothingResolved(t *testing.T) {
+	for _, halt := range []string{"bounce", "gate_reject", "premise_broken", "ruled_event_rejected", "unresolved", "turn_budget"} {
+		t.Run(halt, func(t *testing.T) {
+			payload := PerceptionPayload{
+				Candidates: []Candidate{{ID: "l1", Name: "The Drowned Lantern", Kind: "location"}},
+				// No Lines ⇒ delta is empty regardless of preIDs.
+			}
+			body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil, halt), narrateSystemHeader)
+			if !strings.Contains(body, narrateNothingResolvedMarker) {
+				t.Fatalf("(l) empty delta + halt %q must render the NOTHING RESOLVED marker:\n%s", halt, body)
+			}
+		})
+	}
+}
+
+// (m) A pure look-around (halt "completed") with an empty delta is NOT a failed beat — current
+// behaviour stands, and NOTHING RESOLVED must NOT appear.
+func TestBuildNarratePrompt_EmptyDeltaCompletedHaltOmitsNothingResolved(t *testing.T) {
+	payload := PerceptionPayload{
+		Candidates: []Candidate{{ID: "l1", Name: "The Drowned Lantern", Kind: "location"}},
+	}
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil, "completed"), narrateSystemHeader)
+	if strings.Contains(body, narrateNothingResolvedMarker) {
+		t.Fatalf("(m) a pure look-around (halt completed) must NOT render NOTHING RESOLVED:\n%s", body)
+	}
+}
+
+// (n) A non-empty delta means something DID commit this beat (or, for "telegraph", the wind-up itself
+// committed) — NOTHING RESOLVED must never render alongside real WHAT JUST HAPPENED content, whatever
+// the halt reason.
+func TestBuildNarratePrompt_NonEmptyDeltaOmitsNothingResolvedRegardlessOfHalt(t *testing.T) {
+	for _, halt := range []string{"bounce", "gate_reject", "premise_broken", "ruled_event_rejected", "unresolved", "turn_budget", "completed", "telegraph", ""} {
+		t.Run(halt, func(t *testing.T) {
+			payload := PerceptionPayload{Lines: []string{"Mara sets a tankard on the bar."}}
+			body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil, halt), narrateSystemHeader)
+			if strings.Contains(body, narrateNothingResolvedMarker) {
+				t.Fatalf("(n) non-empty delta + halt %q must NOT render NOTHING RESOLVED:\n%s", halt, body)
+			}
+		})
+	}
 }

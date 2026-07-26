@@ -35,6 +35,26 @@ const narrateViewerRelativeMarker = "VIEWER-RELATIVE RENDERING"
 // moment is a short narration — not a failure to be padded. The zero-lines unit test greps for it.
 const narrateSparseRuleMarker = "SHORT AND SPARSE"
 
+// narrateNothingResolvedMarker is the load-bearing substring of the failed/empty-beat context (a
+// smoke-beat finding: a reaction beat BOUNCED — committed=[], a held outcome still pending — and,
+// handed an empty delta, the narrator AUTHORED A RESOLUTION that never happened, contradicting the
+// state (rule 2) in a case the header's pure-look-around rule (halt "completed") doesn't cover. The
+// unit tests grep for it.
+const narrateNothingResolvedMarker = "NOTHING RESOLVED"
+
+// nothingResolvedHalts is the set of halt reasons that, PAIRED WITH an empty delta, mean nothing
+// committed this beat — the attempted action did not happen. "completed" (a pure look-around) and
+// "telegraph" (the wind-up itself commits, so its delta is never empty) are deliberately excluded:
+// both keep the existing look-around rendering, not NOTHING RESOLVED.
+var nothingResolvedHalts = map[string]bool{
+	"bounce":               true,
+	"gate_reject":          true,
+	"premise_broken":       true,
+	"ruled_event_rejected": true,
+	"unresolved":           true,
+	"turn_budget":          true,
+}
+
 // Text lives in prompts/narrate.txt (core/api/prompts/README.md) — every fixed prompt rulebook
 // readable in one place, config-style, mirroring the schema/*.json + go:embed pattern.
 //
@@ -61,7 +81,15 @@ var narrateSystemHeader string
 // Scope fence: what the payload CONTAINS (retrieval, fidelity, richness) is Station I's narrator-payload
 // map item — this builder adds no retrieval or SQL. With zero lines both bodies are empty and nothing
 // is fabricated — a sparse moment is a short narration.
-func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool) string {
+//
+// haltReason is the beat's outcome.HaltReason (beathandler already holds the BeatOutcome before
+// narrating). A smoke-beat finding: a reaction beat BOUNCED (committed=[], a held outcome still
+// pending) and the narrator, handed the resulting empty delta, AUTHORED A RESOLUTION that never
+// happened — contradicting the state in a case the pure-look-around rule doesn't cover (that rule is
+// for halt "completed", a genuine quiet moment, not a failed/rejected/halted one). When the delta is
+// empty AND haltReason is one of nothingResolvedHalts, a NOTHING RESOLVED section renders before the
+// perception blocks so the model is told nothing committed instead of inferring a scene from silence.
+func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
 	var sb strings.Builder
 	sb.WriteString(narrateSystemHeader)
 
@@ -116,6 +144,13 @@ func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[s
 		} else {
 			delta = append(delta, l)
 		}
+	}
+
+	// NOTHING RESOLVED — the failed/empty-beat context (see the doc comment above). Rendered BEFORE the
+	// perception blocks, only when the delta is empty AND the halt reason says nothing committed; a
+	// "completed" halt (pure look-around) and "telegraph" (never empty here) are excluded.
+	if len(delta) == 0 && nothingResolvedHalts[haltReason] {
+		sb.WriteString("\n\nNOTHING RESOLVED: the attempted action did not happen; the situation is exactly as it was. Any held tension still hangs unanswered.")
 	}
 
 	// WHAT JUST HAPPENED — the delta, the ONLY lines narrated as live events. Empty ⇒ the section is
