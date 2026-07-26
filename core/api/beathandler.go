@@ -33,9 +33,12 @@ type Candidate struct {
 // plan Task 9: "Decompose prompt = perception lines + candidates (ids) + the v2 schema" — the driver
 // dropping req.Payload made this header + scene + candidates never reach the live model, so a real id
 // could not be bound; assembling the prompt HERE, at the seat boundary, is the fix.
-const decomposeSystemHeader = `You turn the player's words into a chain of ATTEMPTS — what the player TRIES this beat, never what happens (outcomes are the referee's job). Every attempt uses the closed event vocabulary and binds real ids taken ONLY from the CANDIDATES list below. Never invent an id, and never name an entity that is not a candidate.
-When the player's reference genuinely ties between two or more candidates — you cannot tell which one they mean — emit an UNRESOLVED attempt listing those candidate ids rather than guessing.
-Add NOTHING the player did not state: no extra steps, no embellishment, no motive. The player's raw words are at the end, under PLAYER INPUT.`
+//
+// Text lives in prompts/decompose.txt (core/api/prompts/README.md) — every fixed prompt rulebook
+// readable in one place, config-style, mirroring the schema/*.json + go:embed pattern.
+//
+//go:embed prompts/decompose.txt
+var decomposeSystemHeader string
 
 // buildDecomposePrompt assembles the decompose prompt at the SEAT BOUNDARY — the perception payload's
 // lines and candidate whitelist become the model's world HERE, since the driver drops req.Payload

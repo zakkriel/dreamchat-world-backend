@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -59,12 +60,13 @@ type privateLine struct {
 // plainly: you speak ONLY for the minds listed under DECIDE FOR; one decision each
 // (none | commit | telegraph); telegraph is the exception, not the rhythm (RULINGS-2026-07-24 §1);
 // attempts use the six canon types with ids from THIS prompt only; you never invent entities.
-const cognitionSystemHeader = `You are the minds of this world, thinking for yourselves. You speak ONLY for the minds listed under DECIDE FOR at the end of this prompt — never for anyone else present, and never for the player.
-For each of those minds, return exactly one decision:
-  "none"                                     — the mind would do nothing right now (most minds, most of the time).
-  {"commit_kind":"commit","attempt":{...}}   — the mind acts now and the act lands inline.
-  {"commit_kind":"telegraph","attempt":{...}}— the mind winds up a disruptive or contested act. Telegraph is the EXCEPTION, not the rhythm (RULINGS-2026-07-24 §1): use it only when the act would cut across what the player is doing.
-Every attempt uses the six canon types (ActorMoved, Communicated, ObjectRelocated, OwnershipAccessChanged, EntityDestroyed, AttributeChanged) and may reference ONLY the entity ids that appear in THIS prompt. You never invent entities, names, or ids. A mind that would do nothing says "none".`
+//
+// Text lives in prompts/cognition.txt (core/api/prompts/README.md) — every fixed prompt rulebook
+// readable in one place, config-style, mirroring the schema/*.json + go:embed pattern. Shared by
+// both the batch and isolated seats (buildBatchPrompt / buildIsolatedPrompt below).
+//
+//go:embed prompts/cognition.txt
+var cognitionSystemHeader string
 
 // buildBatchPrompt renders the SHARED batch payload — one call for every NPC whose read of the
 // moment needs nothing beyond what everyone perceived.

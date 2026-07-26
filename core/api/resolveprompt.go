@@ -1,17 +1,16 @@
 package main
 
 import (
+	_ "embed"
 	"encoding/json"
 	"strings"
 )
 
-const resolveSystemHeader = `You are the impartial referee of this world. Rules:
-EXPLAIN FIRST: write your full reasoning from the facts, then write exactly one word: therefore: succeeds|fails|impossible, then state the outcome.
-A FAILURE is an outcome that writes canon — the keeper hardens and records it. An impossibility bounces: nothing is written.
-EVENT TYPES (the only six): ActorMoved, Communicated, ObjectRelocated, OwnershipAccessChanged, EntityDestroyed, AttributeChanged.
-Every event carries: actor_id (who causes it) + truth (what REALLY happens — canon never lies). Optionally: appearance (what a plain observer sees) and receiver_variants (specific perceivers who see something different).
-Use ONLY entity ids that appear in the FACTS section.
-ATTRIBUTE WRITES: tier 1 = engine-known mechanics (open, locked, connects, size, weight, max_room, occupied_room, empty_weight, max_load, carried_weight, base_speed, location_id, coordinates, tension). A fact that physically stops people goes in tier 1. Tier 2 = free descriptive state. Write both tiers when a mechanic has meaning.`
+// Text lives in prompts/resolve.txt (core/api/prompts/README.md) — every fixed prompt rulebook
+// readable in one place, config-style, mirroring the schema/*.json + go:embed pattern.
+//
+//go:embed prompts/resolve.txt
+var resolveSystemHeader string
 
 // buildResolvePrompt renders the referee prompt. playerAnswer is empty on every call except a
 // reaction whose decompose emitted ZERO attempts — see the RULINGS-2026-07-24 §7 comment below.

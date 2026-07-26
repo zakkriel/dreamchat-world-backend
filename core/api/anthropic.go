@@ -13,6 +13,7 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,14 @@ import (
 
 const anthropicMessagesURL = "https://api.anthropic.com/v1/messages"
 const anthropicVersion = "2023-06-01"
+
+// anthropicSystemHeader is the driver-owned system field sent on every anthropic call: this is a
+// quarantined seat, propose-only, never-assert-canon (D-13 keeps provider shaping in the driver).
+// Text lives in prompts/system-anthropic.txt (core/api/prompts/README.md) — still driver-owned, but
+// now readable alongside the rest of the fixed prompt rulebooks.
+//
+//go:embed prompts/system-anthropic.txt
+var anthropicSystemHeader string
 
 type anthropicDriver struct {
 	model  string
@@ -55,7 +64,7 @@ func (a *anthropicDriver) Generate(ctx context.Context, req GenRequest) (string,
 	body := map[string]any{
 		"model":      a.model,
 		"max_tokens": 1024,
-		"system":     "You are a quarantined seat in a play loop. Propose only; never assert canon.",
+		"system":     anthropicSystemHeader,
 		"messages":   []any{map[string]any{"role": "user", "content": req.Prompt}},
 	}
 	if req.Schema != nil {
