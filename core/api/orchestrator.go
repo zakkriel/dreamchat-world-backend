@@ -870,6 +870,13 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	}
 
 	// Resolve: one combined judgment over the attempt set, with one repair retry on decode/verdict failure.
+	// The founder's combined ruling bounced with no trace (Defect D): each failed attempt and the final
+	// bounce are now logged (seat + attempt actor ids + the error/violation text), matching worldFirst's
+	// degrade-dull style. Observability only — no behavior change.
+	actorIDs := make([]string, 0, len(set))
+	for _, aa := range set {
+		actorIDs = append(actorIDs, aa.ActorID)
+	}
 	prompt := buildResolvePrompt(sliceJSON, set, nil, playerAnswer)
 	var ruling RulingV2
 	var violations []string
@@ -892,6 +899,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 			Prompt: p,
 		})
 		if genErr != nil {
+			log.Printf("adjudicate: resolve Generate failed (seat=%s, actors=%v, attempt=%d/2): %v", o.Resolve.Name(), actorIDs, retry+1, genErr)
 			decodeErr = genErr
 			violations = nil
 			continue
@@ -899,6 +907,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 
 		ruling, decodeErr = DecodeAndValidateRulingV2(rawRuling)
 		if decodeErr != nil {
+			log.Printf("adjudicate: ruling decode/validate failed (seat=%s, actors=%v, attempt=%d/2): %v", o.Resolve.Name(), actorIDs, retry+1, decodeErr)
 			violations = nil
 			continue
 		}
@@ -908,11 +917,13 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 			break
 		}
 		// violations found — will retry once with repair prompt
+		log.Printf("adjudicate: ruling verdict violations (seat=%s, actors=%v, attempt=%d/2): %v", o.Resolve.Name(), actorIDs, retry+1, violations)
 		decodeErr = nil
 	}
 
 	// After two attempts, if still broken → bounce.
 	if decodeErr != nil || len(violations) > 0 {
+		log.Printf("adjudicate: bounce after repair (seat=%s, actors=%v)", o.Resolve.Name(), actorIDs)
 		return adjResult{Halt: "bounce"}, nil
 	}
 
