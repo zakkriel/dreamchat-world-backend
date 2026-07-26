@@ -265,12 +265,27 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 		return PerceptionPayload{}, err
 	}
 
-	// Build candidate whitelist: present actors + current location.
-	var loc string
+	// Build candidate whitelist: present actors + current location. In the SAME row, read the viewer's
+	// OWN identity for the narrate YOU ARE block: the descriptor a stranger sees (same Tier-2 attrs.descriptor
+	// read for every other candidate) plus the viewer's OWN name-knowledge of himself (fn_perceived_name
+	// self→self). NOT the registry canonical name — a viewer may not know his own registered name (§3), and
+	// surfacing it would breach the naming wall. Absent both ⇒ no alias list ⇒ the builder omits YOU ARE.
+	var loc, viewerDescriptor, viewerKnownName string
 	if err := h.pool.QueryRow(ctx,
-		`SELECT (attrs->>'location_id')::text FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
-		worldID, viewerID).Scan(&loc); err != nil {
+		`SELECT (attrs->>'location_id')::text,
+		        COALESCE(attrs->>'descriptor', ''),
+		        COALESCE(fn_perceived_name($1, $2, $2), '')
+		 FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
+		worldID, viewerID).Scan(&loc, &viewerDescriptor, &viewerKnownName); err != nil {
 		return PerceptionPayload{}, err
+	}
+	// YOU ARE aliases (viewer-relative rendering): descriptor first (the stranger's label), then the
+	// viewer's self-known name if he holds one and it differs. Both empty ⇒ ViewerAliases stays nil.
+	if viewerDescriptor != "" {
+		p.ViewerAliases = append(p.ViewerAliases, viewerDescriptor)
+	}
+	if viewerKnownName != "" && viewerKnownName != viewerDescriptor {
+		p.ViewerAliases = append(p.ViewerAliases, viewerKnownName)
 	}
 
 	if loc != "" {

@@ -11,6 +11,12 @@ type PerceptionPayload struct {
 	Lines      []string    `json:"lines"`                // perception-bound, epistemically framed lines for the holder
 	LineIDs    []string    `json:"line_ids,omitempty"`   // perception_id parallel to Lines (delta-first narration; no external API change — these are ids the holder already perceives, never raw canon)
 	Candidates []Candidate `json:"candidates,omitempty"` // entity whitelist for v2 decompose (beat_chain/2)
+	// ViewerAliases is how OTHERS may refer to the VIEWER inside perception text — the viewer's own
+	// descriptor (what a stranger sees, e.g. "a young stranger, dark-haired") plus the viewer's OWN
+	// name-knowledge of himself, when he holds one. It is NEVER the registry canonical name he may not
+	// know (§3 naming reach — leaking it would breach the naming wall). The narrate YOU ARE block
+	// renders it so a third-person reference to the viewer resolves to "you". Empty ⇒ no YOU ARE block.
+	ViewerAliases []string `json:"viewer_aliases,omitempty"`
 }
 
 // BeatStep is one element of the closed-vocabulary chain (beat_chain/1).

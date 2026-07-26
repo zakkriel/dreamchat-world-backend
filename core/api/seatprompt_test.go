@@ -127,11 +127,12 @@ func rosterOf(body string) string {
 		return ""
 	}
 	end := len(body)
-	if i := strings.Index(body, "WHAT JUST HAPPENED"); i >= 0 && i < end {
-		end = i
-	}
-	if i := strings.Index(body, "RECENT BACKGROUND"); i >= 0 && i < end {
-		end = i
+	// YOU ARE (the viewer-identity block) is rendered BETWEEN PRESENT and the perception body — it bounds
+	// the roster too, so an alias is never mistaken for a present actor.
+	for _, marker := range []string{"YOU ARE:", "WHAT JUST HAPPENED", "RECENT BACKGROUND"} {
+		if i := strings.Index(body, marker); i >= 0 && i < end {
+			end = i
+		}
 	}
 	return body[presentIdx:end]
 }
@@ -236,6 +237,145 @@ func TestBuildNarratePrompt_PlaceDescriptionRendered(t *testing.T) {
 	if !strings.Contains(body, "PLACE: The Drowned Lantern — "+desc) {
 		t.Fatalf("(h) PLACE line missing the rendered scene description:\n%s", body)
 	}
+}
+
+// (i) Unit: viewer-relative rendering inputs. The builder renders a YOU ARE block from the payload's
+// ViewerAliases (the viewer's descriptor + any self-known name), positioned BETWEEN the PRESENT roster
+// and the perception body, and the fixed header carries the viewer-relative RULE marker — so the model
+// gets both the inputs (YOU ARE / PRESENT) and the rule to bind a third-person reference to the viewer.
+func TestBuildNarratePrompt_ViewerIdentityBlockAndRule(t *testing.T) {
+	const desc = "a young stranger, dark-haired"
+	payload := PerceptionPayload{
+		Candidates: []Candidate{
+			{ID: "j1", Name: "the muscle", Kind: "actor"},
+			{ID: "l1", Name: "The Drowned Lantern", Kind: "location"},
+		},
+		Lines:         []string{"Jonas steps between Mara and the stranger"},
+		ViewerAliases: []string{desc},
+	}
+	p := buildNarratePrompt(payload, "kade-id", nil)
+
+	// The viewer-relative rule reached the model (from the fixed header).
+	if !strings.Contains(p, narrateViewerRelativeMarker) {
+		t.Fatalf("(i) narrate prompt missing the viewer-relative rule marker %q\n%s", narrateViewerRelativeMarker, p)
+	}
+	// Assert on the RENDERED BODY, not the fixed header (whose example text itself mentions YOU ARE).
+	body := strings.TrimPrefix(p, narrateSystemHeader)
+	youIdx := strings.Index(body, "YOU ARE: "+desc)
+	if youIdx < 0 {
+		t.Fatalf("(i) narrate prompt missing the YOU ARE block with the seeded descriptor:\n%s", body)
+	}
+	presentIdx := strings.Index(body, "PRESENT:")
+	whatIdx := strings.Index(body, "WHAT JUST HAPPENED")
+	if presentIdx < 0 || presentIdx > youIdx {
+		t.Fatalf("(i) YOU ARE (idx %d) must be rendered AFTER PRESENT (idx %d):\n%s", youIdx, presentIdx, body)
+	}
+	if whatIdx < 0 || youIdx > whatIdx {
+		t.Fatalf("(i) YOU ARE (idx %d) must be rendered BEFORE the perception body (idx %d):\n%s", youIdx, whatIdx, body)
+	}
+	// The descriptor is a viewer ALIAS, not a present actor — it must not sit in the PRESENT roster.
+	if roster := rosterOf(body); strings.Contains(roster, desc) {
+		t.Fatalf("(i) the viewer's descriptor leaked into the PRESENT roster — it belongs under YOU ARE:\n%s", roster)
+	}
+}
+
+// (j) Unit: a viewer with no descriptor and no self-known name has no aliases ⇒ NO YOU ARE block (no
+// empty header line to confuse the model).
+func TestBuildNarratePrompt_NoViewerAliasesOmitsYouAre(t *testing.T) {
+	payload := PerceptionPayload{
+		Candidates: []Candidate{{ID: "l1", Name: "The Drowned Lantern", Kind: "location"}},
+		Lines:      []string{"Mara watches you from the bar"},
+	}
+	body := strings.TrimPrefix(buildNarratePrompt(payload, "", nil), narrateSystemHeader)
+	if strings.Contains(body, "YOU ARE:") {
+		t.Fatalf("(j) YOU ARE rendered though the viewer has no aliases:\n%s", body)
+	}
+}
+
+// (k) FLOW — viewer-relative rendering end to end, through the REAL HTTP path (setupWallWorld +
+// runWallBeat, the wall-test family). A perception the VIEWER holds names the NPC by his CANONICAL name
+// ("Jonas") AND refers to the viewer in the THIRD PERSON ("the stranger") — the exact live defect. The
+// captured narrate prompt must carry everything the model needs to relabel BOTH references: (a) YOU ARE
+// with the viewer's descriptor (so "the stranger" → "you"), (b) the PRESENT roster with the VIEWER's
+// label for the NPC ("the muscle", never "Jonas"), and the viewer-relative RULE. We assert the prompt's
+// INPUTS + RULE, not the model's output — the relabel itself is the model's job.
+func TestSeatPrompt_NarrateCarriesViewerIdentityAndPresentLabel(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupWallWorld(t, ctx, pool, true)
+
+	mustExec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, sql)
+		}
+	}
+
+	// The viewer wears a stranger's descriptor (his YOU ARE alias). The NPC wears one too, and the viewer
+	// knows no name for him — so his PRESENT label is the descriptor "the muscle", never "Jonas".
+	const viewerDesc = "a young stranger, dark-haired"
+	mustExec(`UPDATE actor_state SET attrs = jsonb_set(attrs,'{descriptor}', to_jsonb($3::text))
+	          WHERE entity_id=$1 AND world_id=$2`, id.K, id.World, viewerDesc)
+	mustExec(`UPDATE actor_state SET attrs = jsonb_set(attrs,'{descriptor}','"the muscle"'::jsonb)
+	          WHERE entity_id=$1 AND world_id=$2`, id.J, id.World)
+
+	// A perception the VIEWER holds that names the NPC canonically AND refers to the viewer in the third
+	// person — the line the relabel must fix. Accepted source event + subject (invariant-clean). Tick
+	// 60003 sits inside the beat's recency window (max_tick+1) and clear of the accepted-order unique
+	// index (uq_ce_accepted_order) via a distinct beat_seq.
+	const perceptionLine = "Jonas moves between Mara and the stranger"
+	var srcEvt string
+	if err := pool.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&srcEvt); err != nil {
+		t.Fatalf("mint src evt: %v", err)
+	}
+	mustExec(`INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+	          VALUES ($1,$2,'observation','viewer wind-up',60003,7,'accepted',now(),'public','fast_path')`, srcEvt, id.World)
+	mustExec(`INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier) VALUES ($1,$2,'actor','instigator')`, srcEvt, id.K)
+	var pid string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO perception_record (world_id,holder_id,source_event_id,content,epistemic_type,acquired_tick,valid_tick)
+		 VALUES ($1,$2,$3,$4,'direct',60003,60003) RETURNING perception_id`,
+		id.World, id.K, srcEvt, perceptionLine).Scan(&pid); err != nil {
+		t.Fatalf("seed viewer perception: %v", err)
+	}
+	mustExec(`INSERT INTO perception_subject (perception_id,entity_id,world_id) VALUES ($1,$2,$3)`, pid, id.K, id.World)
+
+	const beatText = "I press Mara for the truth"
+	chain := `[{"type":"Communicated","stated":"I press Mara for the truth","listener_id":"` + id.M + `","content":"tell me what happened"}]`
+	seats := runWallBeat(t, ctx, pool, id, beatText, chain)
+
+	nar := seats[SeatNarrate.Name]
+	if len(nar.reqs) == 0 {
+		t.Fatalf("(k) narrate seat was never called")
+	}
+	p := nar.reqs[0].Prompt
+
+	// The viewer-relative RULE reached the model.
+	if !strings.Contains(p, narrateViewerRelativeMarker) {
+		t.Fatalf("(k) narrate prompt missing the viewer-relative rule marker %q\n%s", narrateViewerRelativeMarker, p)
+	}
+	body := strings.TrimPrefix(p, narrateSystemHeader)
+
+	// (a) YOU ARE carries the viewer's descriptor — the alias that lets "the stranger" resolve to "you".
+	if !strings.Contains(body, "YOU ARE: "+viewerDesc) {
+		t.Fatalf("(k) narrate prompt missing YOU ARE with the viewer's descriptor %q\n%s", viewerDesc, body)
+	}
+	// (b) PRESENT carries the VIEWER's label for the NPC ("the muscle"), never his canonical name.
+	roster := rosterOf(body)
+	if !strings.Contains(roster, "the muscle") {
+		t.Fatalf("(k) PRESENT roster missing the viewer's label \"the muscle\" for the NPC:\n%s", roster)
+	}
+	if strings.Contains(roster, "Jonas") {
+		t.Fatalf("(k) the NPC's canonical name \"Jonas\" leaked into the PRESENT roster — the viewer's label must stand:\n%s", roster)
+	}
+	// The line needing the relabel is actually in the prompt (its canonical name AND third-person viewer
+	// reference), so the inputs above are exactly what lets the model fix it.
+	if !strings.Contains(body, perceptionLine) {
+		t.Fatalf("(k) the perception line needing relabel is missing from the narrate prompt:\n%s", body)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, 60000)
 }
 
 // (e) The payload's Lines are a BOUNDED RECENT WINDOW, not the holder's whole remembered life. A viewer

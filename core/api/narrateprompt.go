@@ -10,16 +10,26 @@ import (
 // therefore assembles what the model must see HERE, at the call site). narrate is perception-bound
 // (ADR-020): no omniscient pass, only what the holder can currently perceive.
 //
-// Founder-gate bug this bounds: the live narrator was handed the one-line instruction ONLY — the
-// payload was silently dropped by the driver — and, with nothing to render, it invented an entire
-// scene (unnamed figures, sounds, smells in no perception) and then broke frame to offer the player
-// "a different frame — full third-person, inner monologue, a scripted branch." Two rules close both
-// failures: INVENT NOTHING (anti-invention) and the no-meta rule. Each ships with a one-line example
-// (house rule: every rule ships with its example) so the boundary is unambiguous.
+// Founder-gate bugs this bounds: (1) the live narrator was handed the one-line instruction ONLY — the
+// payload was silently dropped by the driver — and, with nothing to render, it invented an entire scene
+// and broke frame to offer the player "a different frame — full third-person, a scripted branch";
+// (2) an NPC-authored perception described the VIEWER in the third person ("the stranger coming toward
+// her") and by the NPC's canonical name the viewer doesn't know ("Jonas") — the narrator rendered both
+// verbatim instead of "you" and the viewer's own label. The founder's contract (prompts/narrate.txt)
+// closes them with two walls the narration lives between — never play the player, never contradict or
+// extend the state — plus VIEWER-RELATIVE RENDERING (the addressee is always "you"; everyone else wears
+// the VIEWER's label) and licence to create sensory texture INSIDE those walls. Each rule ships with an
+// example (house rule) so the boundary is unambiguous.
 
-// narrateAntiInventionMarker is the load-bearing substring of the anti-invention rule. The header
-// carries it verbatim; the seat-boundary test greps for it to prove the narrator is bounded.
-const narrateAntiInventionMarker = "INVENT NOTHING"
+// narrateAntiInventionMarker is the load-bearing substring of the never-contradict-or-extend rule (the
+// contract's second wall — the old "INVENT NOTHING" line, rewritten). The header carries it verbatim;
+// the seat-boundary test greps for it to prove the narrator is bounded to the state.
+const narrateAntiInventionMarker = "NEVER CONTRADICT OR EXTEND THE STATE"
+
+// narrateViewerRelativeMarker is the load-bearing substring of the viewer-relative rule: the person the
+// narration addresses is always "you", and everyone else wears the VIEWER's label. The unit + flow
+// tests grep for it to prove the relabel instruction reaches the model alongside YOU ARE and PRESENT.
+const narrateViewerRelativeMarker = "VIEWER-RELATIVE RENDERING"
 
 // narrateSparseRuleMarker is the load-bearing substring of the sparse-is-correct rule. A sparse
 // moment is a short narration — not a failure to be padded. The zero-lines unit test greps for it.
@@ -82,6 +92,15 @@ func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[s
 		sb.WriteString("\n\nPRESENT: ")
 	}
 	sb.WriteString(strings.Join(names, ", "))
+
+	// YOU ARE — the viewer's own identity, rendered BETWEEN the PRESENT roster and the perception body.
+	// It lists how OTHERS may name or describe the viewer inside the perception text (his descriptor, and
+	// his self-known name when he holds one); the VIEWER-RELATIVE rule then binds every such reference to
+	// "you". Omitted when the payload carries no aliases (an unseeded viewer) — no empty header line.
+	if len(payload.ViewerAliases) > 0 {
+		sb.WriteString("\nYOU ARE: ")
+		sb.WriteString(strings.Join(payload.ViewerAliases, "; "))
+	}
 
 	// Delta-first split: a line is NEW (delta) when its perception_id is not among preIDs; the rest is
 	// already-known background. With no baseline (preIDs nil) every line is treated as new — the correct
