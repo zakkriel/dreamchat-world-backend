@@ -274,12 +274,15 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 	}
 
 	if loc != "" {
-		// Present actors at the same location.
+		// Present actors at the same location. The candidate NAME is the VIEWER's display name for each
+		// (§3 naming reach): known-name else descriptor else canonical — so decompose CANDIDATES and
+		// narrate PRESENT both carry only what the viewer knows. The id stays real (the model binds the
+		// id; the label is the viewer's knowledge).
 		actorRows, err := h.pool.Query(ctx,
-			`SELECT er.entity_id, er.canonical_name, er.entity_kind
+			`SELECT er.entity_id, fn_display_name($1, $3::uuid, er.entity_id), er.entity_kind
 			 FROM fn_actors_at($1, $2::uuid) fa
 			 JOIN entity_registry er ON er.entity_id=fa.entity_id AND er.world_id=$1`,
-			worldID, loc)
+			worldID, loc, viewerID)
 		if err != nil {
 			return PerceptionPayload{}, err
 		}
@@ -297,14 +300,13 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 			actorRows.Close()
 		}
 
-		// Current location entity — plus its Tier-2 scene description (empty when unseeded), so the
-		// narrate PLACE line renders the room's fixed character as DATA (Defect B).
+		// Current location entity — the viewer's display name (§3) plus its Tier-2 scene description
+		// (empty when unseeded), so the narrate PLACE line renders the room's fixed character as DATA.
 		var locName, locDesc string
 		if err := h.pool.QueryRow(ctx,
-			`SELECT canonical_name,
-			        COALESCE((SELECT attrs->>'description' FROM location_state WHERE entity_id=$1::uuid AND world_id=$2), '')
-			 FROM entity_registry WHERE entity_id=$1::uuid AND world_id=$2`,
-			loc, worldID).Scan(&locName, &locDesc); err != nil {
+			`SELECT fn_display_name($2, $3::uuid, $1::uuid),
+			        COALESCE((SELECT attrs->>'description' FROM location_state WHERE entity_id=$1::uuid AND world_id=$2), '')`,
+			loc, worldID, viewerID).Scan(&locName, &locDesc); err != nil {
 			return PerceptionPayload{}, err
 		}
 		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location", Description: locDesc})

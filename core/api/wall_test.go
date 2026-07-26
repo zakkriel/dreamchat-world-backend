@@ -333,6 +333,90 @@ func TestWall_DullNeverLeak(t *testing.T) {
 	// derive a subject from the event participant and re-link it — defeating the missed-flag fixture.
 }
 
+// TestWall_NameStringConfinedToKnower is the §3 naming-reach wall (Defect C): a canonical name must
+// never reach a character-mind seat past a knowledge path. Kade's name is known ONLY to Mara (privately);
+// no batch mind (Jonas) knows it. So the literal string "Kade" must appear in NO seat's prompt EXCEPT
+// Mara's isolated call — the batch labels him by his descriptor, and decompose/narrate (perception-bound
+// to Kade, who does not know his own registered name) never surface it either. Same self-contained
+// fixture family as the other wall tests; high ticks keep it clear of the seed world.
+func TestWall_NameStringConfinedToKnower(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupWallWorld(t, ctx, pool, true) // K/M/J co-located; M holds a private secret about K → isolated
+
+	mustExec := func(sql string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, sql, args...); err != nil {
+			t.Fatalf("exec: %v\n%s", err, sql)
+		}
+	}
+	// Give the player a distinctive canonical name and a stranger's descriptor; Jonas will see only the
+	// descriptor (he has no name-knowledge of K).
+	mustExec(`UPDATE entity_registry SET canonical_name='Kade' WHERE entity_id=$1 AND world_id=$2`, id.K, id.World)
+	mustExec(`UPDATE actor_state SET attrs = jsonb_set(attrs,'{descriptor}','"a young stranger"'::jsonb)
+	          WHERE entity_id=$1 AND world_id=$2`, id.K, id.World)
+
+	// Mara PRIVATELY knows K's name — a world_genesis-sourced name perception she holds ALONE, subject K.
+	// Held-by-one ⇒ only her calls resolve "Kade" (fn_display_name); the wall holds by construction.
+	var genEvt, namePid string
+	if err := pool.QueryRow(ctx, `SELECT gen_random_uuid()`).Scan(&genEvt); err != nil {
+		t.Fatalf("mint genesis id: %v", err)
+	}
+	mustExec(`INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+	          VALUES ($1,$2,'world_genesis','names',59000,0,'accepted',now(),'public','fast_path')`, genEvt, id.World)
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO perception_record (world_id,holder_id,source_event_id,content,epistemic_type,acquired_tick,valid_tick)
+		 VALUES ($1,$2,$3,'Kade','told',59000,59000) RETURNING perception_id`,
+		id.World, id.M, genEvt).Scan(&namePid); err != nil {
+		t.Fatalf("seed name perception: %v", err)
+	}
+	mustExec(`INSERT INTO perception_subject (perception_id,entity_id,world_id) VALUES ($1,$2,$3)`, namePid, id.K, id.World)
+
+	const beatText = "I press Mara for the truth"
+	chain := `[{"type":"Communicated","stated":"I press Mara for the truth","listener_id":"` + id.M + `","content":"tell me what happened"}]`
+	seats := runWallBeat(t, ctx, pool, id, beatText, chain)
+
+	// The batch labels Kade by his DESCRIPTOR (Jonas does not know his name) and NEVER by "Kade".
+	batch := seats[SeatCognitionBatch.Name]
+	if len(batch.reqs) == 0 {
+		t.Fatalf("no batch call captured — Jonas should sit in the shared batch")
+	}
+	sawDescriptor := false
+	for i, txt := range seatTexts(batch) {
+		if strings.Contains(txt, "Kade") {
+			t.Fatalf("WALL BREACH — batch prompt (call %d) named Kade, but no batch mind knows his name:\n%s", i, txt)
+		}
+		if strings.Contains(txt, "a young stranger") {
+			sawDescriptor = true
+		}
+	}
+	if !sawDescriptor {
+		t.Fatalf("batch prompt never labelled Kade by his descriptor — the relabel did not run")
+	}
+
+	// "Kade" appears ONLY in Mara's isolated prompt (her private name-knowledge), and NOWHERE else.
+	isolated := seats[SeatCognitionIsolated.Name]
+	if len(isolated.reqs) == 0 {
+		t.Fatalf("Mara's isolated call never fired — she must be pulled isolated by her secret")
+	}
+	if !strings.Contains(strings.Join(seatTexts(isolated), "\n"), "Kade") {
+		t.Fatalf("Mara's isolated prompt did NOT carry her known name for Kade — fn_display_name did not resolve it")
+	}
+	for name, d := range seats {
+		if name == SeatCognitionIsolated.Name {
+			continue
+		}
+		for i, txt := range seatTexts(d) {
+			if strings.Contains(txt, "Kade") {
+				t.Fatalf("WALL BREACH — %s prompt (call %d) leaked the name \"Kade\" past a knowledge path:\n%s", name, i, txt)
+			}
+		}
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, 59000)
+}
+
 // TestWall_RefereeStaysSighted is (f): the OPPOSITE direction. The referee (resolve seat) is truth-
 // side, LICENSED to read every involved party's full canon (RULINGS-2026-07-23 §9 wall note). When M
 // is a ruling participant, her secret — grounded as a canon event she participated in — MUST reach

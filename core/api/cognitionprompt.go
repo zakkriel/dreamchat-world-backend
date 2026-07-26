@@ -200,6 +200,81 @@ func (o *Orchestrator) loadMinds(ctx context.Context, worldID string, ids []stri
 	return minds, rows.Err()
 }
 
+// displayLabels returns each entity's DISPLAY NAME as ONE viewer knows it (§3 naming reach): known
+// name else descriptor else canonical (fn_display_name). Used to relabel an isolated NPC's scene +
+// imminent line so she reads the room as SHE knows it — ids unchanged, only the labels.
+func (o *Orchestrator) displayLabels(ctx context.Context, worldID, viewerID string, ids []string) (map[string]string, error) {
+	labels := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return labels, nil
+	}
+	rows, err := o.DB.Query(ctx,
+		`SELECT e::text, fn_display_name($1::uuid, $2::uuid, e) FROM unnest($3::uuid[]) e`,
+		worldID, viewerID, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label string
+		if err := rows.Scan(&id, &label); err != nil {
+			return nil, err
+		}
+		labels[id] = label
+	}
+	return labels, rows.Err()
+}
+
+// batchDisplayLabels returns each entity's DISPLAY NAME for the SHARED batch (§3/§5): a name only if
+// EVERY batch mind resolves the SAME known name (fn_batch_display_name's shared-by-all intersection),
+// else the descriptor, else canonical. Relabels the batch scene + imminent line so no name reaches the
+// shared prompt past a mind that does not know it — the same philosophy as the wall (mechanical, no
+// judgment): the safe failure shows a descriptor, never a name a mind lacks.
+func (o *Orchestrator) batchDisplayLabels(ctx context.Context, worldID string, minds, ids []string) (map[string]string, error) {
+	labels := make(map[string]string, len(ids))
+	if len(ids) == 0 {
+		return labels, nil
+	}
+	rows, err := o.DB.Query(ctx,
+		`SELECT e::text, fn_batch_display_name($1::uuid, $2::uuid[], e) FROM unnest($3::uuid[]) e`,
+		worldID, minds, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label string
+		if err := rows.Scan(&id, &label); err != nil {
+			return nil, err
+		}
+		labels[id] = label
+	}
+	return labels, rows.Err()
+}
+
+// relabelScene returns a copy of scene with each present roster name replaced by the caller's display
+// label for that id (unchanged when a label is missing/empty). ids stay real; only the labels change.
+func relabelScene(scene sceneInfo, labels map[string]string) sceneInfo {
+	out := scene
+	out.Present = make([]rosterEntry, len(scene.Present))
+	for i, r := range scene.Present {
+		if lbl, ok := labels[r.ID]; ok && lbl != "" {
+			r.Name = lbl
+		}
+		out.Present[i] = r
+	}
+	return out
+}
+
+// imminentLabel is the acting actor's label for one seat: the seat's display name for the player, or
+// the player id when unresolved (the prior fallback).
+func imminentLabel(labels map[string]string, playerID string) string {
+	if lbl, ok := labels[playerID]; ok && lbl != "" {
+		return lbl
+	}
+	return playerID
+}
+
 // loadScene builds the public frame: the location's name + tension, and the present roster
 // (name + id), ordered by id for determinism. Missing location_state → tension "none".
 func (o *Orchestrator) loadScene(ctx context.Context, worldID, locationID string, present []string) (sceneInfo, error) {

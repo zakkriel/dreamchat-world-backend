@@ -268,4 +268,62 @@ INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
  ('2ca40000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222'),
  ('2ca40000-0000-0000-0000-0000000000a1','210c0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222');
 
+-- ── §3 naming reach: per-viewer NAME KNOWLEDGE + DESCRIPTOR fallbacks (Defect C) ──────────
+-- The live founder-gate leak: canonical names reached the character-mind seats past knowledge paths
+-- (the narration named "Jonas" to Kade, who knows him only as "the muscle"; Jonas's wind-up named
+-- "Kade"). fn_display_name closes it — known-name (a viewer's own name-knowledge) else descriptor else
+-- canonical. Name knowledge is stored as chunk-4's identity substrate: a world_genesis-sourced
+-- perception, subject-linked to the named entity, HELD BY the viewer who knows the name (per-viewer, so
+-- Kade knowing "Mara" never grants Jonas or the hooded woman that name). Held by ONE viewer ⇒ private to
+-- that viewer's calls (fn_visible_perceptions is holder-keyed) — the wall holds by construction.
+--
+-- Who knows whose name (FINAL-drowned-lantern-souls.md): Kade knows Mara (five winters back). Mara and
+-- Jonas know each other as regulars would. Mara knows Kade ONLY privately — as "Reyna's brother", the
+-- name he had then, NOT the name he carries now (her secret cluster); NO public name record for Kade
+-- exists, so nobody in the room publicly knows his name. The hooded woman knows no one's name (she has
+-- a description of a courier, not a name), and no one knows hers — she stays "a hooded figure".
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         in_world_label, status, accepted_at, visibility_scope, origin) VALUES
+ ('2e000000-0000-0000-0000-0000000000e0','22222222-2222-2222-2222-222222222222','world_genesis',
+  'the harbor-quarter figures known to each other by name (per-viewer identity substrate)',25,0,
+  'Genesis','accepted',now(),'public','fast_path');
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
+ ('2e000000-0000-0000-0000-0000000000e0','2ac70000-0000-0000-0000-0000000000a1','actor','named'),
+ ('2e000000-0000-0000-0000-0000000000e0','2ac70000-0000-0000-0000-0000000000a2','actor','named'),
+ ('2e000000-0000-0000-0000-0000000000e0','2ac70000-0000-0000-0000-0000000000a3','actor','named'),
+ ('2e000000-0000-0000-0000-0000000000e0','2ac70000-0000-0000-0000-0000000000a4','actor','named');
+
+-- Name perceptions (content = the name the viewer knows; source = genesis; subject = the named entity).
+-- Fixed perception_ids (prefix 2a4e = "name"). Held per-viewer ⇒ each is that viewer's knowledge alone.
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
+                               epistemic_type, acquired_tick, valid_tick) VALUES
+ -- Kade knows Mara by name (five years ago).
+ ('2a4e0000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a1','2e000000-0000-0000-0000-0000000000e0','Mara','told',25,25),
+ -- Mara knows Jonas by name (regulars).
+ ('2a4e0000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a2','2e000000-0000-0000-0000-0000000000e0','Jonas','told',25,25),
+ -- Jonas knows Mara by name (regulars).
+ ('2a4e0000-0000-0000-0000-0000000000a3','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a3','2e000000-0000-0000-0000-0000000000e0','Mara','told',25,25),
+ -- Mara PRIVATELY knows Kade — as "Reyna's brother", the name he had then, not the one he carries now.
+ -- Held by Mara ALONE ⇒ only her own calls resolve it; the wall holds (part of her secret cluster).
+ ('2a4e0000-0000-0000-0000-0000000000a4','22222222-2222-2222-2222-222222222222',
+  '2ac70000-0000-0000-0000-0000000000a2','2e000000-0000-0000-0000-0000000000e0','Reyna''s brother','told',25,25);
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('2a4e0000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222'),
+ ('2a4e0000-0000-0000-0000-0000000000a2','2ac70000-0000-0000-0000-0000000000a3','22222222-2222-2222-2222-222222222222'),
+ ('2a4e0000-0000-0000-0000-0000000000a3','2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222'),
+ ('2a4e0000-0000-0000-0000-0000000000a4','2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222');
+
+-- DESCRIPTOR fallbacks (Tier-2 attrs.descriptor) — what a viewer with no name-knowledge sees. Via
+-- state_mutation (sm_project → actor_state), replay-safe (each (entity,path) written once). The three
+-- residents under the scene-genesis event f9 (tick 40); Kade under his arrival fa (tick 50).
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
+                            valid_from_tick, valid_from_seq) VALUES
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a2','actor','attrs.descriptor', to_jsonb('the keeper'::text),                    40,23),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a3','actor','attrs.descriptor', to_jsonb('the muscle by the bar'::text),         40,24),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a4','actor','attrs.descriptor', to_jsonb('a hooded figure'::text),               40,25),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.descriptor', to_jsonb('a young stranger, dark-haired'::text), 50,1);
+
 COMMIT;

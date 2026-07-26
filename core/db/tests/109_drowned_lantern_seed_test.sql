@@ -12,7 +12,7 @@
 -- Drowned Lantern (the play world is set up ready to open in the room).
 -- =====================================================================================
 BEGIN;
-SELECT plan(11);
+SELECT plan(17);
 
 -- Fixed seed uuids (must match seed_drowned_lantern.sql):
 --   world  22222222-…   Kade 2ac70000-…-a1   Mara …-a2   Jonas …-a3   hooded …-a4
@@ -123,6 +123,33 @@ SELECT is(
      AND world_id='22222222-2222-2222-2222-222222222222'),
   'Low beams, salt-rot, one hearth, a bar with a hatch, a back door to the alley.',
   '(j) the Drowned Lantern has its Tier-2 scene description in location_state');
+
+-- ── §3 naming reach in the play world (Defect C) — the founder-gate leak, closed ─────────────
+-- ids: Kade a1, Mara a2, Jonas a3, hooded a4.
+-- (k) Kade knows Mara's name (five winters back) — his display name for her is 'Mara'.
+SELECT is( fn_display_name('22222222-2222-2222-2222-222222222222',
+             '2ac70000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a2'),
+           'Mara', '(k) Kade''s view of Mara = her name (he knew her)');
+-- (l) Kade does NOT know Jonas — his display name for Jonas is the DESCRIPTOR, never the canonical name.
+SELECT is( fn_display_name('22222222-2222-2222-2222-222222222222',
+             '2ac70000-0000-0000-0000-0000000000a1','2ac70000-0000-0000-0000-0000000000a3'),
+           'the muscle by the bar', '(l) Kade''s view of Jonas = descriptor (he knows him only as the muscle)');
+-- (m) The founder-gate leak's other half: Jonas does NOT know Kade's name — never 'Kade'.
+SELECT isnt( fn_display_name('22222222-2222-2222-2222-222222222222',
+               '2ac70000-0000-0000-0000-0000000000a3','2ac70000-0000-0000-0000-0000000000a1'),
+             'Kade', '(m) Jonas''s view of Kade is NOT the canonical name ''Kade''');
+SELECT is( fn_display_name('22222222-2222-2222-2222-222222222222',
+             '2ac70000-0000-0000-0000-0000000000a3','2ac70000-0000-0000-0000-0000000000a1'),
+           'a young stranger, dark-haired', '(m) …it is Kade''s descriptor');
+-- (n) Mara PRIVATELY knows Kade — as "Reyna's brother", her knowledge alone; NO other viewer resolves it.
+SELECT is( fn_display_name('22222222-2222-2222-2222-222222222222',
+             '2ac70000-0000-0000-0000-0000000000a2','2ac70000-0000-0000-0000-0000000000a1'),
+           'Reyna''s brother', '(n) Mara''s view of Kade = her private name for him');
+-- (o) BATCH intersection over {Jonas, hooded}: neither knows Kade's name → the descriptor, never 'Kade'.
+SELECT is( fn_batch_display_name('22222222-2222-2222-2222-222222222222',
+             ARRAY['2ac70000-0000-0000-0000-0000000000a3','2ac70000-0000-0000-0000-0000000000a4']::uuid[],
+             '2ac70000-0000-0000-0000-0000000000a1'),
+           'a young stranger, dark-haired', '(o) batch {Jonas,hooded} labels Kade by descriptor (no batch mind knows his name)');
 
 SELECT * FROM finish();
 ROLLBACK;

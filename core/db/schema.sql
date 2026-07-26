@@ -680,6 +680,33 @@ $$;
 
 
 --
+-- Name: fn_batch_display_name(uuid, uuid[], uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_batch_display_name(p_world_id uuid, p_minds uuid[], p_entity_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  WITH names AS (
+    SELECT fn_perceived_name(p_world_id, m, p_entity_id) AS nm
+    FROM unnest(p_minds) AS m
+  ), agreed AS (
+    SELECT max(nm) AS nm
+    FROM names
+    HAVING cardinality(p_minds) > 0
+       AND count(*) = count(nm)          -- every mind resolved a name (no NULLs among the minds)
+       AND count(DISTINCT nm) = 1        -- and it is the SAME name for all of them
+  )
+  SELECT COALESCE(
+    (SELECT nm FROM agreed),
+    (SELECT ast.attrs->>'descriptor' FROM actor_state ast
+      WHERE ast.world_id = p_world_id AND ast.entity_id = p_entity_id),
+    (SELECT er.canonical_name FROM entity_registry er
+      WHERE er.world_id = p_world_id AND er.entity_id = p_entity_id)
+  );
+$$;
+
+
+--
 -- Name: fn_collected_knowledge(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -751,6 +778,29 @@ CREATE FUNCTION public.fn_compendium_index_json(p_world_id uuid, p_viewer_id uui
       (SELECT json_agg(json_build_object('id', entity_id, 'perceived_name', perceived_name)
                        ORDER BY entity_id)
        FROM fn_compendium_index(p_world_id, p_viewer_id, p_kind)), '[]'::json)
+  );
+$$;
+
+
+--
+-- Name: fn_display_name(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_display_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  -- The label an entity wears in ONE viewer's mind (§3). Known name (the viewer's own name-knowledge,
+  -- via fn_perceived_name — a world_genesis-sourced perception subject-linked to the entity that the
+  -- viewer holds) if any; else the entity's DESCRIPTOR (Tier-2 'descriptor' attr — what a stranger
+  -- sees, e.g. "the muscle by the bar"); else the canonical registry name (engine fallback; a seed lag,
+  -- never shown once descriptors are seeded). ids stay real at every call site — the model binds the
+  -- id, this is only the label the viewer's knowledge puts on it.
+  SELECT COALESCE(
+    fn_perceived_name(p_world_id, p_viewer_id, p_entity_id),
+    (SELECT ast.attrs->>'descriptor' FROM actor_state ast
+      WHERE ast.world_id = p_world_id AND ast.entity_id = p_entity_id),
+    (SELECT er.canonical_name FROM entity_registry er
+      WHERE er.world_id = p_world_id AND er.entity_id = p_entity_id)
   );
 $$;
 
@@ -832,6 +882,12 @@ CREATE FUNCTION public.fn_isolated_npcs(p_world_id uuid, p_action_ids uuid[], p_
     -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
     AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
     AND s.source_event_id IS NULL             -- private: no matching public face
+    -- name-knowledge is an identity substrate, not a secret: a world_genesis-sourced record must
+    -- never pull its holder isolated (§3; mirrors the fn_actor_page tripwire).
+    AND NOT EXISTS (
+      SELECT 1 FROM canon_event ce
+      WHERE ce.event_id = pr.source_event_id AND ce.event_type = 'world_genesis'
+    )
     AND EXISTS (
       SELECT 1 FROM perception_subject ps
       WHERE ps.perception_id = pr.perception_id
@@ -933,6 +989,12 @@ CREATE FUNCTION public.fn_private_records(p_world_id uuid, p_npc uuid, p_action_
       -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
       AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
       AND s.source_event_id IS NULL             -- private records only
+      -- name-knowledge is an identity substrate, not a secret: a world_genesis-sourced record must
+      -- never ride the private block (§3; mirrors the fn_actor_page tripwire).
+      AND NOT EXISTS (
+        SELECT 1 FROM canon_event ce
+        WHERE ce.event_id = pr.source_event_id AND ce.event_type = 'world_genesis'
+      )
       AND EXISTS (
         SELECT 1 FROM perception_subject ps
         WHERE ps.perception_id = pr.perception_id
@@ -2171,4 +2233,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260724110001'),
     ('20260724110002'),
     ('20260724110003'),
-    ('20260724110004');
+    ('20260724110004'),
+    ('20260726100001');

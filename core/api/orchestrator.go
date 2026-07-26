@@ -405,13 +405,10 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	if err != nil {
 		return res, fmt.Errorf("load scene: %w", err)
 	}
-	imminentActor := playerID
-	for _, r := range scene.Present {
-		if r.ID == playerID {
-			imminentActor = r.Name
-			break
-		}
-	}
+	// The scene roster + the imminent actor's label are relabeled PER SEAT (§3 naming reach): the batch
+	// shows a name only if every batch mind shares it (else a descriptor); each isolated NPC reads the
+	// room as SHE knows it. ids never change — only the labels the seat is shown. Computed at each call
+	// site below; `present` is the full roster to relabel.
 
 	localSeq := seq
 
@@ -425,16 +422,23 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 		if err != nil {
 			return res, fmt.Errorf("load batch minds: %w", err)
 		}
-		prompt := buildBatchPrompt(scene, minds, moment, imminentActor, attempt)
+		// Relabel the shared scene + imminent line by the batch intersection (§3/§5): a name appears
+		// only if EVERY batch mind knows the same one, else a descriptor.
+		bLabels, err := o.batchDisplayLabels(ctx, worldID, batchIDs, present)
+		if err != nil {
+			return res, fmt.Errorf("batch display labels: %w", err)
+		}
+		bImminent := imminentLabel(bLabels, playerID)
+		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt)
 		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 		// A Generate or decode failure degrades DULL (the batch minds do nothing this moment) but is
 		// no longer silent: log it so a mute room is diagnosable. Behavior unchanged — still skipped.
 		if genErr != nil {
-			log.Printf("worldFirst: batch cognition Generate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, imminentActor, genErr)
+			log.Printf("worldFirst: batch cognition Generate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, bImminent, genErr)
 		} else if decisions, decErr := DecodeAndValidateNPCDecisions(raw, batchIDs); decErr != nil {
 			// Validated against the BATCH ids only — a decision for an isolated NPC (or the player)
 			// is rejected by DecodeAndValidateNPCDecisions' allowlist (non-present-for-this-call).
-			log.Printf("worldFirst: batch cognition decode/validate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, imminentActor, decErr)
+			log.Printf("worldFirst: batch cognition decode/validate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, bImminent, decErr)
 		} else {
 			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
 			if applyErr != nil {
@@ -458,18 +462,24 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			if err != nil {
 				return res, fmt.Errorf("fn_private_records %s: %w", npcID, err)
 			}
-			prompt := buildIsolatedPrompt(scene, minds[0], private, moment, imminentActor, attempt)
+			// Relabel the scene + imminent line as THIS NPC knows it (§3): her own display names.
+			iLabels, err := o.displayLabels(ctx, worldID, npcID, present)
+			if err != nil {
+				return res, fmt.Errorf("isolated display labels %s: %w", npcID, err)
+			}
+			iImminent := imminentLabel(iLabels, playerID)
+			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt)
 			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 			// Degrade DULL (this secret-holder does nothing this moment) but observable — log the
 			// swallowed failure. Behavior unchanged: still a continue.
 			if genErr != nil {
-				log.Printf("worldFirst: isolated cognition Generate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, imminentActor, genErr)
+				log.Printf("worldFirst: isolated cognition Generate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, iImminent, genErr)
 				continue
 			}
 			// Validated against EXACTLY her own id — her call may speak only for her.
 			decisions, decErr := DecodeAndValidateNPCDecisions(raw, []string{npcID})
 			if decErr != nil {
-				log.Printf("worldFirst: isolated cognition decode/validate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, imminentActor, decErr)
+				log.Printf("worldFirst: isolated cognition decode/validate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, iImminent, decErr)
 				continue
 			}
 			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
