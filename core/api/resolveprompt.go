@@ -12,6 +12,13 @@ import (
 //go:embed prompts/resolve.txt
 var resolveSystemHeader string
 
+// resolveSpeechIsOwnEventMarker is the load-bearing substring of the dialogue-is-its-own-event
+// rule (founder gate: a referee ruling embedded an NPC's spoken reply inside another event's truth
+// text instead of emitting it as its own Communicated event — the narration belt then correctly
+// refused an unverifiable speech card, and her words rendered as unattributed world-prose). The
+// header carries it verbatim; the content test greps for it to prove the rule reaches the model.
+const resolveSpeechIsOwnEventMarker = "OWN Communicated event"
+
 // buildResolvePrompt renders the referee prompt. playerAnswer is empty on every call except a
 // reaction whose decompose emitted ZERO attempts — see the RULINGS-2026-07-24 §7 comment below.
 func buildResolvePrompt(slice string, set []ActorAttempt, repairErrs []string, playerAnswer string) string {

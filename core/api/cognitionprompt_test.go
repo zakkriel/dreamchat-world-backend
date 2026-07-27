@@ -43,6 +43,16 @@ func sampleImminent() Attempt {
 	return Attempt{Type: "Communicated", Stated: "I slip her the note", ListenerID: maraID, Content: "meet me at the dock"}
 }
 
+// Prompt-content pin: the founder-gate fix's minds-side half (companion to the referee's
+// dialogue-is-its-own-event rule in resolve.txt). A mind whose decision includes speaking words
+// must commit a Communicated attempt, never a quote folded into an ActorMoved's or
+// AttributeChanged's stated text. This test pins the rule marker reaches the cognition header.
+func TestCognitionSystemHeader_SpeakingIsItsOwnCommunicatedAttempt(t *testing.T) {
+	if !strings.Contains(cognitionSystemHeader, cognitionSpeechIsOwnAttemptMarker) {
+		t.Fatalf("cognition.txt missing the speaking-is-its-own-attempt rule marker %q — a mind's decision could still bury spoken words inside an ActorMoved/AttributeChanged stated text:\n%s", cognitionSpeechIsOwnAttemptMarker, cognitionSystemHeader)
+	}
+}
+
 // (a) Batch prompt: the five section markers in layout order.
 func TestBuildBatchPrompt_SectionOrder(t *testing.T) {
 	minds := []npcMind{{ID: jonasID, Name: "Jonas", Traits: json.RawMessage(`{"wary":0.7}`), Malleability: 0.4}}

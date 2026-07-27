@@ -68,6 +68,12 @@ type privateLine struct {
 //go:embed prompts/cognition.txt
 var cognitionSystemHeader string
 
+// cognitionSpeechIsOwnAttemptMarker is the load-bearing substring of the speaking-is-its-own-decision
+// rule (the founder-gate fix's minds-side half): when a mind's decision includes saying words aloud,
+// the attempt itself must be a Communicated attempt — never a quote embedded inside an ActorMoved's or
+// AttributeChanged's stated text. The header carries it verbatim; the content test greps for it.
+const cognitionSpeechIsOwnAttemptMarker = "OWN Communicated attempt"
+
 // buildBatchPrompt renders the SHARED batch payload — one call for every NPC whose read of the
 // moment needs nothing beyond what everyone perceived.
 //

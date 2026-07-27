@@ -55,6 +55,13 @@ var nothingResolvedHalts = map[string]bool{
 	"turn_budget":          true,
 }
 
+// narrateEmbeddedQuoteMarker is the load-bearing substring of the embedded-quotes-attribute rule
+// (founder gate: a perception embedded an NPC's quoted words inside another action's text with no
+// separate speech line — the narrator had folded the quote into anonymous narrator prose instead of
+// that NPC's own attributed ACTION segment). The header carries it verbatim; the content test greps
+// for it.
+const narrateEmbeddedQuoteMarker = "attributed ACTION segment"
+
 // narrateSegmentContractMarker delimits the base narrator rules from the structured-segment OUTPUT
 // contract inside narrate.txt. The structured path ships the whole header (rules + segment contract);
 // the PLAIN FALLBACK re-ask (buildNarratePlainPrompt, no schema) ships only the base rules plus a

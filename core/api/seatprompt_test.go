@@ -119,6 +119,16 @@ func TestBuildNarratePrompt_ZeroLinesSparseNoFabrication(t *testing.T) {
 	}
 }
 
+// Prompt-content pin: the founder-gate fix's narrator-side half. A perception embedded a PRESENT
+// person's quoted words inside another action's text with no separate speech line to verify them —
+// the narrator had folded the quote into anonymous narrator prose instead of that person's own
+// attributed ACTION segment. This test pins the rule marker reaches the narrate header.
+func TestNarrateSystemHeader_EmbeddedQuotesAttributeAsAction(t *testing.T) {
+	if !strings.Contains(narrateSystemHeader, narrateEmbeddedQuoteMarker) {
+		t.Fatalf("narrate.txt missing the embedded-quotes-attribute rule marker %q — a perception's embedded quote could still render as anonymous narrator prose:\n%s", narrateEmbeddedQuoteMarker, narrateSystemHeader)
+	}
+}
+
 // rosterOf returns the PRESENT roster slice of the rendered body (between PRESENT and the first
 // perception section), so a test can assert who is listed as present without matching the bodies.
 func rosterOf(body string) string {
