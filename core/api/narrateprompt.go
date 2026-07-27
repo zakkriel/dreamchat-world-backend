@@ -55,11 +55,28 @@ var nothingResolvedHalts = map[string]bool{
 	"turn_budget":          true,
 }
 
+// narrateSegmentContractMarker delimits the base narrator rules from the structured-segment OUTPUT
+// contract inside narrate.txt. The structured path ships the whole header (rules + segment contract);
+// the PLAIN FALLBACK re-ask (buildNarratePlainPrompt, no schema) ships only the base rules plus a
+// prose-only instruction, so a driver that could not produce valid segments still returns clean prose
+// (never a JSON blob) — the beat is never failed on formatting.
+const narrateSegmentContractMarker = "OUTPUT — STRUCTURED NARRATION SEGMENTS"
+
 // Text lives in prompts/narrate.txt (core/api/prompts/README.md) — every fixed prompt rulebook
-// readable in one place, config-style, mirroring the schema/*.json + go:embed pattern.
+// readable in one place, config-style, mirroring the schema/*.json + go:embed pattern. The founder
+// envelope added the segmenting contract ON TOP of the existing rules (all of them apply per segment).
 //
 //go:embed prompts/narrate.txt
 var narrateSystemHeader string
+
+// narrateBaseRules returns the base narrator rules — the header with the structured-segment OUTPUT
+// contract sliced off at narrateSegmentContractMarker. Used only by the plain-prose fallback.
+func narrateBaseRules() string {
+	if i := strings.Index(narrateSystemHeader, narrateSegmentContractMarker); i >= 0 {
+		return strings.TrimRight(narrateSystemHeader[:i], "\n ")
+	}
+	return narrateSystemHeader
+}
 
 // buildNarratePrompt assembles the narrate prompt: the bounding header, then PLACE (the location
 // candidate — with its scene description when the payload carries one), then the PRESENT roster (actor
@@ -90,13 +107,39 @@ var narrateSystemHeader string
 // empty AND haltReason is one of nothingResolvedHalts, a NOTHING RESOLVED section renders before the
 // perception blocks so the model is told nothing committed instead of inferring a scene from silence.
 func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
+	return narrateSystemHeader + narrateSceneBody(payload, viewerID, preIDs, haltReason)
+}
+
+// buildNarrateRepairPrompt is the ONE repair re-ask after a structured attempt failed the schema or the
+// belt (ghost speaker / non-verbatim speech): the same structured prompt with the exact violations
+// attached, mirroring the resolve seat's repair pattern. Still a structured (schema-carrying) call.
+func buildNarrateRepairPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason, prevErr string) string {
+	return buildNarratePrompt(payload, viewerID, preIDs, haltReason) +
+		"\n\nYOUR PREVIOUS ANSWER WAS REJECTED — fix exactly this and answer again with the segment array:\n" + prevErr
+}
+
+// buildNarratePlainPrompt is the FALLBACK re-ask after both structured attempts failed: base narrator
+// rules only (segment contract sliced off) plus a prose-only instruction, over the identical scene. It
+// is issued WITHOUT a schema so the model returns clean prose, which the handler wraps as a single
+// narration segment — the beat is never failed on formatting.
+func buildNarratePlainPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
+	return narrateBaseRules() +
+		"\n\nOutput is prose only: a single flowing narration — no JSON, no segments, no headings, no lists, no notes to the reader." +
+		narrateSceneBody(payload, viewerID, preIDs, haltReason)
+}
+
+// narrateSceneBody assembles everything after the header: PLACE, the PRESENT roster (each entry
+// "label [id]" so a segment can attribute speech/actions by id), YOU ARE, the NOTHING RESOLVED context,
+// and the delta-first WHAT JUST HAPPENED / RECENT BACKGROUND blocks. Shared verbatim by the structured,
+// repair, and plain-fallback prompts so the scene the model renders never changes between attempts.
+func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
 	var sb strings.Builder
-	sb.WriteString(narrateSystemHeader)
 
 	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'), with its
-	// Tier-2 description when present. PRESENT — actor names only, the VIEWER dropped (Defect A).
+	// Tier-2 description when present. PRESENT — "label [id]" per actor, the VIEWER dropped (Defect A);
+	// the id lets a speech/action segment attribute to a present NPC, never to the person narrated TO.
 	var place, placeDesc string
-	names := make([]string, 0, len(payload.Candidates))
+	entries := make([]string, 0, len(payload.Candidates))
 	for _, c := range payload.Candidates {
 		if c.Kind == "location" {
 			place = c.Name
@@ -106,7 +149,7 @@ func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[s
 		if c.ID == viewerID {
 			continue // the viewer is narrated TO, never listed as present WITH himself.
 		}
-		names = append(names, c.Name)
+		entries = append(entries, c.Name+" ["+c.ID+"]")
 	}
 	if place != "" {
 		sb.WriteString("\n\nPLACE: ")
@@ -119,7 +162,7 @@ func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[s
 	} else {
 		sb.WriteString("\n\nPRESENT: ")
 	}
-	sb.WriteString(strings.Join(names, ", "))
+	sb.WriteString(strings.Join(entries, ", "))
 
 	// YOU ARE — the viewer's own identity, rendered BETWEEN the PRESENT roster and the perception body.
 	// It lists how OTHERS may name or describe the viewer inside the perception text (his descriptor, and

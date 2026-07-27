@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "narration/1",
+  "title": "narration/1 — ordered narration segments: narrator prose plus attributed NPC speech and single-NPC actions",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["speaker_id", "kind", "text"],
+    "properties": {
+      "speaker_id": {"type": ["string", "null"], "format": "uuid"},
+      "kind": {"enum": ["narration", "speech", "action"]},
+      "text": {"type": "string", "minLength": 1}
+    },
+    "oneOf": [
+      {"properties": {"speaker_id": {"type": "null"}, "kind": {"const": "narration"}}},
+      {"properties": {"speaker_id": {"type": "string"}, "kind": {"enum": ["speech", "action"]}}}
+    ]
+  }
+}

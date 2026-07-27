@@ -200,17 +200,62 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	for _, id := range pre.LineIDs {
 		preIDs[id] = true
 	}
-	narration, err := h.bridge.Driver(SeatNarrate.Name).Generate(ctx,
-		GenRequest{Payload: post, Prompt: buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason)})
+
+	// Founder envelope: the narrate seat now emits an ORDERED list of typed segments (narrator prose +
+	// attributed NPC speech/actions), not one blob. presentIDs = the PRESENT roster the model sees (the
+	// ghost-speaker belt); labelFor = the VIEWER's display name per present id (reused from the payload
+	// candidates — fn_display_name results, never a canonical fallback beyond it). speechTexts = the
+	// verbatim-speech belt's evidence (this beat's Communicated perception contents, by speaker).
+	presentIDs, labelFor := narrateRoster(post, viewerID)
+	speechTexts, err := h.speechTexts(ctx, worldID, viewerID, startTick)
 	if err != nil {
-		http.Error(w, "narrate failed", http.StatusBadGateway)
-		return
+		log.Printf("narrate: speechTexts lookup failed (belt runs with no evidence): %v", err)
+		speechTexts = map[string][]string{} // fail toward repair, never crash the beat
 	}
+
+	// Structured narration with ONE repair (schema/belt failure → re-ask with the errors attached, the
+	// resolve-seat pattern), then a PLAIN prose fallback (no schema) wrapped as a single narrator segment
+	// — the beat is never failed on formatting.
+	nd := h.bridge.Driver(SeatNarrate.Name)
+	var segments []NarrationSegment
+	var lastErr error
+	for attempt := 0; attempt < 2; attempt++ {
+		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason)
+		if attempt > 0 && lastErr != nil {
+			prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error())
+		}
+		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
+		if genErr != nil {
+			log.Printf("narrate: structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
+			lastErr = genErr
+			continue
+		}
+		segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts)
+		if decErr != nil {
+			log.Printf("narrate: segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
+			lastErr = decErr
+			continue
+		}
+		segments = segs
+		break
+	}
+	if segments == nil {
+		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason)})
+		if genErr != nil {
+			log.Printf("narrate: plain fallback Generate failed: %v", genErr)
+			http.Error(w, "narrate failed", http.StatusBadGateway)
+			return
+		}
+		segments = []NarrationSegment{{Kind: "narration", Text: raw}}
+	}
+
+	messages, narration := narrateMessages(segments, labelFor)
 
 	w.Header().Set("Content-Type", "application/json")
 	resp, _ := json.Marshal(map[string]any{
-		"schema_version": "beat_result/2",
-		"narration":      narration,
+		"schema_version": "beat_result/3",
+		"narration":      narration, // legacy narrator-view fallback text — kept for old clients
+		"messages":       messages,
 		"result": map[string]any{
 			"committed":             outcome.Committed,
 			"halt_reason":           outcome.HaltReason,
@@ -221,6 +266,89 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	})
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp)
+}
+
+// beatMessage is one element of the founder-envelope `messages` list: an attributed, typed segment. The
+// speaker_label is the VIEWER's display name for the speaker (reused from the payload candidates —
+// fn_display_name results — never a canonical fallback beyond what fn_display_name already does); it is
+// empty for narrator segments (speaker_id null).
+type beatMessage struct {
+	SpeakerID    *string `json:"speaker_id"`
+	SpeakerLabel string  `json:"speaker_label"`
+	Kind         string  `json:"kind"`
+	Text         string  `json:"text"`
+}
+
+// narrateRoster returns (presentIDs, labelFor): the present-actor ids the narrate prompt lists (the
+// ghost-speaker belt's allow-set) and each id's VIEWER-facing display name (the candidate Name, already
+// fn_display_name). The location candidate and the viewer himself are excluded — a segment is never
+// attributed to the person narrated TO, and the place is not a speaker.
+func narrateRoster(payload PerceptionPayload, viewerID string) ([]string, map[string]string) {
+	present := make([]string, 0, len(payload.Candidates))
+	labelFor := make(map[string]string, len(payload.Candidates))
+	for _, c := range payload.Candidates {
+		if c.Kind == "location" || c.ID == viewerID {
+			continue
+		}
+		present = append(present, c.ID)
+		labelFor[c.ID] = c.Name
+	}
+	return present, labelFor
+}
+
+// narrateMessages projects decoded segments into the response `messages` list (attaching each speaker's
+// viewer-facing label) AND the legacy `narration` string — a joined narrator-view: narrator/action text
+// as-is, speech quoted under its label. The legacy string stays populated so old clients keep working.
+func narrateMessages(segments []NarrationSegment, labelFor map[string]string) ([]beatMessage, string) {
+	messages := make([]beatMessage, 0, len(segments))
+	view := make([]string, 0, len(segments))
+	for _, s := range segments {
+		m := beatMessage{SpeakerID: s.SpeakerID, Kind: s.Kind, Text: s.Text}
+		if s.SpeakerID != nil {
+			m.SpeakerLabel = labelFor[*s.SpeakerID]
+		}
+		messages = append(messages, m)
+		if s.Kind == "speech" && m.SpeakerLabel != "" {
+			view = append(view, m.SpeakerLabel+`: "`+s.Text+`"`)
+		} else {
+			view = append(view, s.Text)
+		}
+	}
+	return messages, strings.Join(view, "\n\n")
+}
+
+// speechTexts is the verbatim-speech belt's evidence: every Communicated perception content the viewer
+// holds THIS BEAT (acquired_tick >= the beat's start tick — the delta), keyed by the SPEAKER of that
+// event. Extraction note (documented honestly): the perception content is the line the engine wrote for
+// a Communicated event — apply_event writes the canon summary (the spoken 'stated'); apply_ruled_event
+// writes COALESCE(receiver-variant, appearance, truth). Either way the spoken words ride inside the
+// perception content the viewer actually sees, so DecodeAndValidateNarration substring-matches a speech
+// segment's text against these strings — the exact-words test that rejects narrator paraphrase. Both the
+// non-legacy 'Communicated' label (the orchestrator's path, p_legacy_types=false) and the legacy
+// 'private_disclosure' label are matched, defensively.
+func (h *beatHandler) speechTexts(ctx context.Context, worldID, viewerID string, sinceTick int64) (map[string][]string, error) {
+	rows, err := h.pool.Query(ctx,
+		`SELECT ep.entity_id::text, pr.content
+		   FROM perception_record pr
+		   JOIN canon_event ce ON ce.event_id = pr.source_event_id AND ce.world_id = pr.world_id
+		   JOIN event_participant ep ON ep.event_id = ce.event_id AND ep.role_qualifier = 'speaker'
+		  WHERE pr.world_id = $1 AND pr.holder_id = $2
+		    AND ce.event_type IN ('Communicated', 'private_disclosure')
+		    AND pr.acquired_tick >= $3`,
+		worldID, viewerID, sinceTick)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string][]string{}
+	for rows.Next() {
+		var speaker, content string
+		if err := rows.Scan(&speaker, &content); err != nil {
+			return nil, err
+		}
+		out[speaker] = append(out[speaker], content)
+	}
+	return out, rows.Err()
 }
 
 // v1 recency dials (RULINGS-2026-07-23 §10 — "nothing is ever unreachable; not everything is always

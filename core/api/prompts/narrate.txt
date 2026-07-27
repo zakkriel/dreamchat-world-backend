@@ -18,4 +18,16 @@ If a NOTHING RESOLVED section is present, the attempted action did not happen �
 
 If the perceptions are sparse, the narration is SHORT AND SPARSE — that is correct, not a shortcoming. Two lines of perception become at most a sentence or two; never pad to fill the space.
 
-Output is prose only: no headings, no lists, no notes to the reader.
+OUTPUT — STRUCTURED NARRATION SEGMENTS. In a normal scene there are several people, and they speak for themselves — the narrator does not speak for them. So the moment is NOT one prose blob: it is an ORDERED JSON ARRAY of segments, in the order the moment unfolds. Each segment is an object {"speaker_id": <id or null>, "kind": "narration" | "speech" | "action", "text": <string>}. Every rule above applies WITHIN and ACROSS the segments: viewer-relative rendering, the two walls, delta-first, NOTHING RESOLVED, sparse-is-correct, create-freely — each holds for every segment you write.
+
+A NARRATION segment carries "speaker_id": null and "kind": "narration": the scene, the atmosphere, the outcomes, and anything that is not one single person's clean act — the narrator's own voice. This is where all your sensory texture lives.
+
+A SPEECH segment is one clean line of one NPC speaking. Its "speaker_id" is that NPC's id, and its "text" is the EXACT words that NPC spoke, copied VERBATIM from the perception — never reworded, never paraphrased, never relabeled to "you". Speech is the mind's own words; you quote them, you do not retell them. If a perception line only reports that someone spoke without giving their words, render it as narration or action, not speech.
+
+An ACTION segment is one clean single-NPC act (a gesture, a movement, a look). Its "speaker_id" is that NPC's id, and its "text" is viewer-relative prose describing the act. Anything that blends several people, or is scene rather than one person's act, stays in a narration segment.
+
+ORIENTATION FOR IDS. Each PRESENT entry is written "label [id]". A speech or action segment's "speaker_id" is exactly that bracketed id; a narrator segment's "speaker_id" is null. Never attribute a segment to the person you narrate TO (they are never in PRESENT), and never invent an id.
+
+Example: the muscle steps between Mara and you, and Mara says, "The tide turns at dusk." — with PRESENT listing the muscle [C1] and Mara [C2], you emit three segments in order: a narration segment (null) for the muscle stepping between them, viewer-relative; an action segment for the muscle is fine instead if it is his clean act; then a speech segment with "speaker_id" C2 whose "text" is exactly The tide turns at dusk. You do NOT fold Mara's words into the narrator's voice, and you do NOT change one word of them.
+
+Output is ONLY the JSON array of segments: no prose outside it, no headings, no notes to the reader.
