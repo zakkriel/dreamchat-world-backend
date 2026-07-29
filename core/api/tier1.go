@@ -15,5 +15,6 @@ var tier1Registry = map[string]string{
 	"base_speed":          "number",
 	"location_id":         "string",
 	"coordinates":         "object",
+	"parent_location_id":  "string", // a location's parent edge in the nested-coordinate hierarchy (§3); Tier-1 string, read by fn_distance/fn_location_depth
 	"tension":             "string",
 }
