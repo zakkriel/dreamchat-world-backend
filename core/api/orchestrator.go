@@ -5,14 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"math"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// beatTickCap is the chain budget backstop: a beat may advance the clock at most this many ticks (parity with the retired apply_beat parameter).
-const beatTickCap = 1000
+// The flat beatTickCap=1000 backstop is retired: the REAL beat budget is now the tension-derived
+// seconds (FINAL-action-contracts.md §6), read at beat start and consumed CUMULATIVELY across the
+// chain (see runChain's ActorMoved clock stage and tension.go). A move whose duration exceeds the
+// remaining budget REJECTs and does not commit — the prefix stands. Only a belt-and-suspenders
+// runaway/overflow guard survives (dur > MaxInt64-curTick), which also catches the speed-0
+// "blocked by arithmetic" sentinel (§2) even under `none` (∞), where the budget alone never fires.
 
 // Orchestrator runs the five-stage per-attempt loop for a beat.
 // Stage 1: World-first hook (CognitionBatch) — NPC decisions.
@@ -65,7 +70,13 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		UnresolvedCandidates: []string{},
 		Telegraphs:           []string{},
 	}
-	if err := o.runChain(ctx, worldID, actorID, chain, startTick, 0, &outcome); err != nil {
+	// §6: the beat's cumulative time budget is derived from the scene's CURRENT tension at beat
+	// start (measured at ask-time, never stored). An unset scene reads 'none' → ∞ and never halts.
+	budgetRemaining, err := o.beatBudgetSeconds(ctx, worldID, actorID)
+	if err != nil {
+		return outcome, fmt.Errorf("beat budget: %w", err)
+	}
+	if err := o.runChain(ctx, worldID, actorID, chain, startTick, 0, budgetRemaining, &outcome); err != nil {
 		return outcome, err
 	}
 	return outcome, nil
@@ -80,7 +91,13 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 // This is the identical five-stage loop RunBeat always ran; extracting it is a pure refactor for
 // the existing path so RunReactionBeat can run "a normal chain against the post-collision world"
 // (RULINGS-2026-07-24 §2) through the very same code.
-func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, outcome *BeatOutcome) error {
+//
+// budgetRemaining is the tension-derived beat budget in seconds (§6), consumed CUMULATIVELY: each
+// ActorMoved subtracts its real duration, and a move whose duration exceeds what remains halts the
+// chain (turn_budget) WITHOUT committing — the prefix stands. `none` passes ∞ (math.MaxInt64), so it
+// never blocks. Non-move steps have no computable duration in v1 and consume 0 (Way-A long-action
+// accumulation is a later station, §6).
+func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, budgetRemaining int64, outcome *BeatOutcome) error {
 	curTick := startTick
 	curSeq := startSeq
 
@@ -145,6 +162,26 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				return fmt.Errorf("actor location (pre-move): %w", err)
 			}
 
+			// ── §6 tension budget: a move must FIT the remaining beat budget BEFORE it commits ──────
+			// Compute the move's real, status-aware duration up front (§2: distance(from,to) /
+			// effective_speed(actor,'walk'); a -100% modifier → speed 0 → max-bigint sentinel). If it
+			// exceeds what remains, the chain halts turn_budget and this move does NOT commit — the
+			// prefix stands (§6 example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects).
+			// The runaway/overflow guard (dur > MaxInt64-curTick) is belt-and-suspenders and, under
+			// `none` (∞ budget) where the first clause never fires, still catches the speed-0 sentinel.
+			var dur int64
+			if attempt.Type == "ActorMoved" {
+				dur, err = o.fnMoveDurationActor(ctx, worldID, actorID, fromLoc, attempt.ToLocationID)
+				if err != nil {
+					return fmt.Errorf("fn_move_duration_actor: %w", err)
+				}
+				if dur > budgetRemaining || dur > math.MaxInt64-curTick {
+					outcome.HaltReason = "turn_budget"
+					outcome.TicksAdvanced = curTick - startTick
+					return nil
+				}
+			}
+
 			attemptJSONBytes, _ := json.Marshal(attempt)
 			result, err := o.applyEvent(ctx, worldID, actorID, attemptJSONBytes, curTick, curSeq)
 			if err != nil {
@@ -160,15 +197,9 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				outcome.Committed = append(outcome.Committed, evID)
 			}
 
-			// Stage 4: Advance clock after passthrough.
+			// Stage 4: advance the clock + consume the budget after a committed passthrough.
 			if attempt.Type == "ActorMoved" {
-				// Real, status-aware duration (§2): distance(from,to) / effective_speed(actor,'walk').
-				// The moving actor supplies the speed/statuses; a -100% modifier (encumbered/tied) →
-				// speed 0 → max-bigint duration → the turn-budget backstop halts (blocked by arithmetic).
-				dur, durErr := o.fnMoveDurationActor(ctx, worldID, actorID, fromLoc, attempt.ToLocationID)
-				if durErr != nil {
-					return fmt.Errorf("fn_move_duration_actor: %w", durErr)
-				}
+				budgetRemaining -= dur // cumulative consumption (§6); under `none` it stays effectively unbounded
 				curTick += dur
 				if dur > 0 {
 					// The clock advanced to a fresh tick — seq restarts at 0.
@@ -178,13 +209,8 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 					// incrementing or the next event collides with the move on (tick,seq).
 					curSeq++
 				}
-				// Backstop: turn budget check.
-				if curTick-startTick > beatTickCap {
-					outcome.HaltReason = "turn_budget"
-					outcome.TicksAdvanced = curTick - startTick
-					return nil
-				}
 			} else {
+				// Non-move passthrough: no computable duration in v1 → consumes 0 budget.
 				curSeq++
 			}
 
@@ -320,9 +346,15 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		return outcome, nil
 	}
 
-	// (3) The remainder runs as a normal chain against the post-collision world.
+	// (3) The remainder runs as a normal chain against the post-collision world — under the same §6
+	// beat budget, read from the scene's current tension at the reaction player's location. The
+	// combined ruling advanced seq only (tick unchanged), so the remainder shares the beat's budget.
 	if len(chain) > 1 {
-		if err := o.runChain(ctx, worldID, playerID, chain[1:], startTick, ar.SeqAdvance, &outcome); err != nil {
+		budgetRemaining, err := o.beatBudgetSeconds(ctx, worldID, playerID)
+		if err != nil {
+			return outcome, fmt.Errorf("reaction beat budget: %w", err)
+		}
+		if err := o.runChain(ctx, worldID, playerID, chain[1:], startTick, ar.SeqAdvance, budgetRemaining, &outcome); err != nil {
 			return outcome, err
 		}
 		return outcome, nil
