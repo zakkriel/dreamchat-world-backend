@@ -898,6 +898,51 @@ $$;
 
 
 --
+-- Name: fn_effective_speed(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_effective_speed(p_world_id uuid, p_actor uuid, p_movement_type text DEFAULT 'walk'::text) RETURNS numeric
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_base   numeric;
+  v_factor numeric := 1;
+  v_pct    numeric;
+BEGIN
+  SELECT base_speed_mps INTO v_base
+  FROM movement_type
+  WHERE world_id = p_world_id AND movement_type_id = p_movement_type;
+
+  IF v_base IS NULL THEN
+    RETURN NULL;   -- movement type not minted for this world; mint ordering is upstream (§8), not here.
+  END IF;
+
+  -- Multiply in every ACTIVE-status modifier for this movement type. status_modifier's PK is
+  -- (world, status, action, movement_type) so at most one factor per active status. -30% => x0.70 (§2);
+  -- modifiers stack multiplicatively.
+  FOR v_pct IN
+    SELECT sm.modifier_percent
+    FROM status_modifier sm
+    WHERE sm.world_id         = p_world_id
+      AND sm.movement_type_id = p_movement_type
+      AND sm.action_type      = 'move'
+      AND sm.status_type_id IN (
+        SELECT jsonb_array_elements_text(
+          COALESCE((SELECT attrs->'statuses' FROM actor_state
+                    WHERE world_id = p_world_id AND entity_id = p_actor), '[]'::jsonb))
+      )
+  LOOP
+    v_factor := v_factor * (1 + v_pct / 100.0);
+  END LOOP;
+
+  -- Floor at 0 (a -100% modifier => factor 0 => speed 0). NO upper cap.
+  -- Worked example: walk 1.4 x baby(-90%) x trained(+20%) x limping(-30%)
+  --               = 1.4 x 0.10 x 1.20 x 0.70 = 0.1176 m/s.
+  RETURN GREATEST(v_base * v_factor, 0);
+END $$;
+
+
+--
 -- Name: fn_entity_visible(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1011,12 +1056,26 @@ $$;
 --
 
 CREATE FUNCTION public.fn_move_duration(p_world_id uuid, p_from uuid, p_to uuid) RETURNS bigint
-    LANGUAGE sql IMMUTABLE
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CEIL(fn_distance(p_world_id, p_from, p_to) / 1.4)::bigint;
+$$;
+
+
+--
+-- Name: fn_move_duration_actor(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_move_duration_actor(p_world_id uuid, p_actor uuid, p_from uuid, p_to uuid) RETURNS bigint
+    LANGUAGE sql STABLE
     AS $$
   SELECT CASE
-           WHEN p_from = p_to THEN 0
-           ELSE 5   -- flat default for the thin-slice fixture map (SPEC-018 spatial engine deferred)
-         END::bigint;
+    WHEN COALESCE(fn_effective_speed(p_world_id, p_actor, 'walk'), 0) <= 0
+      THEN 9223372036854775807::bigint   -- infinite duration: blocked by arithmetic (§2), not a branch
+    ELSE CEIL(
+      fn_distance(p_world_id, p_from, p_to) / fn_effective_speed(p_world_id, p_actor, 'walk')
+    )::bigint
+  END;
 $$;
 
 
@@ -2356,4 +2415,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260724110003'),
     ('20260724110004'),
     ('20260726100001'),
-    ('20260729100001');
+    ('20260729100001'),
+    ('20260729100002');

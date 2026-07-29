@@ -5,8 +5,19 @@ SELECT plan(8);
 -- [say to Mara, move to square-uuid]. The say-gate is an EXISTS(Mara ∈ actors_at(tavern-uuid)) check;
 -- the move→square-uuid discovery is empty (Player left square via the setup), so no move-discovery rows.
 INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111','location','test-district-95'),
  ('e5ffffff-0000-0000-0000-000000000010','11111111-1111-1111-1111-111111111111','location','test-tavern-95'),
  ('e5ffffff-0000-0000-0000-000000000011','11111111-1111-1111-1111-111111111111','location','test-square-95');
+-- Station F / §2: fn_move_duration is now CEIL(fn_distance / 1.4), so the two locations need a real §3
+-- geometry (sibling children of a district, each with a coordinate). 7 m apart → CEIL(7/1.4) = 5 ticks:
+-- the same 5 this beat has always used for tavern→square, now honestly derived from distance/speed.
+INSERT INTO location_state (entity_id, world_id, attrs) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111',
+  '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+ ('e5ffffff-0000-0000-0000-000000000010','11111111-1111-1111-1111-111111111111',
+  '{"coordinates":{"x":0,"y":0},"parent_location_id":"e5ffffff-0000-0000-0000-0000000000d1"}'::jsonb),
+ ('e5ffffff-0000-0000-0000-000000000011','11111111-1111-1111-1111-111111111111',
+  '{"coordinates":{"x":7,"y":0},"parent_location_id":"e5ffffff-0000-0000-0000-0000000000d1"}'::jsonb);
 
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          status, accepted_at, visibility_scope, origin) VALUES
@@ -56,7 +67,7 @@ SELECT is((SELECT count(*) FROM fn_visible_perceptions('11111111-1111-1111-1111-
                                                        'cccccccc-cccc-cccc-cccc-cccccccccccc') v
            JOIN canon_event ce ON ce.event_id=v.source_event_id WHERE ce.in_world_tick>=500)::int,
           0, 'I-3: Jonas perceives nothing from the beat (validated through fn_visible_perceptions)');
--- action-driven clock: say(0) + move tavern→square(5) → 2 events in distinct (tick,beat_seq) slots.
+-- action-driven clock: say(0) + move tavern→square(CEIL(7/1.4)=5) → 2 events in distinct (tick,beat_seq) slots.
 SELECT is((SELECT count(DISTINCT (in_world_tick, beat_seq)) FROM canon_event
            WHERE world_id='11111111-1111-1111-1111-111111111111' AND in_world_tick>=500)::int,
           2, 'both committed events occupy distinct (tick, beat_seq) slots (ADR-034)');

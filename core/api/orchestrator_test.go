@@ -8,13 +8,21 @@ import (
 
 // Stable test UUIDs for orchestrator tests — not in entity_registry (we insert them).
 const (
-	locA   = "f1000000-0000-0000-0000-000000000001"
-	locB   = "f1000000-0000-0000-0000-000000000002"
-	doorID = "f1000000-0000-0000-0000-000000000003"
+	locA     = "f1000000-0000-0000-0000-000000000001"
+	locB     = "f1000000-0000-0000-0000-000000000002"
+	doorID   = "f1000000-0000-0000-0000-000000000003"
+	district = "f1000000-0000-0000-0000-000000000004"
 )
 
-// seedOrchestratorEntities inserts entity_registry rows for the orchestrator tests.
+// seedOrchestratorEntities inserts entity_registry rows for the orchestrator tests, plus the §3 space
+// geometry and the seeded walk movement type that the real move-duration arithmetic needs.
 // ON CONFLICT DO NOTHING so re-runs are safe.
+//
+// Station F / §2: fn_move_duration_actor = CEIL(fn_distance(from,to) / effective_speed(actor,'walk')).
+// locA and locB are sibling children of a district, 7 m apart → CEIL(7/1.4) = 5 — the same 5 ticks the
+// orchestrator has always charged a locA→locB move, now honestly derived from distance/speed. walk=1.4
+// must be seeded for this world (fn_effective_speed reads movement_type; the pre-Station-F Mara seed
+// never planted it).
 func seedOrchestratorEntities(t *testing.T, ctx context.Context) {
 	t.Helper()
 	pool := testPool(t)
@@ -23,16 +31,38 @@ func seedOrchestratorEntities(t *testing.T, ctx context.Context) {
 		VALUES
 		  ($1, $2, 'location', 'orch-loc-A'),
 		  ($3, $2, 'location', 'orch-loc-B'),
-		  ($4, $2, 'artifact', 'orch-door')
+		  ($4, $2, 'artifact', 'orch-door'),
+		  ($5, $2, 'location', 'orch-district')
 		ON CONFLICT (entity_id) DO NOTHING`,
-		locA, worldID, locB, doorID)
+		locA, worldID, locB, doorID, district)
 	if err != nil {
 		t.Fatalf("seed orchestrator entities: %v", err)
+	}
+	// §3 geometry: district (root) with locA {0,0} and locB {7,0} as children → distance 7 m.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO location_state (entity_id, world_id, attrs)
+		VALUES
+		  ($4, $1, '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+		  ($2, $1, jsonb_build_object('coordinates', jsonb_build_object('x',0,'y',0), 'parent_location_id', $4::text)),
+		  ($3, $1, jsonb_build_object('coordinates', jsonb_build_object('x',7,'y',0), 'parent_location_id', $4::text))
+		ON CONFLICT (entity_id) DO NOTHING`,
+		worldID, locA, locB, district)
+	if err != nil {
+		t.Fatalf("seed orchestrator location geometry: %v", err)
+	}
+	// Seeded default movement type for this world (§2): walk, 1.4 m/s.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO movement_type (world_id, movement_type_id, base_speed_mps)
+		VALUES ($1, 'walk', 1.4)
+		ON CONFLICT (world_id, movement_type_id) DO NOTHING`,
+		worldID)
+	if err != nil {
+		t.Fatalf("seed orchestrator walk movement_type: %v", err)
 	}
 }
 
 // TestRunBeatPassthroughAndAdjudicated verifies the full five-stage orchestrator loop:
-//   - ActorMoved (passthrough via apply_event): committed + ticks_advanced=5
+//   - ActorMoved (passthrough via apply_event): committed + ticks_advanced=5 (CEIL(7m/1.4) derived)
 //   - AttributeChanged x2 (adjudicated via FakeResolveDriver): committed
 //   - halt_reason="completed", len(Committed)>=3
 func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
@@ -93,7 +123,7 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 		WorldActor:     NewFakeWorldActorDriver(),
 	}
 
-	// Chain: player at locA moves to locB (ActorMoved → passthrough, ticks+5),
+	// Chain: player at locA moves to locB (ActorMoved → passthrough, ticks+CEIL(7/1.4)=5),
 	// then two AttributeChanged on doorID (adjudicated).
 	chain := []Attempt{
 		{
@@ -125,7 +155,7 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 		t.Fatalf("halt_reason = %q, want %q", outcome.HaltReason, "completed")
 	}
 	if outcome.TicksAdvanced != 5 {
-		t.Fatalf("ticks_advanced = %d, want 5 (one ActorMoved between different locations)", outcome.TicksAdvanced)
+		t.Fatalf("ticks_advanced = %d, want 5 (one locA→locB move: CEIL(7m / 1.4 m/s) = 5)", outcome.TicksAdvanced)
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
@@ -354,7 +384,7 @@ func TestRunBeatZeroDurationMoveKeepsSeqMonotonic(t *testing.T) {
 	}
 
 	// Position player AND Mara at locA: the Communicated listener must be co-located, and the player
-	// must already be at locA so the move to locA is same-location → fn_move_duration(locA,locA)=0.
+	// must already be at locA so the move to locA is same-location → fn_move_duration_actor(...,locA,locA)=CEIL(0/1.4)=0.
 	_, err := pool.Exec(ctx, `
 		WITH ev1 AS (
 		  INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)

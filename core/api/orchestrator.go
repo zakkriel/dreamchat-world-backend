@@ -18,7 +18,7 @@ const beatTickCap = 1000
 // Stage 1: World-first hook (CognitionBatch) — NPC decisions.
 // Stage 2: Premise re-check (deterministic, generalized) — premiseHolds over all six types.
 // Stage 3: Route — passthrough (apply_event) or adjudicate (Resolve driver).
-// Stage 4: Advance clock — ActorMoved adds fn_move_duration ticks; others add seq.
+// Stage 4: Advance clock — ActorMoved adds fn_move_duration_actor ticks; others add seq.
 // Stage 5: UNRESOLVED sentinel — halt immediately with candidate list.
 type Orchestrator struct {
 	DB                *pgxpool.Pool
@@ -162,9 +162,12 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 
 			// Stage 4: Advance clock after passthrough.
 			if attempt.Type == "ActorMoved" {
-				dur, durErr := o.fnMoveDuration(ctx, worldID, fromLoc, attempt.ToLocationID)
+				// Real, status-aware duration (§2): distance(from,to) / effective_speed(actor,'walk').
+				// The moving actor supplies the speed/statuses; a -100% modifier (encumbered/tied) →
+				// speed 0 → max-bigint duration → the turn-budget backstop halts (blocked by arithmetic).
+				dur, durErr := o.fnMoveDurationActor(ctx, worldID, actorID, fromLoc, attempt.ToLocationID)
 				if durErr != nil {
-					return fmt.Errorf("fn_move_duration: %w", durErr)
+					return fmt.Errorf("fn_move_duration_actor: %w", durErr)
 				}
 				curTick += dur
 				if dur > 0 {
@@ -729,15 +732,17 @@ func (o *Orchestrator) fnActorsAt(ctx context.Context, worldID, locationID strin
 	return ids, rows.Err()
 }
 
-// fnMoveDuration calls fn_move_duration(world, from, to) and returns the tick count.
-func (o *Orchestrator) fnMoveDuration(ctx context.Context, worldID, fromLoc, toLoc string) (int64, error) {
+// fnMoveDurationActor calls fn_move_duration_actor(world, actor, from, to) and returns the tick count.
+// The actor supplies the effective speed (movement type + active statuses); distance is between the two
+// locations. Speed 0 (e.g. encumbered, -100%) → max bigint, so an impossible move never fits the budget.
+func (o *Orchestrator) fnMoveDurationActor(ctx context.Context, worldID, actorID, fromLoc, toLoc string) (int64, error) {
 	if fromLoc == "" || toLoc == "" {
 		return 0, nil
 	}
 	var dur int64
 	err := o.DB.QueryRow(ctx,
-		`SELECT fn_move_duration($1, $2::uuid, $3::uuid)`,
-		worldID, fromLoc, toLoc).Scan(&dur)
+		`SELECT fn_move_duration_actor($1, $2::uuid, $3::uuid, $4::uuid)`,
+		worldID, actorID, fromLoc, toLoc).Scan(&dur)
 	return dur, err
 }
 
