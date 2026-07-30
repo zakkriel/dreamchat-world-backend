@@ -82,9 +82,23 @@ type RuledEventV2 struct {
 	ObjectID   string `json:"object_id,omitempty"`
 	DestKind   string `json:"dest_kind,omitempty"`
 	DestID     string `json:"dest_id,omitempty"`
-	TargetID   string `json:"target_id,omitempty"`
+	TargetID   string `json:"target_id,omitempty"` // OwnershipAccessChanged/EntityDestroyed/AttributeChanged target; EntityCreated: the NEW entity's (LLM-minted) id
 	GranteeID  string `json:"grantee_id,omitempty"`
+	// EntityCreated (Station F Task 9): a ruled create expresses the new instance so the commit can
+	// persist it — an entity_registry row + positioned state. target_id above is the new id (the ONE
+	// case the verdict admits a not-in-slice id — a true introduction, §8). descriptor is MANDATORY
+	// (the true-introduction key AND the reuse-before-create match key, §5.4). new_attrs is the initial
+	// state blob: coordinates + Tier-1 measurements (size/weight/location_id/…). Empty on every other type.
+	NewEntityKind string          `json:"new_entity_kind,omitempty"` // actor | artifact | location
+	Descriptor    string          `json:"descriptor,omitempty"`
+	CanonicalName string          `json:"canonical_name,omitempty"` // display name; falls back to descriptor
+	NewAttrs      json.RawMessage `json:"new_attrs,omitempty"`
 }
+
+// entityKindSet is the closed set of instance kinds an EntityCreated may mint — exactly the kinds
+// apply_mutation can project into a <kind>_state row (§3 decision 2). Not 'relationship' (no coordinate
+// addressing) and nothing invented.
+var entityKindSet = map[string]bool{"actor": true, "artifact": true, "location": true}
 
 // ReceiverVariant grants a specific perceiver a sharper or duller read of a ruled event.
 type ReceiverVariant struct {
@@ -117,6 +131,18 @@ func validateRuledEventFields(i int, e RuledEventV2) error {
 		if e.TargetID == "" {
 			return fmt.Errorf("event %d %s requires target_id", i, e.Type)
 		}
+	case "EntityCreated":
+		// A ruled create must be EXPRESSIBLE (else it is inert): the new id (target_id), the kind, and a
+		// MANDATORY descriptor (§8 true introduction; also the reuse-before-create match key, §5.4).
+		if e.TargetID == "" {
+			return fmt.Errorf("event %d EntityCreated requires target_id (the new entity's id)", i)
+		}
+		if !entityKindSet[e.NewEntityKind] {
+			return fmt.Errorf("event %d EntityCreated new_entity_kind %q not in actor|artifact|location", i, e.NewEntityKind)
+		}
+		if e.Descriptor == "" {
+			return fmt.Errorf("event %d EntityCreated requires a descriptor (true introduction, §8)", i)
+		}
 	}
 	return nil
 }
@@ -128,6 +154,7 @@ var allowedRuledEventTypes = map[string]bool{
 	"Communicated":           true,
 	"ObjectRelocated":        true,
 	"OwnershipAccessChanged": true,
+	"EntityCreated":          true, // Station F Task 9: a ruled create now persists a real entity (was inert)
 	"EntityDestroyed":        true,
 	"AttributeChanged":       true,
 }

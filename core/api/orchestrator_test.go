@@ -481,6 +481,102 @@ func TestRunBeatZeroDurationMoveKeepsSeqMonotonic(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
 }
 
+// inlineRulingResolveDriver returns a fixed ruling/2 JSON for CI — used to script a specific ruled
+// outcome (here, an EntityCreated) through the real adjudicate → verdict → commit path.
+type inlineRulingResolveDriver struct{ json string }
+
+func (f *inlineRulingResolveDriver) Name() string { return "inline-ruling-resolve" }
+func (f *inlineRulingResolveDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (f *inlineRulingResolveDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("inline-ruling-resolve: used without schema")
+	}
+	return f.json, nil
+}
+
+// TestRunBeatEntityCreatedRoutesAndCommits — Station F Task 9: a ruling emitting EntityCreated routes
+// through adjudicate (EntityCreated is adjudicated, not passthrough — §7), its LLM-minted new id is NOT
+// a whitelist violation (the one true-introduction opening, §8), and the commit persists a real
+// entity_registry row with provenance (created_by_event). "When it resolves it updates it all" (founder).
+func TestRunBeatEntityCreatedRoutesAndCommits(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	seedOrchestratorEntities(t, ctx)
+
+	var baseTick int64
+	if err := pool.QueryRow(ctx,
+		`SELECT GREATEST(COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1,64000)`,
+		worldID).Scan(&baseTick); err != nil {
+		t.Fatalf("base tick: %v", err)
+	}
+
+	// Position the player at locA so the create has a scene to anchor perceptions.
+	_, err := pool.Exec(ctx, `
+		WITH ev1 AS (
+		  INSERT INTO canon_event (event_id,world_id,event_type,summary,in_world_tick,beat_seq,status,accepted_at,visibility_scope,origin)
+		  VALUES (gen_random_uuid(),$1,'move','P→locA-create',$2,0,'accepted',now(),'public','fast_path')
+		  RETURNING event_id
+		),
+		ep1 AS (
+		  INSERT INTO event_participant (event_id,entity_id,entity_kind,role_qualifier)
+		  SELECT event_id,$3,'actor','instigator' FROM ev1
+		),
+		sm1 AS (
+		  INSERT INTO state_mutation (world_id,event_id,entity_id,entity_kind,attribute_path,new_value,valid_from_tick,valid_from_seq)
+		  SELECT $1,event_id,$3,'actor','attrs.location_id',to_jsonb($4::text),$2,0 FROM ev1
+		)
+		SELECT 1`,
+		worldID, baseTick, playerID, locA)
+	if err != nil {
+		t.Fatalf("setup player position: %v", err)
+	}
+
+	// The LLM mints a fresh id for the forged dagger — NOT in entity_registry, NOT in the slice. The
+	// verdict must admit it (true introduction + descriptor); the commit must persist it with provenance.
+	const newID = "f3000000-0000-0000-0000-000000000abc"
+	ruling := fmt.Sprintf(`{"reasoning":"Kade forges a plain iron dagger from the shard — a novice can make a plain blade.","therefore":"succeeds","outcome":{"kind":"resolved","events":[{"type":"EntityCreated","actor_id":%q,"truth":"a plain dagger takes shape under his hammer","target_id":%q,"new_entity_kind":"artifact","canonical_name":"iron dagger","descriptor":"a plain iron dagger (task9 route)","new_attrs":{"location_id":%q,"coordinates":{"x":0,"y":0},"size":2,"weight":1}}]}}`,
+		playerID, newID, locA)
+
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           &inlineRulingResolveDriver{json: ruling},
+		CognitionBatch:    &scriptedCognitionDriver{name: "quiet-batch", body: `[]`},
+		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		WorldActor:        NewFakeWorldActorDriver(),
+	}
+
+	// The player's attempt is an EntityCreated intent → routes to adjudicate (not passthrough).
+	chain := []Attempt{{Type: "EntityCreated", Stated: "I forge a dagger from the starmetal shard"}}
+
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	if err != nil {
+		t.Fatalf("RunBeat (EntityCreated route): %v", err)
+	}
+	if outcome.HaltReason != "completed" {
+		t.Fatalf("halt_reason = %q, want completed (the create must commit, not bounce/reject)", outcome.HaltReason)
+	}
+	if len(outcome.Committed) < 1 {
+		t.Fatalf("expected >=1 committed event (the EntityCreated), got %d: %v", len(outcome.Committed), outcome.Committed)
+	}
+
+	// The new entity is REAL: a provenance-stamped entity_registry row that did not exist before.
+	var createdBy string
+	if err := pool.QueryRow(ctx,
+		`SELECT created_by_event::text FROM entity_registry WHERE world_id=$1 AND entity_id=$2`,
+		worldID, newID).Scan(&createdBy); err != nil {
+		t.Fatalf("created entity_registry row for %s not found (routing/commit failed): %v", newID, err)
+	}
+	if createdBy == "" {
+		t.Fatalf("created entity has no created_by_event provenance (§8 net 3)")
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
+}
+
 // inlineCommitCognitionDriver returns a fixed NPC decision JSON for CI.
 type inlineCommitCognitionDriver struct{ json string }
 

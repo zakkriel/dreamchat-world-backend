@@ -158,24 +158,15 @@ DECLARE
 BEGIN
   ev_type := p_attempt->>'type';
 
-  -- ── STRUCTURAL FLOOR ───────────────────────────────────────────────────────
-  -- Every type: actor must exist in entity_registry with kind='actor'.
   IF NOT EXISTS (
     SELECT 1 FROM entity_registry
-    WHERE entity_id = p_actor_id
-      AND world_id  = p_world_id
-      AND entity_kind = 'actor'
+    WHERE entity_id = p_actor_id AND world_id = p_world_id AND entity_kind = 'actor'
   ) THEN
     RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
   END IF;
 
-  -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
     to_target := (p_attempt->>'to_target_id')::uuid;
-    -- ACCESSIBILITY FLOOR (§5.3): the target exists AND a Portal permits here→(target's scene). A
-    -- SAME-SCENE move (the target's scene == here) is not a traversal and needs no portal. The whole
-    -- decision lives in the shared fn_actor_move_permitted so this twin, apply_ruled_event, and the Go
-    -- premiseHolds mirror never drift. Portal is accessibility, NOT geometry — never touches fn_distance.
     IF NOT fn_actor_move_permitted(p_world_id, p_actor_id, to_target) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
@@ -184,9 +175,7 @@ BEGIN
     listener := (p_attempt->>'listener_id')::uuid;
     SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
       WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
-    IF NOT EXISTS (
-      SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = listener
-    ) THEN
+    IF NOT EXISTS (SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = listener) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
@@ -198,9 +187,6 @@ BEGIN
     THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
-    -- VOLUME FLOOR (§4): a true blocker, ONLY when dest is a Container (carries max_room). A
-    -- non-container dest (a location, an actor's hands) has no room check in v1. occupied_room and
-    -- volume are BOTH computed here, never stored. Missing object size → treated as 1 (smallest).
     IF EXISTS (SELECT 1 FROM artifact_state
                WHERE world_id = p_world_id AND entity_id = dest_eid AND attrs ? 'max_room') THEN
       IF fn_occupied_room(p_world_id, dest_eid)
@@ -215,26 +201,24 @@ BEGIN
 
   ELSIF ev_type IN ('OwnershipAccessChanged', 'EntityDestroyed', 'AttributeChanged') THEN
     target_eid := (p_attempt->>'target_id')::uuid;
-    IF NOT EXISTS (
-      SELECT 1 FROM entity_registry WHERE entity_id = target_eid AND world_id = p_world_id
-    ) THEN
+    IF NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = target_eid AND world_id = p_world_id) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
   ELSIF ev_type = 'EntityCreated' THEN
-    -- No target check required (adjudicated intent; actor floor above covers the writer).
-    NULL;
+    -- DESCRIPTOR MANDATORY (§8 / §7 provenance-guarded create): no descriptor ⇒ not a true introduction
+    -- ⇒ gate_reject. Blocker-only: the reality-check/adjudication already happened; this is the commit
+    -- clerk refusing an un-introduced create. (Twin of apply_ruled_event — the shared floor rule.)
+    IF NULLIF(btrim(COALESCE(p_attempt->>'descriptor','')),'') IS NULL THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
 
   ELSE
-    -- Unknown type: reject.
     RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
   END IF;
 
-  -- ── COMMIT ─────────────────────────────────────────────────────────────────
   ev_id := gen_random_uuid();
 
-  -- Determine the final event_type string to write.
-  -- p_legacy_types=true: write old labels so apply_beat's delegation is behavior-identical.
   IF p_legacy_types THEN
     final_type := CASE ev_type
       WHEN 'Communicated' THEN 'private_disclosure'
@@ -245,7 +229,6 @@ BEGIN
     final_type := ev_type;
   END IF;
 
-  -- visibility_scope: private for Communicated (or legacy private_disclosure), public otherwise.
   vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
 
   INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
@@ -253,7 +236,6 @@ BEGIN
   VALUES (ev_id, p_world_id, final_type, p_attempt->>'stated',
           p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
 
-  -- event_participant: Communicated → speaker + listener; all others → instigator.
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
       (ev_id, p_actor_id, 'actor', 'speaker'),
@@ -263,13 +245,6 @@ BEGIN
       VALUES (ev_id, p_actor_id, 'actor', 'instigator');
   END IF;
 
-  -- state_mutation: ActorMoved only — the trigger projects it into actor_state.
-  -- §2/§3 UNIFIED MOVE: resolve the target's position ONCE (the same fn_target_position the gate used)
-  -- and write BOTH the mover's new scene AND coordinate. location_id = the target's containing scene (or
-  -- the target itself when it IS a location); coordinates = the target's position. A SAME-SCENE move
-  -- writes location_id unchanged-in-value — only coordinates move — so the "in-scene reposition" case
-  -- falls out of this uniform write with no branch. Moving to a LOCATION lands the actor at that
-  -- location's local origin/authored entry (§3 ACCEPTED IMPRECISION — no exit-point inference).
   IF ev_type = 'ActorMoved' THEN
     SELECT scene, coord INTO v_scene, v_coord FROM fn_target_position(p_world_id, to_target);
     INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
@@ -279,12 +254,22 @@ BEGIN
       (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.coordinates', v_coord,                 p_tick, p_seq);
   END IF;
 
-  -- ObjectRelocated: EAGER carry change (§4) — write the new contained_by edge, then recompute
-  -- carried_weight + set/clear encumbered for every affected carrier, all provenance = this event.
   IF ev_type = 'ObjectRelocated' THEN
     SELECT (attrs->>'contained_by')::uuid INTO v_old_holder
       FROM artifact_state WHERE world_id = p_world_id AND entity_id = object_eid;
     PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
+  END IF;
+
+  -- EntityCreated: persist the new instance (registry row + positioned state) via the shared helper.
+  -- Reuse-before-create is inside the helper. Provenance = ev_id (§8 net 3); one logged canon_event row
+  -- above (net 2); the ruling already passed the reality check (net 1).
+  IF ev_type = 'EntityCreated' THEN
+    PERFORM fn_apply_entity_created(ev_id, p_world_id,
+      NULLIF(p_attempt->>'target_id','')::uuid,
+      p_attempt->>'new_entity_kind',
+      p_attempt->>'canonical_name',
+      p_attempt->>'descriptor',
+      COALESCE(p_attempt->'new_attrs', '{}'::jsonb));
   END IF;
 
   PERFORM generate_perceptions(ev_id);
@@ -424,12 +409,10 @@ DECLARE
   truth_text text;
   appear_txt text;
   visible    boolean;
-  -- perception fan-out
   receiver   uuid;
   recv_text  text;
   var_text   text;
   pid        uuid;
-  -- participant ids for about-ness (perception_subject)
   participant_ids uuid[];
   v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
 BEGIN
@@ -442,24 +425,15 @@ BEGIN
     ELSE true
   END;
 
-  -- ── STRUCTURAL FLOOR (twin of apply_event floor — keep in sync) ─────────────
-  -- Every type: actor must exist in entity_registry with kind='actor'.
   IF NOT EXISTS (
     SELECT 1 FROM entity_registry
-    WHERE entity_id = actor_id
-      AND world_id  = p_world_id
-      AND entity_kind = 'actor'
+    WHERE entity_id = actor_id AND world_id = p_world_id AND entity_kind = 'actor'
   ) THEN
     RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
   END IF;
 
-  -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
     to_target := (p_ruled->>'to_target_id')::uuid;
-    -- ACCESSIBILITY FLOOR (§5.3): the target exists AND a Portal permits here→(target's scene), unless
-    -- it is a SAME-SCENE move (the target's scene == here, not a traversal). Shared fn_actor_move_permitted
-    -- = same decision as apply_event and the Go premiseHolds mirror (no twin drift). Accessibility, NOT
-    -- geometry.
     IF NOT fn_actor_move_permitted(p_world_id, actor_id, to_target) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
@@ -482,8 +456,6 @@ BEGIN
     THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
-    -- VOLUME FLOOR (§4): true blocker, ONLY when dest is a Container (carries max_room). Non-container
-    -- dest → no room check in v1. occupied_room + volume computed here, never stored.
     IF EXISTS (SELECT 1 FROM artifact_state
                WHERE world_id = p_world_id AND entity_id = dest_eid AND attrs ? 'max_room') THEN
       IF fn_occupied_room(p_world_id, dest_eid)
@@ -505,27 +477,25 @@ BEGIN
     END IF;
 
   ELSIF ev_type = 'EntityCreated' THEN
-    -- No target check required (actor-only floor above covers it).
-    NULL;
+    -- DESCRIPTOR MANDATORY (§8 / §7 provenance-guarded create): no descriptor ⇒ not a true introduction
+    -- ⇒ gate_reject. Blocker-only clerk (the adjudication already happened). Twin of apply_event.
+    IF NULLIF(btrim(COALESCE(p_ruled->>'descriptor','')),'') IS NULL THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
 
   ELSE
-    -- Unknown type: reject.
     RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
   END IF;
 
-  -- ── COMMIT ──────────────────────────────────────────────────────────────────
   ev_id := gen_random_uuid();
 
-  -- visibility_scope: private for Communicated, public otherwise.
   vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
 
-  -- Canon summary = truth. CANON NEVER LIES.
   INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                            status, accepted_at, visibility_scope, origin)
   VALUES (ev_id, p_world_id, ev_type, truth_text,
           p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
 
-  -- event_participant: Communicated → speaker (actor) + listener; all others → instigator.
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
       (ev_id, actor_id, 'actor', 'speaker'),
@@ -537,9 +507,6 @@ BEGIN
     participant_ids := ARRAY[actor_id];
   END IF;
 
-  -- state_mutation: ActorMoved only — §2/§3 unified move (twin of apply_event; keep in sync). Resolve the
-  -- target's position ONCE and write the mover's new scene + coordinate. Same-scene ⇒ location_id
-  -- unchanged-in-value (only coordinates move); location target ⇒ its local origin/authored entry (§3).
   IF ev_type = 'ActorMoved' THEN
     SELECT scene, coord INTO v_scene, v_coord FROM fn_target_position(p_world_id, to_target);
     INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
@@ -549,26 +516,27 @@ BEGIN
       (p_world_id, ev_id, actor_id, 'actor', 'attrs.coordinates', v_coord,                 p_tick, p_seq);
   END IF;
 
-  -- ObjectRelocated: EAGER carry change (§4), identical to apply_event via the shared helper.
   IF ev_type = 'ObjectRelocated' THEN
     SELECT (attrs->>'contained_by')::uuid INTO v_old_holder
       FROM artifact_state WHERE world_id = p_world_id AND entity_id = object_eid;
     PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
   END IF;
 
-  -- ── PERCEPTION FAN-OUT ───────────────────────────────────────────────────────
-  -- visible=false (explicit) → zero perceptions; no further work.
+  -- EntityCreated: persist the new instance via the shared helper (reuse-before-create inside).
+  -- Provenance = ev_id (§8 net 3); one logged canon_event row (net 2); ruling passed reality-check (net 1).
+  IF ev_type = 'EntityCreated' THEN
+    PERFORM fn_apply_entity_created(ev_id, p_world_id,
+      NULLIF(p_ruled->>'target_id','')::uuid,
+      p_ruled->>'new_entity_kind',
+      p_ruled->>'canonical_name',
+      p_ruled->>'descriptor',
+      COALESCE(p_ruled->'new_attrs', '{}'::jsonb));
+  END IF;
+
   IF NOT visible THEN
     RETURN jsonb_build_object('event_id', ev_id, 'halt_reason', 'committed');
   END IF;
 
-  -- Receivers = actors co-located with the ruled actor (fn_actors_at on actor's
-  -- current location, NULL-safe) UNION the actor itself (actor already included
-  -- when they are present at their own location; UNION deduplicates).
-  --
-  -- After ActorMoved, the actor's location is already updated in actor_state by
-  -- the trigger above, so fn_actors_at returns the destination set. For non-move
-  -- types the actor is still at their original location — both are correct behavior.
   SELECT (a.attrs->>'location_id')::uuid INTO here
     FROM actor_state a
     WHERE a.world_id = p_world_id AND a.entity_id = actor_id;
@@ -578,10 +546,6 @@ BEGIN
     UNION
     SELECT actor_id
   LOOP
-    -- Determine content for this receiver:
-    -- 1. receiver_variants match → variant text
-    -- 2. appearance (if non-empty) → appearance
-    -- 3. truth
     var_text := NULL;
     IF p_ruled ? 'receiver_variants' THEN
       SELECT rv->>'text' INTO var_text
@@ -597,8 +561,6 @@ BEGIN
     VALUES (p_world_id, receiver, ev_id, recv_text, 'direct', p_tick, p_tick)
     RETURNING perception_id INTO pid;
 
-    -- About-ness: perception_subject rows for ALL participant ids (engine-written,
-    -- NOT relying on seed backfill).
     DECLARE
       part_id uuid;
     BEGIN
@@ -879,6 +841,59 @@ BEGIN
     VALUES (p_world_id, p_event_id, v_carrier, 'actor', 'attrs.statuses',
             v_stat, v_tick, v_seq);
   END LOOP;
+END $$;
+
+
+--
+-- Name: fn_apply_entity_created(uuid, uuid, uuid, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_apply_entity_created(p_event_id uuid, p_world_id uuid, p_target_id uuid, p_kind text, p_name text, p_descriptor text, p_attrs jsonb) RETURNS uuid
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_existing uuid;
+  v_new      uuid;
+  v_tick     bigint;
+  v_seq      int;
+  v_scene    uuid;
+  k          text;
+  v          jsonb;
+BEGIN
+  -- REUSE-BEFORE-CREATE (§5.4 / R3): match an existing entity before minting a new one.
+  SELECT entity_id INTO v_existing
+    FROM entity_registry
+    WHERE world_id = p_world_id
+      AND entity_kind = p_kind
+      AND status = 'active'
+      AND descriptor IS NOT NULL
+      AND lower(btrim(descriptor)) = lower(btrim(p_descriptor))
+    ORDER BY entity_id
+    LIMIT 1;
+  IF v_existing IS NOT NULL THEN
+    RETURN v_existing;   -- the entity already exists — reuse its id, mint nothing
+  END IF;
+
+  -- TRUE INTRODUCTION: create the registry row, provenance-stamped.
+  v_new   := COALESCE(p_target_id, gen_random_uuid());
+  v_scene := NULLIF(p_attrs->>'location_id', '')::uuid;   -- actor/artifact carry a scene; a location has none
+  INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name, descriptor,
+                               current_scene_id, created_by_event, status)
+  VALUES (v_new, p_world_id, p_kind, COALESCE(NULLIF(btrim(COALESCE(p_name,'')),''), p_descriptor),
+          p_descriptor, v_scene, p_event_id, 'active');
+
+  -- INITIAL POSITIONED STATE (replay-safe): one state_mutation per attr key. Tick/seq come from the
+  -- committed create event (single source of truth), mirroring fn_apply_carry_change.
+  SELECT in_world_tick, beat_seq INTO v_tick, v_seq FROM canon_event WHERE event_id = p_event_id;
+  IF p_attrs IS NOT NULL AND jsonb_typeof(p_attrs) = 'object' THEN
+    FOR k, v IN SELECT key, value FROM jsonb_each(p_attrs) LOOP
+      INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                  new_value, valid_from_tick, valid_from_seq)
+      VALUES (p_world_id, p_event_id, v_new, p_kind, 'attrs.' || k, v, v_tick, v_seq);
+    END LOOP;
+  END IF;
+
+  RETURN v_new;
 END $$;
 
 
@@ -2789,4 +2804,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100003'),
     ('20260729100004'),
     ('20260729100005'),
-    ('20260729100006');
+    ('20260729100006'),
+    ('20260729100007');

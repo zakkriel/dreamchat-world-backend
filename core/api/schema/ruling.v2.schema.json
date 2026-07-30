@@ -36,6 +36,7 @@
                       "Communicated",
                       "ObjectRelocated",
                       "OwnershipAccessChanged",
+                      "EntityCreated",
                       "EntityDestroyed",
                       "AttributeChanged"
                     ]
@@ -64,6 +65,10 @@
                   "dest_id": {"type": "string"},
                   "target_id": {"type": "string"},
                   "grantee_id": {"type": "string"},
+                  "new_entity_kind": {"enum": ["actor", "artifact", "location"], "description": "EntityCreated (Task 9): the created instance's kind"},
+                  "descriptor": {"type": "string", "description": "EntityCreated: MANDATORY true-introduction descriptor (§8) + the reuse-before-create match key (§5.4)"},
+                  "canonical_name": {"type": "string", "description": "EntityCreated: display name; falls back to descriptor"},
+                  "new_attrs": {"type": "object", "description": "EntityCreated: initial positioned state — coordinates + Tier-1 measurements (size/weight/location_id/…)"},
                   "summary": {"type": "string", "description": "v1 compat — removed when the v1 decode path retires (Station D Task 5)"},
                   "participant_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}, "description": "v1 compat — removed when the v1 decode path retires (Station D Task 5)"}
                 },

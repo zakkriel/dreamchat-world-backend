@@ -56,19 +56,47 @@ func verdictRuling(r RulingV2, sliceIDs map[string]bool, attemptIDs []string) []
 		attemptIDsMap[id] = true
 	}
 
+	// created holds the ids admitted by a TRUE-INTRODUCTION EntityCreated EARLIER in this ruling: the ONE
+	// place the id-whitelist admits a not-in-slice id (§8). Grown in event order so a SUBSEQUENT event may
+	// reference the just-created id (e.g. forge the dagger, then relocate it) without a whitelist violation.
+	created := make(map[string]bool)
+
 	// Helper to check if a UUID is in the whitelist
 	isWhitelisted := func(uuid string) bool {
 		if uuid == "" {
 			return true // Non-uuid empty fields are allowed
 		}
-		return sliceIDs[uuid] || attemptIDsMap[uuid]
+		return sliceIDs[uuid] || attemptIDsMap[uuid] || created[uuid]
 	}
 
 	// Check all UUIDs in events
 	for i, event := range r.Outcome.Events {
-		// Check actor_id
+		// Check actor_id (the creator/mover/speaker — always whitelist-gated, even for a create).
 		if !isWhitelisted(event.ActorID) {
 			violations = append(violations, formatUUIDViolation("event", i, "actor_id", event.ActorID))
+		}
+
+		// ── EntityCreated: the create-write, not a reference (Station F Task 9 / §8) ──────────────
+		// target_id is the NEW entity's id. The verdict admits it — the ONE whitelist opening — but ONLY
+		// as a TRUE INTRODUCTION: a descriptor is MANDATORY (else it is not an introduction and the id
+		// stays un-admitted, keeping the opening from becoming a hole). Reuse-before-create (does this
+		// descriptor match an existing entity?) is the SQL commit's job — it holds the authoritative
+		// registry (R3 "match against slice + registry"); the verdict, a pure function, admits the SHAPE.
+		// The admitted id joins `created` so later events in THIS ruling may reference it.
+		if event.Type == "EntityCreated" {
+			if strings.TrimSpace(event.Descriptor) == "" {
+				violations = append(violations, formatAttrViolation("event", i, "descriptor", "\"\"", "EntityCreated requires a descriptor (true introduction, §8)"))
+			} else if event.TargetID != "" {
+				created[event.TargetID] = true // admitted as a true introduction
+			}
+			// A create references nothing else through typed id slots; receiver variants (if any) are
+			// still perceivers and must be whitelist-gated.
+			for _, variant := range event.ReceiverVariants {
+				if variant.ReceiverID != "" && !isWhitelisted(variant.ReceiverID) {
+					violations = append(violations, formatUUIDViolation("event", i, "receiver_id", variant.ReceiverID))
+				}
+			}
+			continue
 		}
 
 		// Check typed slots

@@ -302,6 +302,85 @@ func TestVerdictRulingEventIndex10(t *testing.T) {
 	}
 }
 
+// TestVerdictRulingEntityCreatedTrueIntroductionAdmitted — a ruled EntityCreated's target_id is the ONE
+// case the id-whitelist admits a not-in-slice id: a TRUE INTRODUCTION (descriptor present, §8). Its new
+// id is not a violation, and it becomes referenceable by a SUBSEQUENT event in the SAME ruling (the
+// created dagger is immediately relocated). Reuse-before-create (the descriptor→existing-id match) is the
+// SQL commit's job (it holds the registry); the verdict only admits the true-introduction SHAPE.
+func TestVerdictRulingEntityCreatedTrueIntroductionAdmitted(t *testing.T) {
+	const newID = "f2000000-0000-0000-0000-000000000abc" // LLM-minted, NOT in the slice
+	r := RulingV2{
+		Reasoning: "Kade forges a plain dagger from the shard, then sets it on the bar.",
+		Therefore: "succeeds",
+		Outcome: OutcomeV2{
+			Kind: "resolved",
+			Events: []RuledEventV2{
+				{
+					Type:          "EntityCreated",
+					ActorID:       "actor-123",
+					Truth:         "a plain dagger takes shape under his hammer",
+					TargetID:      newID,
+					NewEntityKind: "artifact",
+					Descriptor:    "a plain iron dagger",
+				},
+				{
+					// SUBSEQUENT event references the just-created id — must be admitted (in-ruling scope).
+					Type:     "ObjectRelocated",
+					ActorID:  "actor-123",
+					Truth:    "he sets the dagger on the bar",
+					ObjectID: newID,
+					DestKind: "location",
+					DestID:   "loc-789",
+				},
+			},
+		},
+	}
+	sliceIDs := map[string]bool{"actor-123": true, "loc-789": true}
+	violations := verdictRuling(r, sliceIDs, []string{})
+	if len(violations) != 0 {
+		t.Fatalf("expected a true-introduction EntityCreated + its downstream reference to be admitted, got: %v", violations)
+	}
+}
+
+// TestVerdictRulingEntityCreatedNoDescriptorViolation — a create with NO descriptor is not a true
+// introduction: the whitelist does not admit its not-in-slice id, and the missing descriptor is a
+// violation (descriptor mandatory, §8). This keeps the one whitelist opening from becoming a hole.
+func TestVerdictRulingEntityCreatedNoDescriptorViolation(t *testing.T) {
+	const newID = "f2000000-0000-0000-0000-000000000def"
+	r := RulingV2{
+		Reasoning: "Something half-forms.",
+		Therefore: "succeeds",
+		Outcome: OutcomeV2{
+			Kind: "resolved",
+			Events: []RuledEventV2{
+				{
+					Type:          "EntityCreated",
+					ActorID:       "actor-123",
+					Truth:         "a shape that never resolves",
+					TargetID:      newID,
+					NewEntityKind: "artifact",
+					Descriptor:    "", // MISSING — not a true introduction
+				},
+			},
+		},
+	}
+	sliceIDs := map[string]bool{"actor-123": true}
+	violations := verdictRuling(r, sliceIDs, []string{})
+	if len(violations) == 0 {
+		t.Fatalf("expected a descriptor violation for a create with no descriptor, got none")
+	}
+	found := false
+	for _, v := range violations {
+		if strings.Contains(v, "descriptor") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Errorf("violation does not mention the missing descriptor: %v", violations)
+	}
+}
+
 // jsonTypeOf tests
 func TestJsonTypeOfString(t *testing.T) {
 	tests := []struct {
