@@ -222,6 +222,22 @@ Tasks 7–8 make the contract arithmetic playable and gate it — same disciplin
 - [ ] **Step 1: Failing tests** — `118_entity_created_test.sql` (`plan(5)`): (a) a ruled EntityCreated commits an `entity_registry` row with `created_by_event` set; (b) its state row exists with the ruled coordinates/attrs; (c) the new entity is immediately reachable (`fn_distance` to it works — it has a position); (d) a create that matches an existing entity (same descriptor/kind in slice) REUSES the id, no new row (reuse-before-create); (e) a create with no descriptor → gate_reject/verdict violation (descriptor mandatory). Go: a ruling emitting EntityCreated routes through and commits; the new id is not a whitelist violation.
 - [ ] **Step 2: Run → FAIL. Step 3: Implement** the EntityCreated commit in both twins (shared helper), the verdict admission of a true-introduction id, the orchestrator routing. §8 three nets hold (adjudicated ruling past reality-check; one logged row; audit-trailed). **Step 4: Full battery** green; blast radius named (any test asserting EntityCreated writes nothing must update honestly). **Step 5: Commit** — exact files — `feat(create): EntityCreated persists a real entity on resolve — registry row + positioned state + provenance (resolve updates it all) [F9]`
 
+### Task 11: Make the exit playable — perceived-entity candidates + seed geometry (founder rulings 2026-07-30)
+
+**Why this task exists.** The exit E2E surfaced two founder-gate blockers, both now RULED (see RULINGS-2026-07-30-space-and-journey.md §1 + §2 interim): (a) the decompose candidate whitelist is arbitrarily actors + location only, so "approach the bar"/"grab the crate"/"give the note" have no id to bind; (b) the play seed's dock-street is 80 m from the tavern (58 s > tense 30 s budget), so "step out the front" over-budget-blocks. This task fixes both so the founder's walkthrough works, without building the Journey (deferred to its own plan).
+
+**Files:**
+- Modify: `core/api/beathandler.go` (`payload()` candidate assembly — add perceived artifacts + carried items), possibly a small SQL helper for co-located artifacts
+- Modify: `core/db/seeds/seed_drowned_lantern.sql` (dock-street coordinate near the tavern door)
+- Test: `core/api/beathandler_test.go` (or a focused test) for the widened candidates; `core/db/tests/116_*` or the exit test for the tuned geometry
+
+**Interfaces:**
+- Candidates (RULINGS-2026-07-30 §1): `PerceptionPayload.Candidates` now includes — beyond present actors + the current location — **perceived artifacts co-located with the viewer** and **items the viewer carries/holds** (`contained_by = viewer`), each labeled by `fn_display_name` (viewer-relative), bounded by perception (NOT global — do not add unperceived entities; the naming-reach wall stands). One-hop-known absent entities may be included if the perception/knowledge query already yields them cleanly; if not, note it as a further refinement (the co-located + carried set is the immediate correct fix).
+- Seed: dock-street's `coordinates` placed a few meters from the tavern (e.g. within ~7 m of the tavern's frame) so `fn_move_duration_actor(kade, dock_street)` is a few seconds and fits the `tense` 30 s budget — "step out the door" works. Do NOT collapse it into the tavern (it's still a distinct location behind the front-door portal); just make the step short.
+
+- [ ] **Step 1: Failing tests** — a test asserting the candidate whitelist for the Drowned Lantern viewer (Kade) contains the bar, the crate, and the carried note (by id), each with a viewer-relative label, AND still excludes any entity Kade doesn't perceive (the naming-reach wall — e.g. an entity in another world/location is absent). A geometry test asserting `fn_move_duration_actor(kade, dock_street)` fits the tense budget.
+- [ ] **Step 2: Run → FAIL. Step 3: Implement** the widened candidate assembly (perception-scoped) + the seed tune. Step 4: Full battery green (candidates change may ripple to decompose-prompt tests — the whitelist is larger; update honestly, name them). **Step 5: Commit** — exact files — `feat(bind): the candidate whitelist is everything the actor perceives (artifacts + carried items); dock-street a short step from the tavern (RULINGS-2026-07-30 §1) [F11]`
+
 ### Task 10: Exit — the founder walks the room
 
 **Files:**
