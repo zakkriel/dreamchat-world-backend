@@ -1,8 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 	"fmt"
 )
 
@@ -10,22 +10,23 @@ import (
 var rulingV1SchemaJSON string
 
 // Handed to the resolve seat as the structured-output leash (wired in Station D Tasks 5–6).
+//
 //go:embed schema/ruling.v2.schema.json
 var rulingV2SchemaJSON string
 
 type Ruling struct {
-	Reasoning string         `json:"reasoning"`
-	Therefore string         `json:"therefore"`
-	Outcome   RulingOutcome  `json:"outcome"`
+	Reasoning string        `json:"reasoning"`
+	Therefore string        `json:"therefore"`
+	Outcome   RulingOutcome `json:"outcome"`
 }
 
 type RulingOutcome struct {
-	Kind             string            `json:"kind"`
-	Reason           string            `json:"reason,omitempty"`
-	Events           []RuledEvent      `json:"events,omitempty"`
-	AttributeWrites  []AttrWrite       `json:"attribute_writes,omitempty"`
-	Mints            []json.RawMessage `json:"mints,omitempty"`
-	Tension          string            `json:"tension,omitempty"`
+	Kind            string            `json:"kind"`
+	Reason          string            `json:"reason,omitempty"`
+	Events          []RuledEvent      `json:"events,omitempty"`
+	AttributeWrites []AttrWrite       `json:"attribute_writes,omitempty"`
+	Mints           []json.RawMessage `json:"mints,omitempty"`
+	Tension         string            `json:"tension,omitempty"`
 }
 
 type RuledEvent struct {
@@ -47,17 +48,21 @@ type AttrWrite struct {
 
 // RulingV2 is the rich ruling contract (Station D). Fields are frozen for Tasks 4-7.
 type RulingV2 struct {
-	Reasoning string     `json:"reasoning"`
-	Therefore string     `json:"therefore"`
-	Outcome   OutcomeV2  `json:"outcome"`
+	Reasoning string    `json:"reasoning"`
+	Therefore string    `json:"therefore"`
+	Outcome   OutcomeV2 `json:"outcome"`
 }
 
-// OutcomeV2 mirrors RulingOutcome but references the v2 event shape.
+// OutcomeV2 mirrors RulingOutcome but references the v2 event shape. Mints carries the typed physics
+// vocabulary the ruling proposes (§8): movement types, status modifiers, and artifact/place shapes.
+// Decoded here so the LIVE commit path (adjudicate → commitRulingTx, which is v2) can validate them at
+// the verdict stage and persist accepted ones in the ruling's own tx. Empty on the common ruling.
 type OutcomeV2 struct {
-	Kind            string         `json:"kind"`
-	Reason          string         `json:"reason,omitempty"`
-	Events          []RuledEventV2 `json:"events,omitempty"`
-	AttributeWrites []AttrWrite    `json:"attribute_writes,omitempty"`
+	Kind            string            `json:"kind"`
+	Reason          string            `json:"reason,omitempty"`
+	Events          []RuledEventV2    `json:"events,omitempty"`
+	AttributeWrites []AttrWrite       `json:"attribute_writes,omitempty"`
+	Mints           []json.RawMessage `json:"mints,omitempty"`
 }
 
 // RuledEventV2 carries TRUTH (canon) + optional default APPEARANCE + optional per-receiver

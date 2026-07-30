@@ -83,6 +83,11 @@
                 },
                 "additionalProperties": false
               }
+            },
+            "mints": {
+              "type": "array",
+              "description": "Typed physics vocabulary minted inside this ruling (FINAL-action-contracts.md §8). Open objects — the discriminator (movementTypeId+baseSpeed | statusTypeId+movementModifiers | size/coordinate/parentLocationId) and shape+bounds are enforced by validateMints at the verdict stage, not by this schema.",
+              "items": {"type": "object"}
             }
           },
           "additionalProperties": false

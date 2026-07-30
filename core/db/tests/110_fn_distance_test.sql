@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(5);
+SELECT plan(6);
 
 -- Station F / §3 Space: nested coordinates + fn_distance. Self-contained fixture (fixed uuids, no seed
 -- dependency), mirroring the nested-frame model from FINAL-action-contracts.md §3:
@@ -69,6 +69,23 @@ SELECT is(
     'fa000000-0000-0000-0000-0000000000c1', 'fa000000-0000-0000-0000-0000000000c2'),
   800::numeric,
   'fn_distance(tavern, alley) = 800 (child-location coordinates at the district frame)');
+
+-- (f) CYCLE-GUARD REGRESSION (carried-forward Task-1 review item, backstop end): a location whose
+-- parent_location_id points at ITSELF must NOT infinite-loop the parent-walk. The defensive depth cap
+-- (mint_persistence migration, mirroring the I-4 acyclicity guard) makes the recursion TERMINATE and
+-- return bounded — fn_location_depth stops at the cap (64) instead of recursing forever. Before the cap
+-- this query never returned (runaway recursion). The primary guard is validateMints rejecting the cycle
+-- at mint time; this proves the engine can't hang even if a bad row slips through.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+  ('fa000000-0000-0000-0000-0000000000f9', 'fa000000-ffff-0000-0000-000000000000', 'location', 'loop_room');
+INSERT INTO location_state (entity_id, world_id, attrs) VALUES
+  ('fa000000-0000-0000-0000-0000000000f9', 'fa000000-ffff-0000-0000-000000000000',
+   '{"coordinates":{"x":0,"y":0},"parent_location_id":"fa000000-0000-0000-0000-0000000000f9"}'::jsonb);
+
+SELECT is(
+  fn_location_depth('fa000000-ffff-0000-0000-000000000000', 'fa000000-0000-0000-0000-0000000000f9'),
+  64,
+  '(f) self-parent location: fn_location_depth returns bounded (cap 64), never infinite-loops');
 
 SELECT * FROM finish();
 ROLLBACK;

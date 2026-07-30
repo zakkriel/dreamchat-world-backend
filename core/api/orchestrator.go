@@ -809,6 +809,28 @@ func (o *Orchestrator) fnMoveDurationActor(ctx context.Context, worldID, actorID
 	return dur, err
 }
 
+// existingMovementTypes reads the world's committed movement vocabulary (movement_type_ids) as a set —
+// the mint-ordering baseline for validateMints (§8): a modifier may reference a seeded/committed type, or
+// one minted earlier in the SAME ruling (validateMints grows the set intra-slice). Read fresh (no cache)
+// so a type minted by an earlier ruling this session is visible.
+func (o *Orchestrator) existingMovementTypes(ctx context.Context, worldID string) (map[string]bool, error) {
+	rows, err := o.DB.Query(ctx,
+		`SELECT movement_type_id FROM movement_type WHERE world_id = $1`, worldID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]bool{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out[id] = true
+	}
+	return out, rows.Err()
+}
+
 // applyEvent calls apply_event and returns the result as a map.
 func (o *Orchestrator) applyEvent(ctx context.Context, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
 	var resultJSON []byte
@@ -949,6 +971,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	var ruling RulingV2
 	var violations []string
 	var decodeErr error
+	var movementTypes map[string]bool // lazily fetched only when a ruling actually mints (§8)
 
 	for retry := 0; retry < 2; retry++ {
 		p := prompt
@@ -981,6 +1004,19 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 		}
 
 		violations = verdictRuling(ruling, sliceIDs, ids)
+		// Mint validation shares the verdict stage's repair-once-then-bounce (§8): fold any mint SHAPE +
+		// BOUNDS + ordering violations into the SAME slice. Fetch the world's movement vocabulary once,
+		// and only when this ruling actually mints (the common ruling mints nothing → zero DB overhead).
+		if len(ruling.Outcome.Mints) > 0 {
+			if movementTypes == nil {
+				mt, mtErr := o.existingMovementTypes(ctx, worldID)
+				if mtErr != nil {
+					return adjResult{}, fmt.Errorf("existing movement types: %w", mtErr)
+				}
+				movementTypes = mt
+			}
+			violations = append(violations, verdictMints(ruling, movementTypes)...)
+		}
 		if len(violations) == 0 {
 			break
 		}
@@ -1061,6 +1097,23 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 		}
 		if rowsWritten != len(ruling.Outcome.AttributeWrites) {
 			return nil, 0, fmt.Errorf("engine inconsistency: apply_attribute_writes wrote %d rows, expected %d", rowsWritten, len(ruling.Outcome.AttributeWrites))
+		}
+	}
+
+	// Mint persistence (§8): each accepted mint becomes ONE logged row with provenance = this ruling's
+	// event (blast radius = one row, net 2), persisted in the SAME tx as the events/writes, AFTER verdict
+	// passed. committed[0] is the ruling event id every mint is audit-trailed to (net 3) — the same anchor
+	// apply_attribute_writes uses. Guarded by len(committed)>0: a resolved ruling always has ≥1 event, and
+	// mints only ride resolved rulings. apply_mint RAISEs on an artifact-shaped mint (persistence of a
+	// typed artifact into entity_registry+state is not yet specified — see task-6 report §escalation),
+	// which rolls back the whole ruling — fail-safe: a well-formed-but-unpersistable mint corrupts nothing.
+	if len(ruling.Outcome.Mints) > 0 && len(committed) > 0 {
+		for i, mint := range ruling.Outcome.Mints {
+			if _, err := tx.Exec(ctx,
+				`SELECT apply_mint($1::uuid, $2::uuid, $3::jsonb)`,
+				worldID, committed[0], string(mint)); err != nil {
+				return nil, 0, fmt.Errorf("apply_mint %d: %w", i, err)
+			}
 		}
 	}
 

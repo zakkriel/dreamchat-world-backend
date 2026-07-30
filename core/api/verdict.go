@@ -41,10 +41,11 @@ func jsonTypeOf(v json.RawMessage) string {
 }
 
 // verdictRuling checks a RulingV2 for violations:
-// 1. Every UUID referenced anywhere in the ruling (event actor_id, all typed slots, attr write target_ids, variant receiver_ids)
-//    must be in sliceIDs or attemptIDs (the id-whitelist).
-// 2. Each AttrWrite with Tier==1: name must exist in tier1Registry AND jsonTypeOf(Value) must match the registry type.
-// 3. Each AttrWrite with Tier==2: name must NOT exist in tier1Registry (the wall violation).
+//  1. Every UUID referenced anywhere in the ruling (event actor_id, all typed slots, attr write target_ids, variant receiver_ids)
+//     must be in sliceIDs or attemptIDs (the id-whitelist).
+//  2. Each AttrWrite with Tier==1: name must exist in tier1Registry AND jsonTypeOf(Value) must match the registry type.
+//  3. Each AttrWrite with Tier==2: name must NOT exist in tier1Registry (the wall violation).
+//
 // Returns a slice of violation strings (empty slice = pass).
 func verdictRuling(r RulingV2, sliceIDs map[string]bool, attemptIDs []string) []string {
 	var violations []string
@@ -125,6 +126,17 @@ func verdictRuling(r RulingV2, sliceIDs map[string]bool, attemptIDs []string) []
 	}
 
 	return violations
+}
+
+// verdictMints is the verdict-stage entry point for minting (FINAL-action-contracts.md §8): it hands the
+// ruling's proposed mints to validateMints (mint.go) and returns violations in the SAME shape verdictRuling
+// uses — so mint failures flow into the existing repair-once-then-bounce in adjudicate, no separate path.
+// It lives beside verdictRuling because minting shares the verdict stage; it takes existingMovementTypes
+// (the world's committed movement vocabulary) because mint-ordering (§8) is a DB-grounded check, which is
+// why the caller (adjudicate, which has the pool) fetches the set and passes it in rather than verdictRuling
+// (a pure function) growing a DB dependency.
+func verdictMints(r RulingV2, existingMovementTypes map[string]bool) []string {
+	return validateMints(r.Outcome.Mints, existingMovementTypes)
 }
 
 // formatUUIDViolation creates a violation message for an invalid UUID reference

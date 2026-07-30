@@ -283,6 +283,54 @@ BEGIN
 END $$;
 
 
+--
+-- Name: apply_mint(uuid, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.apply_mint(p_world_id uuid, p_ruling_event uuid, p_mint jsonb) RETURNS text
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_action text;
+  v_row    jsonb;
+  v_status text;
+BEGIN
+  -- MOVEMENT-TYPE mint: { movementTypeId, baseSpeed }.
+  IF p_mint ? 'baseSpeed' THEN
+    INSERT INTO movement_type (world_id, movement_type_id, base_speed_mps, created_by_event)
+    VALUES (p_world_id, p_mint->>'movementTypeId', (p_mint->>'baseSpeed')::numeric, p_ruling_event)
+    ON CONFLICT (world_id, movement_type_id) DO NOTHING;
+    RETURN p_mint->>'movementTypeId';
+
+  -- MODIFIER mint: { statusTypeId, actionType, movementModifiers:[{ movementTypeId, modifierPercent }] }.
+  ELSIF p_mint ? 'statusTypeId' OR p_mint ? 'movementModifiers' THEN
+    v_action := COALESCE(p_mint->>'actionType', 'move');   -- 'move' is the only metered action (§6)
+    v_status := p_mint->>'statusTypeId';
+    FOR v_row IN SELECT jsonb_array_elements(COALESCE(p_mint->'movementModifiers', '[]'::jsonb))
+    LOOP
+      -- FK (world_id, movement_type_id) → movement_type: satisfied by ordering (validated in Go; the
+      -- referenced type was minted by an earlier apply_mint in this tx, or is seeded/committed).
+      INSERT INTO status_modifier (world_id, status_type_id, action_type, movement_type_id,
+                                   modifier_percent, created_by_event)
+      VALUES (p_world_id, v_status, v_action, v_row->>'movementTypeId',
+              (v_row->>'modifierPercent')::numeric, p_ruling_event)
+      ON CONFLICT (world_id, status_type_id, action_type, movement_type_id) DO NOTHING;
+    END LOOP;
+    RETURN v_status;
+
+  -- ARTIFACT/PLACE mint: persistence escalated (see header) — refuse to guess the schema.
+  ELSIF p_mint ? 'size' OR p_mint ? 'maxRoom' OR p_mint ? 'coordinate'
+     OR p_mint ? 'parentLocationId' OR p_mint ? 'locationId' THEN
+    RAISE EXCEPTION
+      'apply_mint: artifact/place mint persistence is not yet specified (escalated: the entity_registry+state schema is undefined in FINAL §8) — refusing to guess. mint=%',
+      p_mint;
+
+  ELSE
+    RAISE EXCEPTION 'apply_mint: unrecognized mint shape (no baseSpeed / statusTypeId / artifact fields). mint=%', p_mint;
+  END IF;
+END $$;
+
+
 SET default_tablespace = '';
 
 SET default_table_access_method = heap;
@@ -978,7 +1026,6 @@ CREATE FUNCTION public.fn_distance(p_world_id uuid, p_a uuid, p_b uuid) RETURNS 
     SELECT fn_nearest_common_parent(p_world_id, p_a, p_b) AS loc
   ),
   ent AS (
-    -- each entity's kind, its scene, and its OWN coordinates (from whichever state table it lives in)
     SELECT x.which, x.eid,
       CASE er.entity_kind
         WHEN 'location' THEN x.eid
@@ -993,23 +1040,22 @@ CREATE FUNCTION public.fn_distance(p_world_id uuid, p_a uuid, p_b uuid) RETURNS 
     LEFT JOIN location_state  ls ON  ls.world_id = p_world_id AND  ls.entity_id = x.eid
   ),
   climb AS (
-    -- ancestor-or-self chain of each entity's scene, stopping once we reach the common parent
-    SELECT e.which, e.scene AS loc
+    SELECT e.which, e.scene AS loc, 0 AS up
     FROM ent e
     UNION ALL
-    SELECT c.which, (ls.attrs->>'parent_location_id')::uuid
+    SELECT c.which, (ls.attrs->>'parent_location_id')::uuid, c.up + 1
     FROM climb c
     JOIN location_state ls ON ls.world_id = p_world_id AND ls.entity_id = c.loc
     WHERE ls.attrs->>'parent_location_id' IS NOT NULL
-      AND c.loc IS DISTINCT FROM (SELECT loc FROM ncp)   -- never climb above the common parent
+      AND c.loc IS DISTINCT FROM (SELECT loc FROM ncp)
+      AND c.up < 64   -- defensive depth cap (I-4 mirror)
   ),
   frame_coord AS (
     SELECT e.which,
       CASE
         WHEN e.scene = (SELECT loc FROM ncp)
-          THEN e.own_coord   -- same frame: the entity's own coordinate is already parent-local
+          THEN e.own_coord
         ELSE (
-          -- cross-level: the ancestor location that is the direct child of the common parent
           SELECT ls.attrs->'coordinates'
           FROM climb c
           JOIN location_state ls ON ls.world_id = p_world_id AND ls.entity_id = c.loc
@@ -1233,9 +1279,10 @@ CREATE FUNCTION public.fn_location_depth(p_world_id uuid, p_location uuid) RETUR
     FROM chain c
     JOIN location_state ls
       ON ls.world_id = p_world_id AND ls.entity_id = c.loc
-    WHERE ls.attrs->>'parent_location_id' IS NOT NULL   -- stop at the root (no parent edge)
+    WHERE ls.attrs->>'parent_location_id' IS NOT NULL
+      AND c.depth < 64   -- defensive depth cap (I-4 mirror): a parent_location_id cycle can't infinite-loop
   )
-  SELECT max(depth) FROM chain;   -- deepest step reached climbing to root = the location's depth
+  SELECT max(depth) FROM chain;
 $$;
 
 
@@ -1322,12 +1369,13 @@ CREATE FUNCTION public.fn_nearest_common_parent(p_world_id uuid, p_a uuid, p_b u
     FROM anc a
     JOIN location_state ls ON ls.world_id = p_world_id AND ls.entity_id = a.loc
     WHERE ls.attrs->>'parent_location_id' IS NOT NULL
+      AND a.up < 64   -- defensive depth cap (I-4 mirror)
   )
   SELECT aa.loc
   FROM anc aa
-  JOIN anc bb ON bb.which = 'b' AND bb.loc = aa.loc   -- common ancestor of both scenes
+  JOIN anc bb ON bb.which = 'b' AND bb.loc = aa.loc
   WHERE aa.which = 'a'
-  ORDER BY aa.up ASC   -- fewest steps up from A = closest to A = the DEEPEST common ancestor
+  ORDER BY aa.up ASC
   LIMIT 1;
 $$;
 
@@ -2033,6 +2081,7 @@ CREATE TABLE public.movement_type (
     world_id uuid NOT NULL,
     movement_type_id text NOT NULL,
     base_speed_mps numeric NOT NULL,
+    created_by_event uuid,
     CONSTRAINT movement_type_base_speed_mps_check CHECK ((base_speed_mps > (0)::numeric))
 );
 
@@ -2110,6 +2159,7 @@ CREATE TABLE public.status_modifier (
     action_type text NOT NULL,
     movement_type_id text NOT NULL,
     modifier_percent numeric NOT NULL,
+    created_by_event uuid,
     CONSTRAINT status_modifier_action_type_check CHECK ((action_type = 'move'::text)),
     CONSTRAINT status_modifier_modifier_percent_check CHECK ((modifier_percent >= ('-100'::integer)::numeric))
 );
@@ -2601,6 +2651,14 @@ ALTER TABLE ONLY public.held_outcome
 
 
 --
+-- Name: movement_type movement_type_created_by_event_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.movement_type
+    ADD CONSTRAINT movement_type_created_by_event_fkey FOREIGN KEY (created_by_event) REFERENCES public.canon_event(event_id);
+
+
+--
 -- Name: perception_record perception_record_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2622,6 +2680,14 @@ ALTER TABLE ONLY public.perception_subject
 
 ALTER TABLE ONLY public.state_mutation
     ADD CONSTRAINT state_mutation_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.canon_event(event_id);
+
+
+--
+-- Name: status_modifier status_modifier_created_by_event_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.status_modifier
+    ADD CONSTRAINT status_modifier_created_by_event_fkey FOREIGN KEY (created_by_event) REFERENCES public.canon_event(event_id);
 
 
 --
@@ -2676,4 +2742,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100001'),
     ('20260729100002'),
     ('20260729100003'),
-    ('20260729100004');
+    ('20260729100004'),
+    ('20260729100005');
