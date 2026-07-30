@@ -17,6 +17,21 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000060','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),1000,0),
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000061','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),1001,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting tavern↔square so the beat's
+-- cross-location move passes the accessibility floor. Seeded via canon_event + state_mutation (NOT a
+-- direct artifact_state insert) so replay_0A rebuilds it identically — I-1 replays projections from
+-- state_mutation, and a provenance-less artifact_state row would vanish on rebuild. Accessibility, NOT
+-- geometry (no coordinates).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','artifact','portal-tavern-square-98');
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         status, accepted_at, visibility_scope, origin)
+VALUES ('e5000000-0000-0000-0000-0000000000c0','11111111-1111-1111-1111-111111111111','AttributeChanged','portal genesis',1050,0,'accepted',now(),'public','fast_path');
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value, valid_from_tick, valid_from_seq) VALUES
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-0000000000c0','e5ffffff-0000-0000-0000-0000000000c1','artifact','attrs.open',    to_jsonb(true),  1050,0),
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-0000000000c0','e5ffffff-0000-0000-0000-0000000000c1','artifact','attrs.locked',  to_jsonb(false), 1050,1),
+ ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-0000000000c0','e5ffffff-0000-0000-0000-0000000000c1','artifact','attrs.connects',jsonb_build_array('e5ffffff-0000-0000-0000-000000000010','e5ffffff-0000-0000-0000-000000000011'),1050,2);
+
 SELECT apply_beat('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
   '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"the note"},
     {"type":"move","to":"e5ffffff-0000-0000-0000-000000000011"}]'::jsonb, 1100, 100, 'fast_path');

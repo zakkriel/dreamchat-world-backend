@@ -32,6 +32,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('e6000000-ffff-0000-0000-000000000000','e6000000-0000-0000-0000-000000000051','e6000000-0000-0000-0000-000000000002','actor','attrs.location_id',to_jsonb('e6000000-0000-0000-0000-000000000010'::text),1001,0),
  ('e6000000-ffff-0000-0000-000000000000','e6000000-0000-0000-0000-000000000052','e6000000-0000-0000-0000-000000000003','actor','attrs.location_id',to_jsonb('e6000000-0000-0000-0000-000000000011'::text),1002,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting loc1↔dest so the cross-location
+-- ActorMoved in (d) passes the new accessibility floor. Portal is accessibility, NOT geometry (no coords).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e6000000-0000-0000-0000-0000000000c1','e6000000-ffff-0000-0000-000000000000','artifact','portal-loc1-dest-102');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('e6000000-0000-0000-0000-0000000000c1','e6000000-ffff-0000-0000-000000000000',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('e6000000-0000-0000-0000-000000000010','e6000000-0000-0000-0000-000000000012')));
+
 -- ─── (a) Valid Communicated between two co-located actors ─────────────────────
 -- A and B are both at loc1. Should commit: event_type='Communicated', speaker+listener, 2 perceptions.
 SELECT is(

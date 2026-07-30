@@ -59,6 +59,23 @@ func setupReactionWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool) r
 			t.Fatalf("colocate %s: %v", actor, err)
 		}
 	}
+	// Station F / §5.3: a PERMITTING Portal (open ∧ ¬locked) connecting L↔L2, so a cross-location move
+	// to the bar — the player's, or a held/telegraphed NPC's cut-in resolved in the combined ruling —
+	// clears the accessibility floor. Portal is accessibility, NOT geometry: no coordinates, never
+	// feeds fn_distance.
+	if _, err := pool.Exec(ctx, `
+		WITH p AS (
+		  INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		  VALUES (gen_random_uuid(), $1, 'artifact', 'portal L<->L2')
+		  RETURNING entity_id
+		)
+		INSERT INTO artifact_state (entity_id, world_id, attrs)
+		SELECT entity_id, $1, jsonb_build_object('open', true, 'locked', false,
+		         'connects', jsonb_build_array($2::text, $3::text))
+		FROM p`,
+		id.World, id.L, id.L2); err != nil {
+		t.Fatalf("seed reaction portal L<->L2: %v", err)
+	}
 	return id
 }
 

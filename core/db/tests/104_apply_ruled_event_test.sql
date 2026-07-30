@@ -157,6 +157,15 @@ SELECT ok(
   '(e) every perception from ruled event has ≥1 perception_subject row'
 );
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting loc1↔dest so the ruled
+-- cross-location ActorMoved in (f) passes the accessibility floor. Accessibility, NOT geometry.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e4000000-0000-0000-0000-0000000000c1','e4000000-ffff-0000-0000-000000000000','artifact','portal-loc1-dest-104');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('e4000000-0000-0000-0000-0000000000c1','e4000000-ffff-0000-0000-000000000000',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('e4000000-0000-0000-0000-000000000010','e4000000-0000-0000-0000-000000000012')));
+
 -- ──────────────────────────────────────────────────────────────────────────────
 -- (f) Ruled ActorMoved commits + actor_state.attrs.location_id updated via trigger.
 -- ──────────────────────────────────────────────────────────────────────────────

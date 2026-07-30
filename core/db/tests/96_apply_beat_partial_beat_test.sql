@@ -34,6 +34,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000051','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),601,0),
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000052','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000011'::text),602,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting tavern↔square so every
+-- tavern→square move in this test passes the accessibility floor. Accessibility, NOT geometry (no coords).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','artifact','portal-tavern-square-96');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('e5ffffff-0000-0000-0000-000000000010','e5ffffff-0000-0000-0000-000000000011')));
+
 -- HALT WAY 1 — gate-reject: [say to Mara (ok), say to Jonas (Jonas not co-present → reject), move].
 -- Expect: step 1 commits; step 2 rejected pre-apply; step 3 never runs.
 SELECT is( (apply_beat('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',

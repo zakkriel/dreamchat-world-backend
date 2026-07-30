@@ -699,8 +699,22 @@ func (o *Orchestrator) premiseHolds(ctx context.Context, worldID, actorID string
 
 	switch a.Type {
 	case "ActorMoved":
-		// Destination must still exist as a location.
-		return exists(a.ToLocationID, "location")
+		// Floor/premise parity with apply_event/apply_ruled_event's ActorMoved accessibility floor
+		// (§5.3, via fn_actor_move_permitted): the destination must still exist AND a Portal must
+		// permit here→dest (open ∧ ¬locked) — UNLESS it is a SAME-SCENE move (here == dest, or the
+		// actor has no origin yet), which is not a traversal and needs no portal. Portal is
+		// accessibility, NOT geometry: this mirror never consults fn_distance/coordinates.
+		if ok, err := exists(a.ToLocationID, "location"); err != nil || !ok {
+			return ok, err
+		}
+		here, err := o.actorLocation(ctx, worldID, actorID)
+		if err != nil {
+			return false, err
+		}
+		if here == "" || here == a.ToLocationID {
+			return true, nil // same-scene / no origin — not a traversal, no portal required
+		}
+		return o.fnPortalPermits(ctx, worldID, here, a.ToLocationID)
 	case "Communicated":
 		// Listener must still be co-located with the speaker.
 		return coLocated(a.ListenerID)
@@ -762,6 +776,23 @@ func (o *Orchestrator) fnActorsAt(ctx context.Context, worldID, locationID strin
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// fnPortalPermits calls fn_portal_permits(world, from, to): TRUE iff a Portal artifact connecting
+// from↔to permits passage (open ∧ ¬locked, §5.3 v1). It backs the premiseHolds ActorMoved mirror so
+// the Go premise re-check enforces the same accessibility floor as the SQL twins. Portal is
+// accessibility, NOT geometry — this never touches fn_distance/coordinates.
+func (o *Orchestrator) fnPortalPermits(ctx context.Context, worldID, fromLoc, toLoc string) (bool, error) {
+	if fromLoc == "" || toLoc == "" {
+		return false, nil
+	}
+	var ok bool
+	if err := o.DB.QueryRow(ctx,
+		`SELECT fn_portal_permits($1, $2::uuid, $3::uuid)`,
+		worldID, fromLoc, toLoc).Scan(&ok); err != nil {
+		return false, err
+	}
+	return ok, nil
 }
 
 // fnMoveDurationActor calls fn_move_duration_actor(world, actor, from, to) and returns the tick count.

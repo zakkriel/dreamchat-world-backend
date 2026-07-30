@@ -29,6 +29,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('f1060000-ffff-0000-0000-000000000000','f1060000-0000-0000-0000-000000000051','f1060000-0000-0000-0000-000000000002','actor','attrs.location_id',to_jsonb('f1060000-0000-0000-0000-000000000010'::text),1001,0),
  ('f1060000-ffff-0000-0000-000000000000','f1060000-0000-0000-0000-000000000052','f1060000-0000-0000-0000-000000000003','actor','attrs.location_id',to_jsonb('f1060000-0000-0000-0000-000000000011'::text),1002,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting elsewhere↔room so M's cross-location
+-- arrival in (b) passes the accessibility floor. Portal is accessibility, NOT geometry (no coordinates).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('f1060000-0000-0000-0000-0000000000c1','f1060000-ffff-0000-0000-000000000000','artifact','portal-elsewhere-room-106');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('f1060000-0000-0000-0000-0000000000c1','f1060000-ffff-0000-0000-000000000000',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('f1060000-0000-0000-0000-000000000011','f1060000-0000-0000-0000-000000000010')));
+
 -- (a) Communicated S→L: BOTH resulting perceptions (speaker 'shared', listener 'told') must carry
 -- subject rows for S and L (about-ness = the source event's participants). 2 perceptions x 2
 -- subjects = 4 rows.

@@ -30,6 +30,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000040','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),400,0),
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000041','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000010'::text),401,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting tavern↔square so the beat's
+-- cross-location move passes the accessibility floor. Portal is accessibility, NOT geometry (no coords).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','artifact','portal-tavern-square-95');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('e5ffffff-0000-0000-0000-000000000010','e5ffffff-0000-0000-0000-000000000011')));
+
 SELECT lives_ok($$
   SELECT apply_beat(
     '11111111-1111-1111-1111-111111111111',

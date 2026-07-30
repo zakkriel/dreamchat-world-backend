@@ -59,6 +59,18 @@ func seedOrchestratorEntities(t *testing.T, ctx context.Context) {
 	if err != nil {
 		t.Fatalf("seed orchestrator walk movement_type: %v", err)
 	}
+	// Station F / §5.3: the door is a PERMITTING Portal (open ∧ ¬locked) connecting locA↔locB, so a
+	// cross-location ActorMoved locA→locB passes the new accessibility floor. Portal is accessibility,
+	// NOT geometry — it carries NO coordinates and never feeds fn_distance/fn_move_duration.
+	_, err = pool.Exec(ctx, `
+		INSERT INTO artifact_state (entity_id, world_id, attrs)
+		VALUES ($1, $2, jsonb_build_object('open', true, 'locked', false,
+		         'connects', jsonb_build_array($3::text, $4::text)))
+		ON CONFLICT (entity_id) DO NOTHING`,
+		doorID, worldID, locA, locB)
+	if err != nil {
+		t.Fatalf("seed orchestrator door portal: %v", err)
+	}
 }
 
 // TestRunBeatPassthroughAndAdjudicated verifies the full five-stage orchestrator loop:

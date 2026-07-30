@@ -80,6 +80,20 @@ func TestBeat_CanonAuthority_EveryCommittedEventIsGatedFreeform(t *testing.T) {
 		t.Fatalf("position player: %v", err)
 	}
 
+	// Station F / §5.3: a PERMITTING Portal (open ∧ ¬locked) connecting tavern↔square so the beat's
+	// cross-location move clears the accessibility floor. Inserted as an artifact_state row ONLY (no
+	// entity_registry row) — fn_portal_permits reads artifact_state and needs no registry row, so this
+	// preserves the seed entity count SQL test 40 asserts. Portal is accessibility, NOT geometry: no
+	// coordinates, never feeds fn_distance. Fixed UUID + ON CONFLICT so repeated Go runs are idempotent.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifact_state (entity_id, world_id, attrs)
+		VALUES ('e0000000-0000-0000-0000-0000000000c1', $1, jsonb_build_object('open', true, 'locked', false,
+		         'connects', jsonb_build_array($2::text, $3::text)))
+		ON CONFLICT (entity_id) DO NOTHING`,
+		worldID, seedTavernID, seedSquareID); err != nil {
+		t.Fatalf("seed canon-authority portal: %v", err)
+	}
+
 	var summary string
 	err := pool.QueryRow(ctx,
 		`SELECT apply_beat($1,$2,

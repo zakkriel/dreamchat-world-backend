@@ -82,6 +82,31 @@ func seedTensionGeometry(t *testing.T, ctx context.Context) {
 		worldID); err != nil {
 		t.Fatalf("seed tension walk movement_type: %v", err)
 	}
+	// Station F / §5.3: PERMITTING Portals (open ∧ ¬locked) between consecutive locations A↔B, B↔C,
+	// C↔D and the return D↔A, so every move in the tension chains clears the accessibility floor and
+	// the ONLY thing that can halt a cross is the §6 budget — never a missing portal. (The premise
+	// re-check runs BEFORE the budget check, so the over-budget C→D still needs a C↔D portal to REACH
+	// the budget halt.) Portal is accessibility, NOT geometry — no coordinates, never feeds fn_distance.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+		  ('f2000000-0000-0000-0000-0000000000c1', $1, 'artifact', 'portal A<->B'),
+		  ('f2000000-0000-0000-0000-0000000000c2', $1, 'artifact', 'portal B<->C'),
+		  ('f2000000-0000-0000-0000-0000000000c3', $1, 'artifact', 'portal C<->D'),
+		  ('f2000000-0000-0000-0000-0000000000c4', $1, 'artifact', 'portal D<->A')
+		ON CONFLICT (entity_id) DO NOTHING`,
+		worldID); err != nil {
+		t.Fatalf("seed tension portal entities: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+		  ('f2000000-0000-0000-0000-0000000000c1', $5, jsonb_build_object('open', true, 'locked', false, 'connects', jsonb_build_array($1::text, $2::text))),
+		  ('f2000000-0000-0000-0000-0000000000c2', $5, jsonb_build_object('open', true, 'locked', false, 'connects', jsonb_build_array($2::text, $3::text))),
+		  ('f2000000-0000-0000-0000-0000000000c3', $5, jsonb_build_object('open', true, 'locked', false, 'connects', jsonb_build_array($3::text, $4::text))),
+		  ('f2000000-0000-0000-0000-0000000000c4', $5, jsonb_build_object('open', true, 'locked', false, 'connects', jsonb_build_array($4::text, $1::text)))
+		ON CONFLICT (entity_id) DO NOTHING`,
+		tenA, tenB, tenC, tenD, worldID); err != nil {
+		t.Fatalf("seed tension portal state: %v", err)
+	}
 }
 
 // placeActorAt positions actorID at locationID by committing a 'move' canon_event + state_mutation

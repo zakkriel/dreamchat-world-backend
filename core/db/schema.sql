@@ -170,10 +170,11 @@ BEGIN
   -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
     to_loc := (p_attempt->>'to_location_id')::uuid;
-    IF NOT EXISTS (
-      SELECT 1 FROM entity_registry
-      WHERE entity_id = to_loc AND world_id = p_world_id
-    ) THEN
+    -- ACCESSIBILITY FLOOR (§5.3): destination exists (as before) AND a Portal permits here→dest. A
+    -- SAME-SCENE move (here == dest) is not a traversal and needs no portal. The whole decision lives
+    -- in the shared fn_actor_move_permitted so this twin, apply_ruled_event, and the Go premiseHolds
+    -- mirror never drift. Portal is accessibility, NOT geometry — this never touches fn_distance.
+    IF NOT fn_actor_move_permitted(p_world_id, p_actor_id, to_loc) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
@@ -395,10 +396,10 @@ BEGIN
   -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
     to_loc := (p_ruled->>'to_location_id')::uuid;
-    IF NOT EXISTS (
-      SELECT 1 FROM entity_registry
-      WHERE entity_id = to_loc AND world_id = p_world_id
-    ) THEN
+    -- ACCESSIBILITY FLOOR (§5.3): destination exists AND a Portal permits here→dest, unless it is a
+    -- SAME-SCENE move (here == dest, not a traversal). Shared fn_actor_move_permitted = same decision
+    -- as apply_event and the Go premiseHolds mirror (no twin drift). Accessibility, NOT geometry.
+    IF NOT fn_actor_move_permitted(p_world_id, actor_id, to_loc) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
@@ -654,6 +655,33 @@ CREATE FUNCTION public.causal_bundle_input_immutable() RETURNS trigger
 BEGIN
   RAISE EXCEPTION 'causal_bundle_input is immutable: UPDATE forbidden (bundle %, input %)',
     OLD.bundle_id, OLD.input_ref;
+END $$;
+
+
+--
+-- Name: fn_actor_move_permitted(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_actor_move_permitted(p_world_id uuid, p_actor_id uuid, p_to_loc uuid) RETURNS boolean
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_here uuid;
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM entity_registry WHERE entity_id = p_to_loc AND world_id = p_world_id
+  ) THEN
+    RETURN false;   -- destination not a registered entity: the existence floor (as before Portal)
+  END IF;
+
+  SELECT (attrs->>'location_id')::uuid INTO v_here
+    FROM actor_state WHERE world_id = p_world_id AND entity_id = p_actor_id;
+
+  IF v_here IS NULL OR v_here = p_to_loc THEN
+    RETURN true;    -- same-scene (or no origin): not a traversal → no portal required
+  END IF;
+
+  RETURN fn_portal_permits(p_world_id, v_here, p_to_loc);   -- cross-location: a portal must permit it
 END $$;
 
 
@@ -1332,6 +1360,24 @@ CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_en
   WHERE ce.event_type = 'world_genesis'
   ORDER BY vp.acquired_tick
   LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_portal_permits(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_portal_permits(p_world_id uuid, p_from uuid, p_to uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT EXISTS (
+    SELECT 1 FROM artifact_state
+    WHERE world_id = p_world_id
+      AND attrs->>'open'   = 'true'
+      AND attrs->>'locked' = 'false'
+      AND attrs->'connects' ? p_from::text
+      AND attrs->'connects' ? p_to::text
+  );
 $$;
 
 
@@ -2629,4 +2675,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260726100001'),
     ('20260729100001'),
     ('20260729100002'),
-    ('20260729100003');
+    ('20260729100003'),
+    ('20260729100004');

@@ -26,6 +26,15 @@ VALUES ('e5000000-0000-0000-0000-000000000080','cccccccc-cccc-cccc-cccc-cccccccc
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value, valid_from_tick, valid_from_seq)
 VALUES ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-000000000080','cccccccc-cccc-cccc-cccc-cccccccccccc','actor','attrs.location_id', to_jsonb('e5ffffff-0000-0000-0000-000000000001'::text),1200,0);
 
+-- Station F / §5.3: a PERMITTING portal (open ∧ ¬locked) connecting tavern↔vault so the identical
+-- move beat passes the accessibility floor on BOTH runs. Portal is accessibility, NOT geometry (no coords).
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111','artifact','portal-tavern-vault-97');
+INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+ ('e5ffffff-0000-0000-0000-0000000000c1','11111111-1111-1111-1111-111111111111',
+  jsonb_build_object('open', true, 'locked', false,
+    'connects', jsonb_build_array('e5ffffff-0000-0000-0000-000000000010','e5ffffff-0000-0000-0000-000000000001')));
+
 -- RUN 1 — fresh setup Player→tavern-uuid, then the beat [move to vault-uuid] at start_tick 1300.
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
                          status, accepted_at, visibility_scope, origin)
