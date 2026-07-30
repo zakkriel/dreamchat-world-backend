@@ -302,12 +302,17 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  -- §4 ObjectRelocated physics has something to grab: a Container instance (ballast crate) + a heavy
  -- ballast stone inside it. crate = (empty_weight 8 + effective_weight(stone 92)) × 1 = 100 kg; Kade's
  -- max_load is 80, so "grab the crate → encumbered" is REACHABLE (the eager rule flips it on that commit).
- -- The crate is a mundane container (weight_modifier absent → 1). It sits on the tavern floor (contained_by
- -- the tavern) by the hatch {2,9}; the stone lives inside the crate. size-2 stone (vol 4) fits max_room 16.
+ -- The crate RESTS on the tavern floor: like the bar (f1) above, that is attrs.location_id = the tavern
+ -- (a location is not a carrier -- `contained_by` is the carry-chain key for "inside a container / held
+ -- by an actor", which this crate is not, yet). fn_distance's artifact-scene COALESCE has no other
+ -- source of scene (current_scene_id is never written), so an omitted location_id here would silently
+ -- resolve to NULL and fn_distance(Kade, crate) would silently read 0 instead of the true ~8.94 m.
+ -- The crate is a mundane container (weight_modifier absent → 1), by the hatch {2,9}; the stone lives
+ -- inside the crate (attrs.contained_by = the crate). size-2 stone (vol 4) fits max_room 16.
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.max_room',          to_jsonb(16),                 40,43),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.empty_weight',      to_jsonb(8),                  40,44),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.size',              to_jsonb(4),                  40,45),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.contained_by',      to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,46),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.location_id',       to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,46),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.coordinates',        '{"x":2,"y":9}'::jsonb,       40,47),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f3','artifact','attrs.weight',            to_jsonb(92),                 40,48),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f3','artifact','attrs.size',              to_jsonb(2),                  40,49),

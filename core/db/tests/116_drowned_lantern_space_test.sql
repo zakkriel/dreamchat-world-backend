@@ -23,7 +23,7 @@
 --     Mara {6,10} behind the bar, Jonas {5,8} by it, the hooded woman {1,1} at the corner table.
 -- =====================================================================================
 BEGIN;
-SELECT plan(5);
+SELECT plan(6);
 
 -- (a) THE in-scene distance is real geometry: Kade → the bar is a few meters, not 0/NULL. The nearest
 -- common parent is the tavern (both share the scene), so fn_distance reads their own in-scene
@@ -103,6 +103,23 @@ SELECT is(
    ) s),
   5,
   '(e) Kade, Mara, Jonas, the hooded woman + the bar each carry coordinates and sit in the tavern');
+
+-- (f) GUARD against the silent-zero regression this file exists to prevent: the ballast crate (f2) is
+-- located by attrs.location_id (like the bar, f1), NOT attrs.contained_by. fn_distance's artifact->scene
+-- resolution is COALESCE(attrs->>'location_id', current_scene_id) — current_scene_id is never written
+-- anywhere in this schema (permanently NULL), so an omitted location_id here would silently resolve the
+-- crate's scene to NULL and fn_distance(Kade, crate) would silently read 0 instead of the true distance.
+-- Kade {6,1}, crate {2,9} ⇒ sqrt((6-2)^2 + (1-9)^2) = sqrt(80) ≈ 8.944 m — assert the true positive
+-- distance (8 < d < 9), never 0.
+SELECT ok(
+  fn_distance('22222222-2222-2222-2222-222222222222',
+              '2ac70000-0000-0000-0000-0000000000a1',   -- Kade
+              '2a7f0000-0000-0000-0000-0000000000f2')    -- ballast crate
+    > 8
+  AND fn_distance('22222222-2222-2222-2222-222222222222',
+                  '2ac70000-0000-0000-0000-0000000000a1',
+                  '2a7f0000-0000-0000-0000-0000000000f2') < 9,
+  '(f) fn_distance(Kade, crate) = sqrt(80) ~ 8.94 m via attrs.location_id -- NOT 0 (the silent-zero regression)');
 
 SELECT * FROM finish();
 ROLLBACK;
