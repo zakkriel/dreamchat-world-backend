@@ -1254,6 +1254,78 @@ $$;
 
 
 --
+-- Name: fn_fact_sheet(uuid, uuid, uuid[], boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_fact_sheet(p_world_id uuid, p_viewer uuid, p_involved uuid[], p_truth_side boolean) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT jsonb_build_object(
+    -- ALWAYS json null: beat state the orchestrator fills, never an entity fact (see header).
+    'budget_remaining', NULL::jsonb,
+    'targets', COALESCE(
+      (SELECT jsonb_agg(s.obj ORDER BY s.ord)
+       FROM (
+         SELECT
+           t.ord,
+           jsonb_build_object(
+             'id',              t.target_id,
+             'kind',            er.entity_kind,
+             'name',            er.canonical_name,
+             'distance_m',      fn_distance(p_world_id, p_viewer, t.target_id),
+             'move_duration_s', fn_move_duration_actor(p_world_id, p_viewer, t.target_id),
+             -- same-scene is trivially reachable; else a Portal must permit viewer_scene → target_scene.
+             -- COALESCE folds a NULL scene comparison to false so an unresolved scene never yields a
+             -- null `reachable` (json false, not json null).
+             'reachable',       COALESCE(vs.scene = ts.scene, false)
+                                OR fn_portal_permits(p_world_id, vs.scene, ts.scene),
+             -- PORTAL facts (target has `connects`): the Tier-1 open/locked booleans; else json null.
+             'open',            CASE WHEN art.attrs ? 'connects' THEN art.attrs->'open'   ELSE NULL::jsonb END,
+             'locked',          CASE WHEN art.attrs ? 'connects' THEN art.attrs->'locked' ELSE NULL::jsonb END,
+             -- OBJECT facts (target has `size`): recursive effective weight, derived volume, and whether
+             -- grabbing it would encumber THIS viewer (weight > the viewer's max_load); else json null.
+             'weight_kg',       CASE WHEN art.attrs ? 'size'
+                                     THEN fn_effective_weight(p_world_id, t.target_id)
+                                     ELSE NULL::numeric END,
+             'volume',          CASE WHEN art.attrs ? 'size'
+                                     THEN fn_volume((art.attrs->>'size')::int)
+                                     ELSE NULL::numeric END,
+             'would_encumber',  CASE WHEN art.attrs ? 'size'
+                                     THEN fn_effective_weight(p_world_id, t.target_id)
+                                          > (SELECT (a.attrs->>'max_load')::numeric FROM actor_state a
+                                             WHERE a.world_id = p_world_id AND a.entity_id = p_viewer)
+                                     ELSE NULL::boolean END,
+             -- CONTAINER facts (target has `max_room`): the ids it holds (contents = artifacts whose
+             -- contained_by = the container). THE WALL: truth-side always shows them; perceived-side
+             -- withholds a CLOSED container's contents (json null). Non-container → json null.
+             'contents',        CASE
+                                  WHEN NOT (art.attrs ? 'max_room') THEN NULL::jsonb
+                                  WHEN p_truth_side OR art.attrs->>'open' = 'true' THEN
+                                    COALESCE(
+                                      (SELECT jsonb_agg(c.entity_id::text ORDER BY c.entity_id)
+                                       FROM artifact_state c
+                                       WHERE c.world_id = p_world_id
+                                         AND (c.attrs->>'contained_by')::uuid = t.target_id),
+                                      '[]'::jsonb)
+                                  ELSE NULL::jsonb
+                                END
+           ) AS obj
+         FROM unnest(p_involved) WITH ORDINALITY AS t(target_id, ord)
+         JOIN entity_registry er
+           ON er.world_id = p_world_id AND er.entity_id = t.target_id
+         LEFT JOIN artifact_state art
+           ON art.world_id = p_world_id AND art.entity_id = t.target_id
+         -- scene resolution (§3), reusing the move gate's resolver so facts never disagree with commits.
+         LEFT JOIN LATERAL fn_target_position(p_world_id, t.target_id) AS ts ON true
+         LEFT JOIN LATERAL fn_target_position(p_world_id, p_viewer)    AS vs ON true
+         WHERE t.target_id <> p_viewer            -- one entry per involved id EXCEPT the viewer itself
+       ) s),
+      '[]'::jsonb)                                -- no targets (only the viewer, or empty) → empty array
+  );
+$$;
+
+
+--
 -- Name: fn_isolated_npcs(uuid, uuid[], uuid[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2805,4 +2877,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100004'),
     ('20260729100005'),
     ('20260729100006'),
-    ('20260729100007');
+    ('20260729100007'),
+    ('20260730100001');
