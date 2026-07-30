@@ -94,7 +94,7 @@ func TestTelegraphEndsBeat(t *testing.T) {
 		{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2},
 		{Type: "Communicated", Stated: "I slip him the note", ListenerID: id.J, Content: "here"},
 	}
-	outcome, err := orc.RunBeat(ctx, id.World, id.P, chain, baseTick)
+	outcome, err := orc.RunBeat(ctx, id.World, id.P, chain, baseTick, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
@@ -218,7 +218,7 @@ func TestTelegraphPremiseGeneralized_EntityDestroyed(t *testing.T) {
 	const goneTarget = "dead0000-0000-0000-0000-000000000000"
 	chain := []Attempt{{Type: "EntityDestroyed", Stated: "I smash the lantern", TargetID: goneTarget}}
 
-	outcome, err := orc.RunBeat(ctx, id.World, id.P, chain, baseTick)
+	outcome, err := orc.RunBeat(ctx, id.World, id.P, chain, baseTick, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}

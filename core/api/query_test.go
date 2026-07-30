@@ -362,7 +362,7 @@ func TestQueryBeat_ReactionLeadingQuery_NeverReachesReferee(t *testing.T) {
 
 	const q = "how far to the bar?"
 	reactionChain := []Attempt{{Type: "QUERY", Stated: q, QueryTargetIDs: []string{id.Note}}}
-	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, q)
+	out, err := orc.RunReactionBeat(ctx, id.World, id.P, reactionChain, held, reactTick, q, nil)
 	if err != nil {
 		t.Fatalf("RunReactionBeat: %v", err)
 	}

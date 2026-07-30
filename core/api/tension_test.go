@@ -172,7 +172,7 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 		{Type: "ActorMoved", Stated: "I cross to D", ToTargetID: tenD},
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+1)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+1, nil)
 	if err != nil {
 		t.Fatalf("RunBeat (cumulative): %v", err)
 	}
@@ -221,7 +221,7 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	noneChain := []Attempt{
 		{Type: "ActorMoved", Stated: "I make the long crossing to A", ToTargetID: tenA},
 	}
-	noneOutcome, err := orc.RunBeat(ctx, worldID, playerID, noneChain, noneTick+1)
+	noneOutcome, err := orc.RunBeat(ctx, worldID, playerID, noneChain, noneTick+1, nil)
 	if err != nil {
 		t.Fatalf("RunBeat (none): %v", err)
 	}

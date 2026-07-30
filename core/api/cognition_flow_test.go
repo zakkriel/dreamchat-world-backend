@@ -168,7 +168,7 @@ func TestCognitionFlow(t *testing.T) {
 
 		orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
 
-		outcome, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick)
+		outcome, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick, nil)
 		if err != nil {
 			t.Fatalf("RunBeat: %v", err)
 		}
@@ -212,7 +212,7 @@ func TestCognitionFlow(t *testing.T) {
 
 		orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
 
-		if _, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick); err != nil {
+		if _, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick, nil); err != nil {
 			t.Fatalf("RunBeat: %v", err)
 		}
 		if resolve.calls < 1 {
@@ -233,7 +233,7 @@ func TestCognitionFlow(t *testing.T) {
 
 		orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
 
-		outcome, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick)
+		outcome, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick, nil)
 		if err != nil {
 			t.Fatalf("RunBeat: %v", err)
 		}

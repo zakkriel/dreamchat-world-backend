@@ -176,17 +176,27 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Unit 3 — the reasoning trace. Build a BeatTrace ONLY in debug (else nil); it threads through the
+	// whole per-beat call tree (nil-safe end-to-end), so a non-debug beat pays ~zero and its response is
+	// byte-identical. It is TRUTH-REVEALING (truth-side referee reasoning), so it is emitted below ONLY
+	// when debug — a real player (never in debug) must never receive it (RULINGS-2026-07-23 §9).
+	var trace *BeatTrace
+	if h.dbg {
+		trace = NewBeatTrace(chain)
+	}
+
 	var outcome BeatOutcome
 	if len(held) > 0 {
-		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, in.Text)
+		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, in.Text, trace)
 	} else {
-		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick)
+		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick, trace)
 	}
 	if err != nil {
 		log.Printf("beat error: %v", err)
 		http.Error(w, "beat failed", http.StatusInternalServerError)
 		return
 	}
+	trace.Finish(outcome) // nil-safe: copies the halt reason, committed ids, and query answers onto the trace
 
 	// 4. perception payload AFTER — the narrate seat is perception-bound (ADR-020, no omniscient pass).
 	post, err := h.payload(ctx, worldID, viewerID)
@@ -252,7 +262,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	messages, narration := narrateMessages(segments, labelFor)
 
 	w.Header().Set("Content-Type", "application/json")
-	resp, _ := json.Marshal(map[string]any{
+	respBody := map[string]any{
 		"schema_version": "beat_result/3",
 		"narration":      narration, // legacy narrator-view fallback text — kept for old clients
 		"messages":       messages,
@@ -263,7 +273,14 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"unresolved_candidates": outcome.UnresolvedCandidates,
 			"telegraphs":            outcome.Telegraphs,
 		},
-	})
+	}
+	// THE WALL (truth-revealing → debug-only): the reasoning_log key is present ONLY when a trace was
+	// built (i.e. h.dbg). When NOT debug, trace is nil and the key is ABSENT ENTIRELY from the response —
+	// not null, absent — so a real player's response is byte-identical to before Unit 3 (design §Unit 3).
+	if trace != nil {
+		respBody["reasoning_log"] = trace
+	}
+	resp, _ := json.Marshal(respBody)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(resp)
 }

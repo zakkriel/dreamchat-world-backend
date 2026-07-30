@@ -109,7 +109,7 @@ func TestWorldFirst_FeedsPerceivedFactSheetToCognition(t *testing.T) {
 	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: "[]"}
 	orc := &Orchestrator{DB: pool, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
 
-	if _, err := orc.worldFirst(ctx, world, k, attempt, 80000, 0); err != nil {
+	if _, err := orc.worldFirst(ctx, world, k, attempt, 80000, 0, nil); err != nil {
 		t.Fatalf("worldFirst: %v", err)
 	}
 	if len(batch.prompts) == 0 {

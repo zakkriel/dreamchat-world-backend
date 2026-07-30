@@ -76,7 +76,11 @@ type ActorAttempt struct {
 //
 // The per-attempt loop itself lives in runChain, which RunReactionBeat's post-collision remainder
 // also uses — a normal chain is a normal chain wherever it runs (RULINGS-2026-07-24 §2).
-func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64) (BeatOutcome, error) {
+//
+// trace is the Unit 3 reasoning log (nil except in debug): it is threaded through the whole per-beat
+// call tree so each stage appends what it computed, and is nil-safe end-to-end (a nil trace's append
+// methods are no-ops, so a non-debug beat pays ~zero and behaves byte-identically).
+func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, trace *BeatTrace) (BeatOutcome, error) {
 	outcome := BeatOutcome{
 		Committed:            []string{},
 		UnresolvedCandidates: []string{},
@@ -88,7 +92,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 	if err != nil {
 		return outcome, fmt.Errorf("beat budget: %w", err)
 	}
-	if err := o.runChain(ctx, worldID, actorID, chain, startTick, 0, budgetRemaining, &outcome); err != nil {
+	if err := o.runChain(ctx, worldID, actorID, chain, startTick, 0, budgetRemaining, &outcome, trace); err != nil {
 		return outcome, err
 	}
 	return outcome, nil
@@ -109,7 +113,7 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 // chain (turn_budget) WITHOUT committing — the prefix stands. `none` passes ∞ (math.MaxInt64), so it
 // never blocks. Non-move steps have no computable duration in v1 and consume 0 (Way-A long-action
 // accumulation is a later station, §6).
-func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, budgetRemaining int64, outcome *BeatOutcome) error {
+func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, budgetRemaining int64, outcome *BeatOutcome, trace *BeatTrace) error {
 	curTick := startTick
 	curSeq := startSeq
 
@@ -143,7 +147,7 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		// worldFirst does the §5 mechanical split (batch = public moment only; secret-holders
 		// isolated) and commits each NPC decision (passthrough via apply_event, adjudicated via
 		// o.adjudicate). It returns how many (tick,seq) slots the NPC commits consumed.
-		wf, err := o.worldFirst(ctx, worldID, actorID, attempt, curTick, curSeq)
+		wf, err := o.worldFirst(ctx, worldID, actorID, attempt, curTick, curSeq, trace)
 		if err != nil {
 			return fmt.Errorf("worldFirst stage1: %w", err)
 		}
@@ -201,7 +205,21 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 					return fmt.Errorf("fn_move_duration_actor: %w", derr)
 				}
 				dur = d
-				if dur > budgetRemaining || dur > math.MaxInt64-curTick {
+				overBudget := dur > budgetRemaining || dur > math.MaxInt64-curTick
+				// Trace (Unit 3): capture the move's physics + the §6 gate result. The perceived fact
+				// sheet is a DEBUG-ONLY extra read, so it is gated on trace != nil — a non-debug beat
+				// (nil trace) issues NO extra query and pays zero. A capture-read failure degrades (log +
+				// record without the sheet) rather than failing the beat: the trace is a debug affordance,
+				// never load-bearing for the commit.
+				if trace != nil {
+					fs, fsErr := o.factSheetJSON(ctx, worldID, actorID, []string{attempt.ToTargetID}, false)
+					if fsErr != nil {
+						log.Printf("trace: move fact sheet failed (debug-only capture, degrading): %v", fsErr)
+						fs = ""
+					}
+					trace.appendMove(attempt, fs, dur, budgetRemaining, !overBudget)
+				}
+				if overBudget {
 					outcome.HaltReason = "turn_budget"
 					outcome.TicksAdvanced = curTick - startTick
 					return nil
@@ -243,7 +261,7 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		default:
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated,
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
-			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "")
+			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "", trace)
 			if adjErr != nil {
 				return adjErr
 			}
@@ -328,7 +346,7 @@ func pendingHeldOutcomes(ctx context.Context, db *pgxpool.Pool, worldID string) 
 // watch" (RULINGS-2026-07-24 §7). When a first attempt exists, its own `stated` field already
 // carries the player's words per §2, so forwarding the raw text too would double-inject; it is
 // dropped in that branch.
-func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID string, chain []Attempt, held []HeldOutcome, startTick int64, playerAnswer string) (BeatOutcome, error) {
+func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID string, chain []Attempt, held []HeldOutcome, startTick int64, playerAnswer string, trace *BeatTrace) (BeatOutcome, error) {
 	outcome := BeatOutcome{
 		Committed:            []string{},
 		UnresolvedCandidates: []string{},
@@ -373,7 +391,7 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		answer = playerAnswer
 	}
 
-	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0, answer)
+	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0, answer, trace)
 	if err != nil {
 		return outcome, err
 	}
@@ -394,7 +412,7 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		if err != nil {
 			return outcome, fmt.Errorf("reaction beat budget: %w", err)
 		}
-		if err := o.runChain(ctx, worldID, playerID, chain[1:], startTick, ar.SeqAdvance, budgetRemaining, &outcome); err != nil {
+		if err := o.runChain(ctx, worldID, playerID, chain[1:], startTick, ar.SeqAdvance, budgetRemaining, &outcome, trace); err != nil {
 			return outcome, err
 		}
 		return outcome, nil
@@ -426,7 +444,7 @@ type worldFirstResult struct {
 //	one isolated call per flagged NPC, validated against exactly her own id.
 //
 // Deterministic processing order: batch response order first, then isolated NPCs by uuid asc.
-func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string, attempt Attempt, tick int64, seq int) (worldFirstResult, error) {
+func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string, attempt Attempt, tick int64, seq int, trace *BeatTrace) (worldFirstResult, error) {
 	var res worldFirstResult
 
 	// present roster on the player's location; npcs = present − player.
@@ -524,7 +542,9 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			// is rejected by DecodeAndValidateNPCDecisions' allowlist (non-present-for-this-call).
 			log.Printf("worldFirst: batch cognition decode/validate failed (seat=%s, actors=%v, imminent=%s): %v", o.CognitionBatch.Name(), batchIDs, bImminent, decErr)
 		} else {
-			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
+			// Trace (Unit 3): record each batch NPC's world-first decision (none/commit/telegraph).
+			trace.appendDecisions(decisions)
+			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res, trace)
 			if applyErr != nil {
 				return res, applyErr
 			}
@@ -573,7 +593,9 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 				log.Printf("worldFirst: isolated cognition decode/validate failed (seat=%s, actor=%s, imminent=%s): %v", o.CognitionIsolated.Name(), npcID, iImminent, decErr)
 				continue
 			}
-			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res)
+			// Trace (Unit 3): record this isolated NPC's world-first decision (none/commit/telegraph).
+			trace.appendDecisions(decisions)
+			advance, applyErr := o.applyNPCDecisions(ctx, worldID, decisions, tick, localSeq, &res, trace)
 			if applyErr != nil {
 				return res, applyErr
 			}
@@ -591,7 +613,7 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 // type goes through o.adjudicate with the NPC as the ActorAttempt actor — the same resolve
 // pipeline the player's attempts use. `none` is a skip; `telegraph` is recorded (Task 5 replaces
 // this stub with the held-outcome write + beat-end).
-func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, decisions []NPCDecision, tick int64, startSeq int, res *worldFirstResult) (int, error) {
+func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, decisions []NPCDecision, tick int64, startSeq int, res *worldFirstResult, trace *BeatTrace) (int, error) {
 	localSeq := startSeq
 	for _, dec := range decisions {
 		if dec.Reaction == nil {
@@ -617,7 +639,7 @@ func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, de
 				// Adjudicated types (OwnershipAccessChanged|EntityDestroyed|AttributeChanged, …):
 				// the SAME resolve pipeline the player uses — a "trusted NPC" fast path is a named
 				// consistency hole (FINAL-world-npc-cognition "No bypass").
-				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq, "")
+				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq, "", trace)
 				if err != nil {
 					return localSeq - startSeq, fmt.Errorf("npc adjudicate: %w", err)
 				}
@@ -987,7 +1009,7 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 //
 // playerAnswer is empty on every call except RunReactionBeat's empty-chain branch
 // (RULINGS-2026-07-24 §7) — see buildResolvePrompt for the rendering rule.
-func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string) (adjResult, error) {
+func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string, trace *BeatTrace) (adjResult, error) {
 	// Flatten the raw attempts for participant-ID collection and slice gathering.
 	attempts := make([]Attempt, 0, len(set))
 	for _, aa := range set {
@@ -1139,11 +1161,16 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 		decodeErr = nil
 	}
 
-	// After two attempts, if still broken → bounce.
+	// After two attempts, if still broken → bounce (no valid ruling to trace).
 	if decodeErr != nil || len(violations) > 0 {
 		log.Printf("adjudicate: bounce after repair (seat=%s, actors=%v)", o.Resolve.Name(), actorIDs)
 		return adjResult{Halt: "bounce"}, nil
 	}
+
+	// Trace (Unit 3): capture the referee's own reasoning → therefore → outcome + the TRUTH-SIDE fact
+	// sheet it reasoned from (never walled — this is why the trace is debug-only). Recorded here, once a
+	// valid ruling is in hand, so an `impossible` verdict is captured too (before its bounce below).
+	trace.appendRuling(actorIDs, factSheet, ruling)
 
 	// impossible → bounce (nothing written).
 	if ruling.Therefore == "impossible" {

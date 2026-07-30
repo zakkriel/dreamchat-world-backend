@@ -155,7 +155,7 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 		},
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestRunBeatPremiseBreakStopsChain(t *testing.T) {
 		},
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
@@ -343,7 +343,7 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 		},
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
@@ -445,7 +445,7 @@ func TestRunBeatZeroDurationMoveKeepsSeqMonotonic(t *testing.T) {
 		{Type: "Communicated", Stated: "I lean in and speak", ListenerID: maraID, Content: "a word"},
 	}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2, nil)
 	if err != nil {
 		t.Fatalf("RunBeat (zero-duration move + say must not collide): %v", err)
 	}
@@ -552,7 +552,7 @@ func TestRunBeatEntityCreatedRoutesAndCommits(t *testing.T) {
 	// The player's attempt is an EntityCreated intent → routes to adjudicate (not passthrough).
 	chain := []Attempt{{Type: "EntityCreated", Stated: "I forge a dagger from the starmetal shard"}}
 
-	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2)
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+2, nil)
 	if err != nil {
 		t.Fatalf("RunBeat (EntityCreated route): %v", err)
 	}
