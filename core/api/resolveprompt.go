@@ -19,13 +19,32 @@ var resolveSystemHeader string
 // header carries it verbatim; the content test greps for it to prove the rule reaches the model.
 const resolveSpeechIsOwnEventMarker = "OWN Communicated event"
 
+// resolveFactsRuleMarker is the load-bearing substring of the reason-from-computed-facts rule
+// (Grounded Reasoning / Unit 1 → adjudication): the FACTS section is engine-computed truth the referee
+// must reason FROM, never contradict or invent. resolve.txt carries it verbatim; the content test greps
+// for it to prove the rule reaches the model.
+const resolveFactsRuleMarker = "reason from these"
+
 // buildResolvePrompt renders the referee prompt. playerAnswer is empty on every call except a
 // reaction whose decompose emitted ZERO attempts — see the RULINGS-2026-07-24 §7 comment below.
-func buildResolvePrompt(slice string, set []ActorAttempt, repairErrs []string, playerAnswer string) string {
+//
+// factSheet is the action-scoped, TRUTH-SIDE physics fact sheet computed by fn_fact_sheet (Grounded
+// Reasoning / Unit 1): the deterministic distances, move durations, reachability, weight, and lock/open
+// state among the involved entities. It is rendered as its OWN section AFTER the gathered slice and
+// BEFORE the mutable attempt tail, preserving the stable→mutable cache layout (the header + slice +
+// facts are stable across a repair retry; only the attempts/repair block change). Empty ⇒ omitted (a
+// degenerate adjudicate with no involved entities has nothing to compute).
+func buildResolvePrompt(slice string, factSheet string, set []ActorAttempt, repairErrs []string, playerAnswer string) string {
 	var sb strings.Builder
 	sb.WriteString(resolveSystemHeader)
 	sb.WriteString("\n\nFACTS (the gathered slice):\n")
 	sb.WriteString(slice)
+	// The engine-computed physics facts (Unit 1). Rendered right after the slice, before the attempts, so
+	// the referee reasons FROM the measured truth (distance/duration/reachability) instead of guessing it.
+	if factSheet != "" {
+		sb.WriteString("\n\nFACTS (computed by the engine — reason from these; do not invent distances, durations, or reachability):\n")
+		sb.WriteString(factSheet)
+	}
 	sb.WriteString("\n\nATTEMPT(S) to resolve (one combined judgment covering all of them):\n")
 	// One line per attempt, attributed to its actor — the referee must know who does what
 	// (RULINGS-2026-07-23 §9's wall note licenses the referee to see all involved parties).

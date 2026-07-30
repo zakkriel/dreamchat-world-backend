@@ -868,6 +868,23 @@ func (o *Orchestrator) applyEvent(ctx context.Context, worldID, actorID string, 
 	return result, nil
 }
 
+// factSheetJSON returns the action-scoped fact sheet computed by fn_fact_sheet (Grounded Reasoning /
+// Unit 1) for the involved entities relative to viewer, as the raw jsonb rendered to a string — ready
+// to embed verbatim in a seat prompt. The engine computes the deterministic physics facts (distance,
+// move duration, reachability, weight, lock/open state) AMONG the involved entities so the seat reasons
+// FROM computed truth instead of inventing it ("the reasoning was detached from the math"). truthSide
+// selects the referee flavor (true — never walled, RULINGS-2026-07-23 §9) vs the perception-scoped
+// character-mind flavor (false, for cognition/narrate — Units 2/3).
+func (o *Orchestrator) factSheetJSON(ctx context.Context, worldID, viewer string, involved []string, truthSide bool) (string, error) {
+	var raw []byte
+	if err := o.DB.QueryRow(ctx,
+		`SELECT fn_fact_sheet($1::uuid, $2::uuid, $3::uuid[], $4)`,
+		worldID, viewer, involved, truthSide).Scan(&raw); err != nil {
+		return "", fmt.Errorf("fn_fact_sheet: %w", err)
+	}
+	return string(raw), nil
+}
+
 // collectParticipantIDs gathers all UUID fields from a single Attempt (for backward compat).
 func (o *Orchestrator) collectParticipantIDs(a Attempt) []string {
 	return collectParticipantIDsFromAttempts([]Attempt{a})
@@ -988,7 +1005,25 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	for _, aa := range set {
 		actorIDs = append(actorIDs, aa.ActorID)
 	}
-	prompt := buildResolvePrompt(sliceJSON, set, nil, playerAnswer)
+
+	// Grounded Reasoning / Unit 1 → adjudication: hand the referee the engine's COMPUTED physics facts
+	// so it reasons FROM measured truth (distance/duration/reachability) instead of guessing. TRUTH-SIDE
+	// (p_truth_side=true): the referee is never walled (RULINGS-2026-07-23 §9). Viewer = the primary
+	// acting actor (set[0]); involved = the SAME ids gathered for the slice, so the facts cover exactly
+	// the entities in the ruling. budget_remaining stays null in v1 — it is beat-state (runChain's
+	// tension logic), not an entity fact, and the entity physics facts are the adjudication value; wiring
+	// the live budget in is a clean follow-up. Skipped only for the degenerate empty-set/empty-ids call
+	// (nothing to compute); a fact-sheet read failure is a hard error like the gather above.
+	factSheet := ""
+	if len(set) > 0 && set[0].ActorID != "" && len(ids) > 0 {
+		fs, fsErr := o.factSheetJSON(ctx, worldID, set[0].ActorID, ids, true)
+		if fsErr != nil {
+			return adjResult{}, fmt.Errorf("fact sheet: %w", fsErr)
+		}
+		factSheet = fs
+	}
+
+	prompt := buildResolvePrompt(sliceJSON, factSheet, set, nil, playerAnswer)
 	var ruling RulingV2
 	var violations []string
 	var decodeErr error
@@ -1003,7 +1038,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 			} else {
 				repairErrs = violations
 			}
-			p = buildResolvePrompt(sliceJSON, set, repairErrs, playerAnswer)
+			p = buildResolvePrompt(sliceJSON, factSheet, set, repairErrs, playerAnswer)
 		}
 
 		rawRuling, genErr := o.Resolve.Generate(ctx, GenRequest{
