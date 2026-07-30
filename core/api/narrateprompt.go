@@ -69,6 +69,17 @@ const narrateEmbeddedQuoteMarker = "attributed ACTION segment"
 // (never a JSON blob) — the beat is never failed on formatting.
 const narrateSegmentContractMarker = "OUTPUT — STRUCTURED NARRATION SEGMENTS"
 
+// narrateQueryRuleMarker is the load-bearing substring of the answer-the-listed-questions rule
+// (Grounded Reasoning / Unit 2): the narrator answers each QUESTIONS THE PLAYER ASKED entry in-world
+// FROM its computed facts, and a withheld/absent fact means "you can't tell from here" — never invent
+// it. It lives BEFORE the segment contract so the plain fallback carries it too; a test greps for it.
+const narrateQueryRuleMarker = "ANSWER THE PLAYER'S QUESTIONS"
+
+// narrateQueryBlockMarker is the load-bearing substring of the rendered QUESTIONS block header — the
+// per-beat section carrying the read-only queries + their perceived fact sheets (Unit 2). The query
+// tests grep for it to prove a QUERY's answer reaches the narrator.
+const narrateQueryBlockMarker = "QUESTIONS THE PLAYER ASKED"
+
 // Text lives in prompts/narrate.txt (core/api/prompts/README.md) — every fixed prompt rulebook
 // readable in one place, config-style, mirroring the schema/*.json + go:embed pattern. The founder
 // envelope added the segmenting contract ON TOP of the existing rules (all of them apply per segment).
@@ -113,15 +124,18 @@ func narrateBaseRules() string {
 // for halt "completed", a genuine quiet moment, not a failed/rejected/halted one). When the delta is
 // empty AND haltReason is one of nothingResolvedHalts, a NOTHING RESOLVED section renders before the
 // perception blocks so the model is told nothing committed instead of inferring a scene from silence.
-func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
-	return narrateSystemHeader + narrateSceneBody(payload, viewerID, preIDs, haltReason)
+// queryAnswers (Grounded Reasoning / Unit 2) is passed VARIADIC so the many existing direct-call sites
+// (narration_test / seatprompt_test) stay source-compatible — a beat with no questions spreads a nil
+// slice to zero args and the QUESTIONS block is omitted; beathandler spreads outcome.QueryAnswers.
+func buildNarratePrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string, queryAnswers ...QueryAnswer) string {
+	return narrateSystemHeader + narrateSceneBody(payload, viewerID, preIDs, haltReason, queryAnswers...)
 }
 
 // buildNarrateRepairPrompt is the ONE repair re-ask after a structured attempt failed the schema or the
 // belt (ghost speaker / non-verbatim speech): the same structured prompt with the exact violations
 // attached, mirroring the resolve seat's repair pattern. Still a structured (schema-carrying) call.
-func buildNarrateRepairPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason, prevErr string) string {
-	return buildNarratePrompt(payload, viewerID, preIDs, haltReason) +
+func buildNarrateRepairPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason, prevErr string, queryAnswers ...QueryAnswer) string {
+	return buildNarratePrompt(payload, viewerID, preIDs, haltReason, queryAnswers...) +
 		"\n\nYOUR PREVIOUS ANSWER WAS REJECTED — fix exactly this and answer again with the segment array:\n" + prevErr
 }
 
@@ -129,17 +143,17 @@ func buildNarrateRepairPrompt(payload PerceptionPayload, viewerID string, preIDs
 // rules only (segment contract sliced off) plus a prose-only instruction, over the identical scene. It
 // is issued WITHOUT a schema so the model returns clean prose, which the handler wraps as a single
 // narration segment — the beat is never failed on formatting.
-func buildNarratePlainPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
+func buildNarratePlainPrompt(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string, queryAnswers ...QueryAnswer) string {
 	return narrateBaseRules() +
 		"\n\nOutput is prose only: a single flowing narration — no JSON, no segments, no headings, no lists, no notes to the reader." +
-		narrateSceneBody(payload, viewerID, preIDs, haltReason)
+		narrateSceneBody(payload, viewerID, preIDs, haltReason, queryAnswers...)
 }
 
 // narrateSceneBody assembles everything after the header: PLACE, the PRESENT roster (each entry
 // "label [id]" so a segment can attribute speech/actions by id), YOU ARE, the NOTHING RESOLVED context,
 // and the delta-first WHAT JUST HAPPENED / RECENT BACKGROUND blocks. Shared verbatim by the structured,
 // repair, and plain-fallback prompts so the scene the model renders never changes between attempts.
-func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string) string {
+func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string, queryAnswers ...QueryAnswer) string {
 	var sb strings.Builder
 
 	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'), with its
@@ -219,6 +233,23 @@ func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[str
 		for _, l := range background {
 			sb.WriteString("- ")
 			sb.WriteString(l)
+			sb.WriteString("\n")
+		}
+	}
+
+	// QUESTIONS THE PLAYER ASKED — the read-only QUERY answers this beat (Grounded Reasoning / Unit 2),
+	// rendered AFTER the events so one narration covers a mixed [action, question] beat. Each entry is the
+	// question + its PERCEIVED fact sheet (perception-scoped by fn_fact_sheet — a closed container's
+	// contents are already withheld), embedded VERBATIM; the narrate.txt rule tells the narrator to answer
+	// each in-world from those facts and to say "you can't tell from here" for a withheld/absent fact
+	// rather than invent it. Omitted entirely when the beat carried no questions.
+	if len(queryAnswers) > 0 {
+		sb.WriteString("\n\nQUESTIONS THE PLAYER ASKED (answer each in-world from its facts; tell them ONLY what they'd perceive):\n")
+		for _, qa := range queryAnswers {
+			sb.WriteString("- ")
+			sb.WriteString(qa.Stated)
+			sb.WriteString("\n  facts: ")
+			sb.Write(qa.FactSheet)
 			sb.WriteString("\n")
 		}
 	}

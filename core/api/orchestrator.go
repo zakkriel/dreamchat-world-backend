@@ -35,11 +35,23 @@ type Orchestrator struct {
 
 // BeatOutcome is the result of RunBeat.
 type BeatOutcome struct {
-	Committed            []string `json:"committed"`
-	HaltReason           string   `json:"halt_reason"`
-	TicksAdvanced        int64    `json:"ticks_advanced"`
-	UnresolvedCandidates []string `json:"unresolved_candidates"`
-	Telegraphs           []string `json:"telegraphs"`
+	Committed            []string      `json:"committed"`
+	HaltReason           string        `json:"halt_reason"`
+	TicksAdvanced        int64         `json:"ticks_advanced"`
+	UnresolvedCandidates []string      `json:"unresolved_candidates"`
+	Telegraphs           []string      `json:"telegraphs"`
+	QueryAnswers         []QueryAnswer `json:"query_answers,omitempty"`
+}
+
+// QueryAnswer is one QUERY element's read-only answer (Grounded Reasoning / Unit 2): the player's
+// question (Stated) paired with the PERCEIVED fact sheet computed for its targets. A QUERY is not an
+// action — asking is not acting (RULINGS-2026-07-23 §3) — so this carries NO canon: it is accumulated
+// on the outcome and handed to the narrator, who phrases the answer in-world from the facts. FactSheet
+// is the raw fn_fact_sheet jsonb (perception-scoped, p_truth_side=false), embedded verbatim in the
+// narrate prompt so a withheld/absent fact stays withheld ("you can't tell from here").
+type QueryAnswer struct {
+	Stated    string          `json:"stated"`
+	FactSheet json.RawMessage `json:"fact_sheet"`
 }
 
 // adjResult is the result of a single adjudicate call.
@@ -108,6 +120,22 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			outcome.UnresolvedCandidates = attempt.CandidateIDs
 			outcome.TicksAdvanced = curTick - startTick
 			return nil
+		}
+
+		// ── QUERY: a read-only question (Grounded Reasoning / Unit 2) ────────────
+		// A QUERY is NOT an action — asking is not acting (RULINGS-2026-07-23 §3). Build the PERCEIVED
+		// fact sheet for its targets (viewer = the acting player, perception-scoped truth_side=false —
+		// the narrator is a character-mind seat) and accumulate a QueryAnswer for the narrator. It does
+		// NOT commit, does NOT advance the clock, and NEVER runs Stage 1–4 (world-first / premise /
+		// route / adjudicate) — a QUERY never reaches the referee. The chain CONTINUES so a mixed
+		// [action, QUERY] beat commits its action AND answers the question in one narration.
+		if attempt.Type == "QUERY" {
+			fs, fsErr := o.factSheetJSON(ctx, worldID, actorID, attempt.QueryTargetIDs, false)
+			if fsErr != nil {
+				return fmt.Errorf("query fact sheet: %w", fsErr)
+			}
+			outcome.QueryAnswers = append(outcome.QueryAnswers, QueryAnswer{Stated: attempt.Stated, FactSheet: json.RawMessage(fs)})
+			continue
 		}
 
 		// ── Stage 1: World-first (cognition seats) ───────────────────────────────
@@ -305,6 +333,20 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		Committed:            []string{},
 		UnresolvedCandidates: []string{},
 		Telegraphs:           []string{},
+	}
+
+	// (0) Peel any LEADING QUERY elements — read-only, never adjudicated (Grounded Reasoning / Unit 2).
+	// The reaction's first action is folded into the combined ruling below; a QUERY is not an action, so
+	// a leading question must be answered here (PERCEIVED fact sheet, viewer = the player) and popped —
+	// otherwise it would enter the ruling and reach the referee, breaking the invariant (asking is not
+	// acting, RULINGS-2026-07-23 §3). Queries in the REMAINDER (chain[1:]) are handled by runChain below.
+	for len(chain) > 0 && chain[0].Type == "QUERY" {
+		fs, fsErr := o.factSheetJSON(ctx, worldID, playerID, chain[0].QueryTargetIDs, false)
+		if fsErr != nil {
+			return outcome, fmt.Errorf("reaction query fact sheet: %w", fsErr)
+		}
+		outcome.QueryAnswers = append(outcome.QueryAnswers, QueryAnswer{Stated: chain[0].Stated, FactSheet: json.RawMessage(fs)})
+		chain = chain[1:]
 	}
 
 	// (1) UNRESOLVED first action → clarify halt; holds stay pending.

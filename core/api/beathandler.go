@@ -220,9 +220,9 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var segments []NarrationSegment
 	var lastErr error
 	for attempt := 0; attempt < 2; attempt++ {
-		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason)
+		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
 		if attempt > 0 && lastErr != nil {
-			prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error())
+			prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
 		}
 		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
 		if genErr != nil {
@@ -240,7 +240,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		break
 	}
 	if segments == nil {
-		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason)})
+		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)})
 		if genErr != nil {
 			log.Printf("narrate: plain fallback Generate failed: %v", genErr)
 			http.Error(w, "narrate failed", http.StatusBadGateway)
