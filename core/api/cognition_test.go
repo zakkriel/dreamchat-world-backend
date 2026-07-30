@@ -19,3 +19,25 @@ func TestNPCDecisionsValidateActorsAndShape(t *testing.T) {
 		t.Fatalf("telegraph decision: %v %+v", err, ds)
 	}
 }
+
+// TestNPCDecisionsRejectQuery guards the Task 4 gap: NPCs act, they never ask. A QUERY-typed
+// NPC decision must be REJECTED by the belt, not fall through to applyNPCDecisions' default
+// case (which would otherwise route a question into o.adjudicate as if it were an action).
+func TestNPCDecisionsRejectQuery(t *testing.T) {
+	present := []string{"33333333-3333-3333-3333-333333333333"}
+	query := `[{"actor_id":"33333333-3333-3333-3333-333333333333","decision":{"commit_kind":"commit","attempt":{"type":"QUERY","stated":"Who is that at the bar?","query_target_ids":["11111111-1111-1111-1111-111111111111"]}}}]`
+	if _, err := DecodeAndValidateNPCDecisions(query, present); err == nil {
+		t.Fatal("QUERY-typed NPC decision accepted — NPCs must never ask")
+	}
+}
+
+// TestNPCDecisionsRejectUnresolved closes the pre-existing untested UNRESOLVED exclusion
+// alongside the QUERY one above: UNRESOLVED is a player-decompose-only clarify sentinel, not
+// a valid NPC reaction.
+func TestNPCDecisionsRejectUnresolved(t *testing.T) {
+	present := []string{"33333333-3333-3333-3333-333333333333"}
+	unresolved := `[{"actor_id":"33333333-3333-3333-3333-333333333333","decision":{"commit_kind":"commit","attempt":{"type":"UNRESOLVED","stated":"the door","reference":"the door","candidate_ids":["11111111-1111-1111-1111-111111111111","22222222-2222-2222-2222-222222222222"]}}}]`
+	if _, err := DecodeAndValidateNPCDecisions(unresolved, present); err == nil {
+		t.Fatal("UNRESOLVED-typed NPC decision accepted — NPCs must never emit a clarify sentinel")
+	}
+}

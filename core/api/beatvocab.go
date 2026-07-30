@@ -33,7 +33,7 @@ func vocabularyTypes(schema map[string]any) map[string]bool {
 var allowedBeatTypes = map[string]bool{"move": true, "say": true}
 
 // vocabularyTypesV2 extracts the closed set of allowed event "type" const values from the
-// beat_chain/2 schema's items.oneOf (six types + UNRESOLVED).
+// beat_chain/2 schema's items.oneOf (six types + UNRESOLVED + QUERY).
 func vocabularyTypesV2() map[string]bool {
 	out := map[string]bool{}
 	var schema map[string]any

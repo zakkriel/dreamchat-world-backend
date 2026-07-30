@@ -57,7 +57,10 @@ func DecodeAndValidateNPCDecisions(raw string, presentIDs []string) ([]NPCDecisi
 		if react.CommitKind != "commit" && react.CommitKind != "telegraph" {
 			return nil, fmt.Errorf("decision %d commit_kind %q", i, react.CommitKind)
 		}
-		if react.Attempt.Stated == "" || !allowedBeatTypesV2[react.Attempt.Type] || react.Attempt.Type == "UNRESOLVED" {
+		// NPCs act, never ask — QUERY (and UNRESOLVED) are player-decompose-only elements; an NPC
+		// decision typed either is rejected here rather than falling through to applyNPCDecisions'
+		// default case, which would otherwise route a question into o.adjudicate as if it were an action.
+		if react.Attempt.Stated == "" || !allowedBeatTypesV2[react.Attempt.Type] || react.Attempt.Type == "UNRESOLVED" || react.Attempt.Type == "QUERY" {
 			return nil, fmt.Errorf("decision %d attempt type %q invalid", i, react.Attempt.Type)
 		}
 		if err := validateAttemptFields(i, react.Attempt); err != nil {

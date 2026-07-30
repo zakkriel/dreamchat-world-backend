@@ -75,7 +75,7 @@ type Attempt struct {
 }
 
 // DecodeAndValidateChainV2 is the belt behind the leash: valid JSON, every
-// type in the closed six-type set (+UNRESOLVED), per-type required fields.
+// type in the closed six-type set (+UNRESOLVED, +QUERY), per-type required fields.
 func DecodeAndValidateChainV2(raw string) ([]Attempt, error) {
 	var chain []Attempt
 	if err := json.Unmarshal([]byte(raw), &chain); err != nil {
