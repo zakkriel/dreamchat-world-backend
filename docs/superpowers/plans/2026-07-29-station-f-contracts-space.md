@@ -206,7 +206,23 @@ Tasks 7–8 make the contract arithmetic playable and gate it — same disciplin
 - [ ] **Step 4: Blast radius** (name every file): every test/fixture emitting an ActorMoved with `to_location_id` moves to `to_target_id`; fixtures relying on location-pair `fn_move_duration_actor` switch to the target form. Cross-location fixtures keep their Task-5 portals. Recompute any duration/coordinate assertion honestly; do NOT weaken. If the rename's ripple exceeds ~12 files or a ruled-move fixture's target is ambiguous, STOP and report BLOCKED with the list.
 - [ ] **Step 5: Full battery** green (`make reset && make test` · `go test -count=1 ./...` ×2 · `make schema-check` · `make schema-contract`). **Step 6: Commit** — exact files — `feat(move): one move for every layer — target any positioned entity, update in-scene coordinates (architecture correction) [F8]`
 
-### Task 9: Exit — the founder walks the room
+### Task 9: Entity creation on resolve — the commit persists new entities (founder-directed 2026-07-30)
+
+**Why this task exists.** "When it resolves it updates it all" (founder) — attribute changes, ownership, relocation+encumbrance, perceptions, and (Task 8) positioning already commit. The one missing consequence is **creating a new entity**. Today the `EntityCreated` branch in both commit twins (`apply_event` ~schema.sql:206, `apply_ruled_event` ~408) is an empty stub (`NULL`), and artifact-mint persistence RAISEs (deferred in Task 6). So a ruling can decide "a new thing exists" but nothing writes it. This task makes the branch real. **Clean separation (resolves the Task-6 deferral):** `EntityCreated` creates entity *instances* (a registry row + state + coordinates + attrs); `apply_mint` (Task 6) creates typed *vocabulary* (movement types, status modifiers). Different writers, no overlap.
+
+**Files:**
+- Modify: `core/db/migrations/20260729100007_entity_created.sql` + `schema.sql` (the `EntityCreated` branch in both twins), `core/api/orchestrator.go` (route a ruled EntityCreated → the commit; verdict must whitelist a newly-minted id per the doc-05 matcher: reuse an existing id if it matches, else create with a descriptor), `core/api/verdict.go` (a ruled EntityCreated's new id is *created*, not a whitelist violation — the one place the id-whitelist admits a new id, guarded by "true introduction + descriptor mandatory", §8 nets)
+- Test: `core/db/tests/118_entity_created_test.sql`, Go orchestrator test
+
+**Interfaces:**
+- `EntityCreated` commit (both twins): insert an `entity_registry` row (`entity_kind` from the ruled event, `canonical_name`/`descriptor` from the ruling, `created_by_event` = the ruling event id — provenance §8 net 3), plus its initial state (an `actor_state`/`artifact_state`/`location_state` row) carrying coordinates + any Tier-1 measurements the ruling set (size/weight/etc., shape-validated by Task 6's `validateMints`/verdict). A minted entity is one logged row with provenance (§8 net 2), reusing the shared-helper pattern so the twins don't drift.
+- Verdict: a ruled `EntityCreated`'s target id is the ONE case the id-whitelist admits a not-in-slice id — but only as a *true introduction* (doc-05 matcher found no existing match) with a mandatory descriptor; a mint that matches an existing entity reuses that id (reuse-before-create, §5.4). Everything else stays whitelist-gated.
+- Depends on Task 8 (same commit functions — sequential, not parallel).
+
+- [ ] **Step 1: Failing tests** — `118_entity_created_test.sql` (`plan(5)`): (a) a ruled EntityCreated commits an `entity_registry` row with `created_by_event` set; (b) its state row exists with the ruled coordinates/attrs; (c) the new entity is immediately reachable (`fn_distance` to it works — it has a position); (d) a create that matches an existing entity (same descriptor/kind in slice) REUSES the id, no new row (reuse-before-create); (e) a create with no descriptor → gate_reject/verdict violation (descriptor mandatory). Go: a ruling emitting EntityCreated routes through and commits; the new id is not a whitelist violation.
+- [ ] **Step 2: Run → FAIL. Step 3: Implement** the EntityCreated commit in both twins (shared helper), the verdict admission of a true-introduction id, the orchestrator routing. §8 three nets hold (adjudicated ruling past reality-check; one logged row; audit-trailed). **Step 4: Full battery** green; blast radius named (any test asserting EntityCreated writes nothing must update honestly). **Step 5: Commit** — exact files — `feat(create): EntityCreated persists a real entity on resolve — registry row + positioned state + provenance (resolve updates it all) [F9]`
+
+### Task 10: Exit — the founder walks the room
 
 **Files:**
 - Test: `core/api/station_f_exit_test.go`
