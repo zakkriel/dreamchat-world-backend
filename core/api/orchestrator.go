@@ -462,7 +462,16 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			return res, fmt.Errorf("batch display labels: %w", err)
 		}
 		bImminent := imminentLabel(bLabels, playerID)
-		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt)
+		// PERCEIVED fact sheet (Grounded Reasoning / Unit 1 → cognition), computed ONCE for the acting
+		// PLAYER as viewer: spatial facts are public — everyone in the room shares the distances — so the
+		// batch (every non-flagged mind) reads the same player-viewer sheet. truth_side=FALSE: the minds
+		// are perception-walled (§5/§9); the ONLY gate in v1 is a closed container's withheld contents
+		// (physics facts, never perception records — so the sheet cannot carry a secret into the batch).
+		batchSheet, fsErr := o.factSheetJSON(ctx, worldID, playerID, actionIDs, false)
+		if fsErr != nil {
+			return res, fmt.Errorf("batch fact sheet: %w", fsErr)
+		}
+		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt, batchSheet)
 		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 		// A Generate or decode failure degrades DULL (the batch minds do nothing this moment) but is
 		// no longer silent: log it so a mute room is diagnosable. Behavior unchanged — still skipped.
@@ -501,7 +510,14 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 				return res, fmt.Errorf("isolated display labels %s: %w", npcID, err)
 			}
 			iImminent := imminentLabel(iLabels, playerID)
-			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt)
+			// This flagged NPC's OWN perceived fact sheet: viewer = HER, so the spatial facts read as SHE
+			// sees the moment (her own distances/reachability), truth_side=FALSE (walled). Computed per
+			// isolated NPC, as needed — the batch's player-viewer sheet is not hers to reuse.
+			isoSheet, fsErr := o.factSheetJSON(ctx, worldID, npcID, actionIDs, false)
+			if fsErr != nil {
+				return res, fmt.Errorf("isolated fact sheet %s: %w", npcID, fsErr)
+			}
+			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt, isoSheet)
 			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 			// Degrade DULL (this secret-holder does nothing this moment) but observable — log the
 			// swallowed failure. Behavior unchanged: still a continue.

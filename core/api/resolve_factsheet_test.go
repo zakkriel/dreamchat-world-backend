@@ -86,9 +86,10 @@ func TestAdjudicate_FeedsTruthSideFactSheet(t *testing.T) {
 	}
 	prompt := resolve.prompts[0]
 
-	// (1) The FACTS-computed section reaches the referee.
-	if !strings.Contains(prompt, "FACTS (computed by the engine") {
-		t.Fatalf("resolve prompt missing the engine-computed FACTS section — the referee still guesses:\n%s", prompt)
+	// (1) The COMPUTED FACTS section reaches the referee (renamed from "FACTS (computed by the engine …)"
+	// to "COMPUTED FACTS (…)" so it is distinct from the gathered-slice "FACTS (the gathered slice)" section).
+	if !strings.Contains(prompt, "COMPUTED FACTS (engine-computed") {
+		t.Fatalf("resolve prompt missing the engine-computed COMPUTED FACTS section — the referee still guesses:\n%s", prompt)
 	}
 	// (2) It carries the REAL computed distance (2 m), not a guess — the whole point of grounded reasoning.
 	if !strings.Contains(prompt, distStr) {

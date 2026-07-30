@@ -74,6 +74,13 @@ var cognitionSystemHeader string
 // AttributeChanged's stated text. The header carries it verbatim; the content test greps for it.
 const cognitionSpeechIsOwnAttemptMarker = "OWN Communicated attempt"
 
+// cognitionFactsRuleMarker is the load-bearing substring of the reason-from-computed-facts rule
+// (Grounded Reasoning / Unit 1 → cognition): the COMPUTED FACTS block is engine-computed truth about the
+// moment (distance/duration/reachability) the minds must reason FROM — a mind deciding to act knows the
+// REAL distances and what it can reach. cognition.txt carries it verbatim; the content test greps for it
+// to prove the rule reaches the minds. Kept consistent with the referee's header (resolve.txt).
+const cognitionFactsRuleMarker = "COMPUTED FACTS ARE ENGINE TRUTH"
+
 // buildBatchPrompt renders the SHARED batch payload — one call for every NPC whose read of the
 // moment needs nothing beyond what everyone perceived.
 //
@@ -83,19 +90,29 @@ const cognitionSpeechIsOwnAttemptMarker = "OWN Communicated attempt"
 // SCENE. Secrets ride only the flagged NPC's own isolated call (buildIsolatedPrompt). A secret
 // that never enters a shared prompt cannot bleed into another mind's reasoning — you cannot
 // validate a leak away, you can only not create it.
-func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imminentActor string, imminent Attempt) string {
-	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent)
+//
+// factSheet is the action-scoped, PERCEPTION-SCOPED physics fact sheet computed by fn_fact_sheet
+// (Grounded Reasoning / Unit 1 → cognition): distances, move durations, reachability, weight, and
+// lock/open state among the involved entities so a mind reasons FROM computed truth instead of inventing
+// it. The BATCH sheet is computed for the acting PLAYER as viewer — spatial facts are public, everyone in
+// the room sees the distances (perception-scoped only in that a closed container's contents stay
+// withheld). Rendered in the MUTABLE tail (it is per-action). Empty ⇒ omitted.
+func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
+	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent, factSheet)
 }
 
 // buildIsolatedPrompt renders one flagged NPC's ISOLATED payload: the same public frame plus her
 // OWN private records (the (3b) block), so her secret rides alone.
-func buildIsolatedPrompt(scene sceneInfo, mind npcMind, private []privateLine, moment []momentLine, imminentActor string, imminent Attempt) string {
-	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent)
+//
+// factSheet is THIS NPC's perception-scoped fact sheet — computed for HER as viewer (her spatial read of
+// the moment), not the player's — rendered in the MUTABLE tail. Empty ⇒ omitted.
+func buildIsolatedPrompt(scene sceneInfo, mind npcMind, private []privateLine, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
+	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent, factSheet)
 }
 
 // buildCognitionPrompt is the shared layout. isolated=true inserts the (3b) private block between
 // the minds and the public moment; the batch seat passes isolated=false and never carries it.
-func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt) string {
+func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
 	var sb strings.Builder
 	sb.WriteString(cognitionSystemHeader)
 
@@ -149,8 +166,15 @@ func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLin
 		fmt.Fprintf(&sb, "- [tick %d] %s\n", ml.Tick, ml.Content)
 	}
 
-	// (5) MUTABLE TAIL — the imminent wind-up. This is the only per-call-varying section; it sits
-	// at the tail so the whole prefix above stays cacheable.
+	// (5) MUTABLE TAIL — the engine's COMPUTED FACTS about this moment, then the imminent wind-up. This
+	// is the per-call-varying section; it sits at the tail so the whole prefix above stays cacheable.
+	// COMPUTED FACTS (Grounded Reasoning / Unit 1 → cognition): the deterministic physics facts the mind
+	// reasons FROM (distance/duration/reachability), perception-scoped — a closed container's contents
+	// stay withheld. Rendered BEFORE the imminent attempt so the facts frame the decision. Empty ⇒ omitted.
+	if factSheet != "" {
+		sb.WriteString("\nCOMPUTED FACTS (engine-computed truth about this moment — reason from these):\n")
+		sb.WriteString(factSheet)
+	}
 	sb.WriteString("\nIMMINENT: ")
 	sb.WriteString(imminentActor)
 	sb.WriteString(" is about to: ")

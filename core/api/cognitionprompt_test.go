@@ -57,7 +57,7 @@ func TestCognitionSystemHeader_SpeakingIsItsOwnCommunicatedAttempt(t *testing.T)
 func TestBuildBatchPrompt_SectionOrder(t *testing.T) {
 	minds := []npcMind{{ID: jonasID, Name: "Jonas", Traits: json.RawMessage(`{"wary":0.7}`), Malleability: 0.4}}
 	moment := []momentLine{{Content: "a torch flares in the doorway", Tick: 700}}
-	p := buildBatchPrompt(sampleScene(), minds, moment, "Player", sampleImminent())
+	p := buildBatchPrompt(sampleScene(), minds, moment, "Player", sampleImminent(), "")
 
 	if !strings.HasPrefix(p, cognitionSystemHeader) {
 		t.Fatalf("batch prompt must open with cognitionSystemHeader (the stable cache prefix)")
@@ -78,7 +78,7 @@ func TestBuildIsolatedPrompt_PrivateLinesBetweenMindsAndMoment(t *testing.T) {
 	mind := npcMind{ID: maraID, Name: "Mara", Traits: json.RawMessage(`{"guarded":0.9}`), Malleability: 0.3}
 	private := []privateLine{{Content: "the ledger names the smuggler", Tick: 701}}
 	moment := []momentLine{{Content: "a torch flares in the doorway", Tick: 700}}
-	p := buildIsolatedPrompt(sampleScene(), mind, private, moment, "Player", sampleImminent())
+	p := buildIsolatedPrompt(sampleScene(), mind, private, moment, "Player", sampleImminent(), "")
 
 	assertOrder(t, p, "THE MINDS YOU SPEAK FOR", "WHAT ONLY YOU KNOW (private, yours alone):")
 	assertOrder(t, p, "WHAT ONLY YOU KNOW (private, yours alone):", "PUBLIC MOMENT")
@@ -92,7 +92,7 @@ func TestBuildIsolatedPrompt_PrivateLinesBetweenMindsAndMoment(t *testing.T) {
 // (c) A mind with no personality core renders name-only (the seed may lag; never fail the beat).
 func TestBuildBatchPrompt_NameOnlyMind(t *testing.T) {
 	minds := []npcMind{{ID: jonasID, Name: "Jonas"}} // no Traits, no Malleability
-	p := buildBatchPrompt(sampleScene(), minds, nil, "Player", sampleImminent())
+	p := buildBatchPrompt(sampleScene(), minds, nil, "Player", sampleImminent(), "")
 
 	if !strings.Contains(p, "Jonas") {
 		t.Fatalf("name-only mind must still render its name")
@@ -111,7 +111,7 @@ func TestBuildBatchPrompt_ImminentIsLast(t *testing.T) {
 	minds := []npcMind{{ID: jonasID, Name: "Jonas", Traits: json.RawMessage(`{"wary":0.7}`), Malleability: 0.4}}
 	moment := []momentLine{{Content: "a torch flares in the doorway", Tick: 700}}
 	imm := sampleImminent()
-	p := buildBatchPrompt(sampleScene(), minds, moment, "Player", imm)
+	p := buildBatchPrompt(sampleScene(), minds, moment, "Player", imm, "")
 
 	for _, earlier := range []string{"SCENE", "THE MINDS YOU SPEAK FOR", "PUBLIC MOMENT"} {
 		assertOrder(t, p, earlier, "IMMINENT:")

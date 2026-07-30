@@ -42,7 +42,7 @@ func buildResolvePrompt(slice string, factSheet string, set []ActorAttempt, repa
 	// The engine-computed physics facts (Unit 1). Rendered right after the slice, before the attempts, so
 	// the referee reasons FROM the measured truth (distance/duration/reachability) instead of guessing it.
 	if factSheet != "" {
-		sb.WriteString("\n\nFACTS (computed by the engine — reason from these; do not invent distances, durations, or reachability):\n")
+		sb.WriteString("\n\nCOMPUTED FACTS (engine-computed — reason from these; do not invent distances, durations, or reachability):\n")
 		sb.WriteString(factSheet)
 	}
 	sb.WriteString("\n\nATTEMPT(S) to resolve (one combined judgment covering all of them):\n")
