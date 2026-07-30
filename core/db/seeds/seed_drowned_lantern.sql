@@ -199,7 +199,9 @@ INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
 
 -- ── Scene state via state_mutation (event f9) — projects through sm_project; replay-safe ──
 -- Single-key absolute sets under attrs (Rider B). Tier-1 keys: open, locked, connects, size,
--- weight, tension (see core/api/tier1.go). carried_by / held_by are Tier-2. connects is the
+-- weight, tension (see core/api/tier1.go). carry is the single Tier-1 key `contained_by` (§4 eager
+-- encumbrance requires carry to be engine-readable state; the former Tier-2 carried_by/held_by are
+-- unified into it — contents of X = entities whose contained_by = X, actors are root carriers). connects is the
 -- Portal''s [room, room] pair. The cellar hatch is closed and LOCKED — the first Tier-1 lock in play.
 -- The three residents are PLACED here (absolute attrs.location_id → the Drowned Lantern); Kade arrives
 -- separately below. Each (entity, attribute_path) is written exactly once → replay-order-independent.
@@ -215,7 +217,7 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.size',                 to_jsonb(1),                                                                                    40,4),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.weight',               to_jsonb(0),                                                                                    40,5),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.sealed_with_gray_wax', to_jsonb(true),                                                                                 40,6),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.carried_by',           to_jsonb('2ac70000-0000-0000-0000-0000000000a1'::text),                                          40,7),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000b1','artifact','attrs.contained_by',         to_jsonb('2ac70000-0000-0000-0000-0000000000a1'::text),                                          40,7),
  -- front door: OPEN, unlocked, tavern↔dock street
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c1','artifact','attrs.open',                 to_jsonb(true),                                                                                 40,8),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c1','artifact','attrs.locked',               to_jsonb(false),                                                                                40,9),
@@ -230,7 +232,7 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c3','artifact','attrs.connects',             jsonb_build_array('210c0000-0000-0000-0000-0000000000d1','210c0000-0000-0000-0000-0000000000d4'), 40,16),
  -- the cellar key, held by Mara
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.size',                 to_jsonb(1),                                                                                    40,17),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.held_by',              to_jsonb('2ac70000-0000-0000-0000-0000000000a2'::text),                                          40,18),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000d1','artifact','attrs.contained_by',         to_jsonb('2ac70000-0000-0000-0000-0000000000a2'::text),                                          40,18),
  -- Tier-2 scene DESCRIPTION per location (Defect B): the narrate PLACE line renders it, so the room's
  -- fixed character is DATA the narrator draws on, never something it invents. The Drowned Lantern text
  -- is verbatim from FINAL-drowned-lantern-souls.md's scene section; the three stubs are brief, honest

@@ -142,16 +142,17 @@ CREATE FUNCTION public.apply_event(p_world_id uuid, p_actor_id uuid, p_attempt j
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 DECLARE
-  ev_type     text;
-  ev_id       uuid;
-  listener    uuid;
-  to_loc      uuid;
-  object_eid  uuid;
-  dest_eid    uuid;
-  target_eid  uuid;
-  here        uuid;
-  vis_scope   text;
-  final_type  text;
+  ev_type      text;
+  ev_id        uuid;
+  listener     uuid;
+  to_loc       uuid;
+  object_eid   uuid;
+  dest_eid     uuid;
+  target_eid   uuid;
+  here         uuid;
+  vis_scope    text;
+  final_type   text;
+  v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
 BEGIN
   ev_type := p_attempt->>'type';
 
@@ -193,6 +194,20 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = dest_eid  AND world_id = p_world_id)
     THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+    -- VOLUME FLOOR (§4): a true blocker, ONLY when dest is a Container (carries max_room). A
+    -- non-container dest (a location, an actor's hands) has no room check in v1. occupied_room and
+    -- volume are BOTH computed here, never stored. Missing object size → treated as 1 (smallest).
+    IF EXISTS (SELECT 1 FROM artifact_state
+               WHERE world_id = p_world_id AND entity_id = dest_eid AND attrs ? 'max_room') THEN
+      IF fn_occupied_room(p_world_id, dest_eid)
+         + fn_volume(COALESCE((SELECT (attrs->>'size')::int FROM artifact_state
+                               WHERE world_id = p_world_id AND entity_id = object_eid), 1))
+         > (SELECT (attrs->>'max_room')::numeric FROM artifact_state
+            WHERE world_id = p_world_id AND entity_id = dest_eid)
+      THEN
+        RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+      END IF;
     END IF;
 
   ELSIF ev_type IN ('OwnershipAccessChanged', 'EntityDestroyed', 'AttributeChanged') THEN
@@ -251,6 +266,14 @@ BEGIN
                                 new_value, valid_from_tick, valid_from_seq)
     VALUES (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.location_id',
             to_jsonb(to_loc::text), p_tick, p_seq);
+  END IF;
+
+  -- ObjectRelocated: EAGER carry change (§4) — write the new contained_by edge, then recompute
+  -- carried_weight + set/clear encumbered for every affected carrier, all provenance = this event.
+  IF ev_type = 'ObjectRelocated' THEN
+    SELECT (attrs->>'contained_by')::uuid INTO v_old_holder
+      FROM artifact_state WHERE world_id = p_world_id AND entity_id = object_eid;
+    PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
   END IF;
 
   PERFORM generate_perceptions(ev_id);
@@ -347,6 +370,7 @@ DECLARE
   pid        uuid;
   -- participant ids for about-ness (perception_subject)
   participant_ids uuid[];
+  v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
 BEGIN
   ev_type  := p_ruled->>'type';
   actor_id := (p_ruled->>'actor_id')::uuid;
@@ -396,6 +420,19 @@ BEGIN
     THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
+    -- VOLUME FLOOR (§4): true blocker, ONLY when dest is a Container (carries max_room). Non-container
+    -- dest → no room check in v1. occupied_room + volume computed here, never stored.
+    IF EXISTS (SELECT 1 FROM artifact_state
+               WHERE world_id = p_world_id AND entity_id = dest_eid AND attrs ? 'max_room') THEN
+      IF fn_occupied_room(p_world_id, dest_eid)
+         + fn_volume(COALESCE((SELECT (attrs->>'size')::int FROM artifact_state
+                               WHERE world_id = p_world_id AND entity_id = object_eid), 1))
+         > (SELECT (attrs->>'max_room')::numeric FROM artifact_state
+            WHERE world_id = p_world_id AND entity_id = dest_eid)
+      THEN
+        RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+      END IF;
+    END IF;
 
   ELSIF ev_type IN ('OwnershipAccessChanged', 'EntityDestroyed', 'AttributeChanged') THEN
     target_eid := (p_ruled->>'target_id')::uuid;
@@ -444,6 +481,13 @@ BEGIN
                                 new_value, valid_from_tick, valid_from_seq)
     VALUES (p_world_id, ev_id, actor_id, 'actor', 'attrs.location_id',
             to_jsonb(to_loc::text), p_tick, p_seq);
+  END IF;
+
+  -- ObjectRelocated: EAGER carry change (§4), identical to apply_event via the shared helper.
+  IF ev_type = 'ObjectRelocated' THEN
+    SELECT (attrs->>'contained_by')::uuid INTO v_old_holder
+      FROM artifact_state WHERE world_id = p_world_id AND entity_id = object_eid;
+    PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
   END IF;
 
   -- ── PERCEPTION FAN-OUT ───────────────────────────────────────────────────────
@@ -651,6 +695,95 @@ CREATE FUNCTION public.fn_actors_at(p_world_id uuid, p_location_id uuid) RETURNS
   WHERE a.world_id = p_world_id
     AND a.attrs->>'location_id' = p_location_id::text;
 $$;
+
+
+--
+-- Name: fn_apply_carry_change(uuid, uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_apply_carry_change(p_event_id uuid, p_world_id uuid, p_object uuid, p_old_holder uuid, p_new_holder uuid) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  v_tick    bigint;
+  v_seq     int;
+  v_okind   text;
+  v_carrier uuid;
+  v_cw      numeric;
+  v_maxload numeric;
+  v_stat    jsonb;
+BEGIN
+  -- Provenance tick/seq come from the just-committed relocation event (single source of truth).
+  SELECT in_world_tick, beat_seq INTO v_tick, v_seq
+  FROM canon_event WHERE event_id = p_event_id;
+
+  SELECT entity_kind INTO v_okind
+  FROM entity_registry WHERE world_id = p_world_id AND entity_id = p_object;
+
+  -- (1) new containment edge. Projects into <kind>_state.attrs.contained_by via trg_sm_project.
+  INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                              new_value, valid_from_tick, valid_from_seq)
+  VALUES (p_world_id, p_event_id, p_object, v_okind, 'attrs.contained_by',
+          to_jsonb(p_new_holder::text), v_tick, v_seq);
+
+  -- (2) recompute every affected actor. Walk UP contained_by from {old_holder, new_holder}; the base
+  --     rows are the holders themselves (an actor holder is affected directly), the recursion climbs
+  --     through nested containers to the root carrier. depth < 64 caps a contained_by cycle (I-4).
+  FOR v_carrier IN
+    WITH RECURSIVE chain(node, depth) AS (
+      SELECT h, 0
+      FROM (VALUES (p_old_holder), (p_new_holder)) AS s(h)
+      WHERE h IS NOT NULL
+      UNION ALL
+      SELECT (a.attrs->>'contained_by')::uuid, c.depth + 1
+      FROM chain c
+      JOIN artifact_state a ON a.world_id = p_world_id AND a.entity_id = c.node
+      WHERE a.attrs->>'contained_by' IS NOT NULL AND c.depth < 64
+    )
+    SELECT DISTINCT c.node
+    FROM chain c
+    JOIN entity_registry er ON er.world_id = p_world_id AND er.entity_id = c.node
+    WHERE er.entity_kind = 'actor'
+  LOOP
+    v_seq := v_seq + 1;
+
+    SELECT COALESCE(SUM(fn_effective_weight(p_world_id, e.entity_id)), 0)
+      INTO v_cw
+      FROM artifact_state e
+      WHERE e.world_id = p_world_id AND (e.attrs->>'contained_by')::uuid = v_carrier;
+
+    SELECT (attrs->>'max_load')::numeric,
+           COALESCE(attrs->'statuses', '[]'::jsonb)
+      INTO v_maxload, v_stat
+      FROM actor_state
+      WHERE world_id = p_world_id AND entity_id = v_carrier;
+
+    -- carried_weight is a MEASUREMENT (§0), written eagerly so cognition/perception read a true state.
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES (p_world_id, p_event_id, v_carrier, 'actor', 'attrs.carried_weight',
+            to_jsonb(v_cw), v_tick, v_seq);
+
+    -- set/clear encumbered. v_cw > NULL (no max_load) is NULL → the ELSE clears — an unset capacity
+    -- can't be exceeded. `?` tests string membership in the statuses array.
+    IF v_cw > v_maxload THEN
+      IF NOT (v_stat ? 'encumbered') THEN
+        v_stat := v_stat || '["encumbered"]'::jsonb;
+      END IF;
+    ELSE
+      SELECT COALESCE(jsonb_agg(x), '[]'::jsonb)
+        INTO v_stat
+        FROM jsonb_array_elements(v_stat) x
+        WHERE x <> '"encumbered"'::jsonb;
+    END IF;
+
+    v_seq := v_seq + 1;
+    INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
+                                new_value, valid_from_tick, valid_from_seq)
+    VALUES (p_world_id, p_event_id, v_carrier, 'actor', 'attrs.statuses',
+            v_stat, v_tick, v_seq);
+  END LOOP;
+END $$;
 
 
 --
@@ -943,6 +1076,60 @@ END $$;
 
 
 --
+-- Name: fn_effective_weight(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_effective_weight(p_world_id uuid, p_entity uuid) RETURNS numeric
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT fn_effective_weight_r(p_world_id, p_entity, 0);
+$$;
+
+
+--
+-- Name: fn_effective_weight_r(uuid, uuid, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_effective_weight_r(p_world_id uuid, p_entity uuid, p_depth integer) RETURNS numeric
+    LANGUAGE plpgsql STABLE
+    AS $$
+DECLARE
+  v_attrs jsonb;
+  v_empty numeric;
+  v_mod   numeric;
+  v_sum   numeric := 0;
+  v_child uuid;
+BEGIN
+  IF p_depth > 64 THEN
+    RAISE EXCEPTION
+      'containment depth cap (64) exceeded weighing % — likely a contained_by cycle (mirror I-4 guard)',
+      p_entity;
+  END IF;
+
+  SELECT attrs INTO v_attrs
+  FROM artifact_state
+  WHERE world_id = p_world_id AND entity_id = p_entity;
+
+  -- plain object (no container props): its own weight, defaulting to 0.
+  IF v_attrs IS NULL OR NOT (v_attrs ? 'empty_weight' OR v_attrs ? 'max_room') THEN
+    RETURN COALESCE((v_attrs->>'weight')::numeric, 0);
+  END IF;
+
+  -- container: (empty + Σ contents) × modifier.
+  v_empty := COALESCE((v_attrs->>'empty_weight')::numeric, 0);
+  v_mod   := COALESCE((v_attrs->>'weight_modifier')::numeric, 1);
+  FOR v_child IN
+    SELECT entity_id FROM artifact_state
+    WHERE world_id = p_world_id AND (attrs->>'contained_by')::uuid = p_entity
+  LOOP
+    v_sum := v_sum + fn_effective_weight_r(p_world_id, v_child, p_depth + 1);
+  END LOOP;
+
+  RETURN (v_empty + v_sum) * v_mod;
+END $$;
+
+
+--
 -- Name: fn_entity_visible(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1114,6 +1301,20 @@ CREATE FUNCTION public.fn_nearest_common_parent(p_world_id uuid, p_a uuid, p_b u
   WHERE aa.which = 'a'
   ORDER BY aa.up ASC   -- fewest steps up from A = closest to A = the DEEPEST common ancestor
   LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_occupied_room(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_occupied_room(p_world_id uuid, p_container uuid) RETURNS numeric
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT COALESCE(SUM(fn_volume(COALESCE((attrs->>'size')::int, 1))), 0)
+  FROM artifact_state
+  WHERE world_id = p_world_id
+    AND (attrs->>'contained_by')::uuid = p_container;
 $$;
 
 
@@ -1302,6 +1503,17 @@ CREATE FUNCTION public.fn_visible_perceptions(p_world_id uuid, p_viewer_id uuid)
               AND er.entity_kind IN ('faction','group')
           )
         );
+$$;
+
+
+--
+-- Name: fn_volume(integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_volume(p_size integer) RETURNS numeric
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT power(4, p_size - 1)::numeric;   -- fn_volume(1)=1, fn_volume(5)=256
 $$;
 
 
@@ -2416,4 +2628,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260724110004'),
     ('20260726100001'),
     ('20260729100001'),
-    ('20260729100002');
+    ('20260729100002'),
+    ('20260729100003');
