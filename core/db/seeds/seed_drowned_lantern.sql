@@ -17,7 +17,14 @@
 --     ride SHARED cognition prompts; a secret in a core would leak by construction);
 --   * knows_kade_as lives INSIDE Mara's private record, not her core;
 --   * every private record references a grounding event and its subject links;
---   * the first playable room holds a real Tier-1 locked Portal (the cellar hatch).
+--   * the first playable room holds a real Tier-1 locked Portal (the cellar hatch);
+--   * (Station F Task 7) the scene has SPACE: nested §3 coordinates over a 'Harbor Quarter of Vael'
+--     parent, in-tavern positions for the four souls + the bar, and a Container (ballast crate) with a
+--     heavy stone so §2 move-duration, §4 encumbrance and §5.3 portals all compute real results in play.
+--     This is what fn_distance/fn_move_duration_actor/fn_effective_weight/fn_portal_permits read — the
+--     hand-authored coordinates are a SANCTIONED test artifact (§3); production mints them (Task 6). This
+--     makes the coordinates_distance migration's "the hand-authored seed world supplies all coordinates"
+--     note true: it is THIS seed that supplies them.
 --
 -- Determinism / replay: fixed uuids, no random(). ALL four actors are PLACED in the Drowned
 -- Lantern by replay-safe state — absolute attrs.location_id state_mutation writes under accepted
@@ -47,14 +54,21 @@ END $$;
 -- Physics defaults for the play world (contracts §2: exactly walk 1.4 + encumbered -100 on walk).
 SELECT seed_world_defaults('22222222-2222-2222-2222-222222222222');
 
--- ── Registry: 4 actors + 4 locations (REAL names) + 5 artifacts ───────────────────────
+-- ── Registry: 4 actors + 5 locations (REAL names) + 8 artifacts ───────────────────────
 -- All-new fixed uuids (entity_registry PK is global). Kade is 'Kade' now — a real name, not the
 -- fixture world's 'Player'. The tavern is 'The Drowned Lantern', not 'Tavern'.
+--
+-- Task 7 (Station F) adds the SPATIAL layer (§3 nested coordinates): a parent location 'Harbor Quarter
+-- of Vael' (…-d0) over the four rooms, a fixed room feature 'the bar' (…-f1, the anchor Kade walks to),
+-- and a Container instance 'ballast crate' (…-f2) holding a 'ballast stone' (…-f3) so the §4 ObjectRelocated
+-- physics has a heavy thing to bite on in play. Coordinates are a SANCTIONED hand-authored test artifact
+-- (spec §3 — the hand-placed seed world is a test artifact; production mints coordinates via Task 6).
 INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
  ('2ac70000-0000-0000-0000-0000000000a1','22222222-2222-2222-2222-222222222222','actor',   'Kade'),
  ('2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222','actor',   'Mara'),
  ('2ac70000-0000-0000-0000-0000000000a3','22222222-2222-2222-2222-222222222222','actor',   'Jonas'),
  ('2ac70000-0000-0000-0000-0000000000a4','22222222-2222-2222-2222-222222222222','actor',   'Hooded Woman'),
+ ('210c0000-0000-0000-0000-0000000000d0','22222222-2222-2222-2222-222222222222','location','Harbor Quarter of Vael'),
  ('210c0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','location','The Drowned Lantern'),
  ('210c0000-0000-0000-0000-0000000000d2','22222222-2222-2222-2222-222222222222','location','Dock Street'),
  ('210c0000-0000-0000-0000-0000000000d3','22222222-2222-2222-2222-222222222222','location','Alley'),
@@ -63,7 +77,10 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
  ('2a7f0000-0000-0000-0000-0000000000c1','22222222-2222-2222-2222-222222222222','artifact','Front Door'),
  ('2a7f0000-0000-0000-0000-0000000000c2','22222222-2222-2222-2222-222222222222','artifact','Back Door'),
  ('2a7f0000-0000-0000-0000-0000000000c3','22222222-2222-2222-2222-222222222222','artifact','Cellar Hatch'),
- ('2a7f0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','artifact','Cellar Key');
+ ('2a7f0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','artifact','Cellar Key'),
+ ('2a7f0000-0000-0000-0000-0000000000f1','22222222-2222-2222-2222-222222222222','artifact','the bar'),
+ ('2a7f0000-0000-0000-0000-0000000000f2','22222222-2222-2222-2222-222222222222','artifact','Ballast Crate'),
+ ('2a7f0000-0000-0000-0000-0000000000f3','22222222-2222-2222-2222-222222222222','artifact','Ballast Stone');
 
 -- ── Backstory canon events (ticks 30–37) + one scene-genesis event (tick 40) ──────────
 -- event_type='AttributeChanged' (backstory grounds who they are); origin='fast_path'. M-E4 / J-E3 /
@@ -242,6 +259,60 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.description', to_jsonb('A narrow dead-end behind the tavern; stacked crates and standing water.'::text),         40,21),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d4','location','attrs.description', to_jsonb('A cold stone undercroft beneath the tavern; barrels, damp, one shuttered lantern.'::text),   40,22);
 
+-- ── §3 SPATIAL LAYER (Station F Task 7) — the scene gets space, under the same scene-genesis event f9 ──
+-- Nested coordinates (FINAL-action-contracts.md §3): every location has a coordinate WITHIN its parent
+-- (attrs.coordinates) + a parent edge (attrs.parent_location_id, Tier-1 string); a parent carries an
+-- attrs.extent bounding its children. Things inside a scene (actors + fixed features) carry a coordinate
+-- in that scene's LOCAL frame. fn_distance measures any pair at their nearest common parent's frame.
+-- Coordinates are a SANCTIONED hand-authored test artifact (§3); production mints them (Task 6). Each
+-- (entity, attribute_path) is written EXACTLY ONCE → replay-order-independent (Rider B, D-1). Tier-1 keys
+-- only for engine-read attrs (coordinates, parent_location_id, max_room, empty_weight, weight, size,
+-- contained_by; extent is descriptive). seq 26+ continues f9's single monotonic seq space.
+--
+-- Harbor Quarter frame (meters): tavern {200,200}; dock street {280,200} → 80 m ⇒ CEIL(80/1.4)=58 s, the
+-- longer sensible walk out the front door onto the harbor road; alley {200,240} → 40 m (out the back);
+-- cellar {205,205} → beneath the tavern (portal-locked anyway). The quarter's 2000×2000 extent bounds them.
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
+                            valid_from_tick, valid_from_seq) VALUES
+ -- Harbor Quarter of Vael: the root parent (no parent edge), its own origin + the extent that bounds the rooms.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d0','location','attrs.coordinates',        '{"x":0,"y":0}'::jsonb,       40,26),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d0','location','attrs.extent',             '{"w":2000,"h":2000}'::jsonb, 40,27),
+ -- the four rooms: each a child of Harbor Quarter with a coordinate in the quarter frame.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,28),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.coordinates',        '{"x":200,"y":200}'::jsonb,   40,29),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,30),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.coordinates',        '{"x":280,"y":200}'::jsonb,   40,31),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,32),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.coordinates',        '{"x":200,"y":240}'::jsonb,   40,33),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d4','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,34),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d4','location','attrs.coordinates',        '{"x":205,"y":205}'::jsonb,   40,35),
+ -- Tavern local frame (meters): the three residents where the scene-genesis places them, and the bar
+ -- feature along the back wall. Kade's own coordinate rides his arrival event (fa) below.
+ --   Mara behind the bar {6,10}; Jonas by it {5,8}; the hooded woman at the corner table {1,1}; the bar {6,9}.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a2','actor',   'attrs.coordinates',        '{"x":6,"y":10}'::jsonb,      40,36),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a3','actor',   'attrs.coordinates',        '{"x":5,"y":8}'::jsonb,       40,37),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a4','actor',   'attrs.coordinates',        '{"x":1,"y":1}'::jsonb,       40,38),
+ -- the bar: a fixed room feature (FINAL "contains: the bar…"). location_id = the tavern (its scene) so
+ -- fn_distance resolves it to the tavern frame; coordinates {6,9} along the back wall — the anchor Kade
+ -- walks to (Task 8). size-2, weightless fixture (never relocated); Tier-2 descriptor for the narrator.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f1','artifact','attrs.location_id',        to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,39),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f1','artifact','attrs.coordinates',        '{"x":6,"y":9}'::jsonb,       40,40),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f1','artifact','attrs.size',              to_jsonb(2),                  40,41),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f1','artifact','attrs.descriptor',        to_jsonb('the bar'::text),    40,42),
+ -- §4 ObjectRelocated physics has something to grab: a Container instance (ballast crate) + a heavy
+ -- ballast stone inside it. crate = (empty_weight 8 + effective_weight(stone 92)) × 1 = 100 kg; Kade's
+ -- max_load is 80, so "grab the crate → encumbered" is REACHABLE (the eager rule flips it on that commit).
+ -- The crate is a mundane container (weight_modifier absent → 1). It sits on the tavern floor (contained_by
+ -- the tavern) by the hatch {2,9}; the stone lives inside the crate. size-2 stone (vol 4) fits max_room 16.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.max_room',          to_jsonb(16),                 40,43),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.empty_weight',      to_jsonb(8),                  40,44),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.size',              to_jsonb(4),                  40,45),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.contained_by',      to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,46),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.coordinates',        '{"x":2,"y":9}'::jsonb,       40,47),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f3','artifact','attrs.weight',            to_jsonb(92),                 40,48),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f3','artifact','attrs.size',              to_jsonb(2),                  40,49),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f3','artifact','attrs.contained_by',      to_jsonb('2a7f0000-0000-0000-0000-0000000000f2'::text), 40,50);
+
 -- ── Kade's arrival (tick 50) — he steps into the room the scene is set in ─────────────
 -- Replay-safe & append-only: one accepted ActorMoved with an ABSOLUTE attrs.location_id set (the
 -- sm_project trigger projects it; replay_0a rebuilds it). Tick 50 is this world's max; the live
@@ -255,10 +326,16 @@ INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick,
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
  ('2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','instigator');
 -- Absolute location set → the Drowned Lantern. The projection trigger places Kade in the room.
+-- §3/§4 (Task 7): Kade also arrives WITH a position and a carrying capacity. coordinates {6,1} put him
+-- just inside the front door — 8 m from the bar {6,9} ⇒ fn_distance(Kade,bar)=8, CEIL(8/1.4)=6 s (fits
+-- tense's 30 s beat: the Task-8 "walk to the bar"). max_load 80 is his static capacity: the ballast crate
+-- weighs 100 kg, so grabbing it exceeds max_load → the eager encumbrance rule (§4) can fire in play.
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
                             valid_from_tick, valid_from_seq) VALUES
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.location_id',
-  to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text),50,0);
+  to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text),50,0),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.max_load',    to_jsonb(80),           50,2),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.coordinates', '{"x":6,"y":1}'::jsonb, 50,3);
 -- Kade's own honest, minimal perception of stepping in. NOT an authored roster of who is present (that
 -- would fake fan-out he never received) — just the move itself, subject-linked to the mover + the room.
 INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content,
