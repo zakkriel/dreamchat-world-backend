@@ -314,6 +314,133 @@ func TestBeat_Narrate_FallsBackToProseAfterTwoFailures(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
 }
 
+// ── Task 11 — the candidate whitelist is everything the actor PERCEIVES (RULINGS-2026-07-30 §1) ──────
+// Fixed play-seed uuids (seed_drowned_lantern.sql). The `dl` prefix keeps them clear of the world-1111
+// fixture constants (worldID/playerID/maraID) and of station_f_exit_test.go's `kadeID` PARAMETER name.
+const (
+	dlWorldID   = "22222222-2222-2222-2222-222222222222"
+	dlKadeID    = "2ac70000-0000-0000-0000-0000000000a1"
+	dlBarID     = "2a7f0000-0000-0000-0000-0000000000f1" // the bar — co-located in the tavern
+	dlCrateID   = "2a7f0000-0000-0000-0000-0000000000f2" // ballast crate — co-located in the tavern
+	dlNoteID    = "2a7f0000-0000-0000-0000-0000000000b1" // sealed note — carried by Kade (contained_by=Kade)
+	dlMaraKeyID = "2a7f0000-0000-0000-0000-0000000000d1" // cellar key — held by MARA, not Kade (the wall)
+	dlStoneID   = "2a7f0000-0000-0000-0000-0000000000f3" // ballast stone — nested INSIDE the crate (the wall)
+)
+
+// TestPayload_PerceivedCandidates_DrownedLantern asserts the widened candidate whitelist against the
+// SEEDED play world: Kade's candidates now include every artifact he PERCEIVES — the bar he can approach
+// and the ballast crate he can grab (both co-located in the tavern), plus the sealed note he carries
+// (contained_by = Kade) — each by its real id with a viewer-relative label (fn_display_name), kind
+// "artifact". The naming-reach wall (RULINGS-2026-07-23 §3) still holds: an item on ANOTHER actor's
+// person (Mara's cellar key) and a thing nested INSIDE a container (the ballast stone) are NOT bindable
+// by Kade. Requires the play seed (make reset precedes go test in the battery); payload only reads.
+func TestPayload_PerceivedCandidates_DrownedLantern(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	h := &beatHandler{pool: pool, dbg: true}
+
+	p, err := h.payload(ctx, dlWorldID, dlKadeID)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	byID := map[string]Candidate{}
+	for _, c := range p.Candidates {
+		byID[c.ID] = c
+	}
+
+	// The perceived artifacts are bindable, each with a non-empty viewer-relative label and kind "artifact".
+	for _, want := range []struct{ id, what string }{
+		{dlBarID, "the bar (co-located artifact)"},
+		{dlCrateID, "the ballast crate (co-located artifact)"},
+		{dlNoteID, "the sealed note (carried item)"},
+	} {
+		c, ok := byID[want.id]
+		if !ok {
+			t.Fatalf("candidate whitelist is missing %s (%s) — a perceived artifact must be bindable (RULINGS-2026-07-30 §1)", want.id, want.what)
+		}
+		if c.Kind != "artifact" {
+			t.Errorf("%s kind = %q, want \"artifact\"", want.what, c.Kind)
+		}
+		if c.Name == "" {
+			t.Errorf("%s has an empty label — candidates carry the viewer's fn_display_name (viewer-relative)", want.what)
+		}
+	}
+
+	// The wall: an item on another actor's person, and a thing nested in a container, are NOT perceived
+	// as bindable by Kade (perception-bounded, not a global id dump).
+	if _, leaked := byID[dlMaraKeyID]; leaked {
+		t.Errorf("Mara's cellar key leaked into Kade's candidates — carried items are the VIEWER's own only")
+	}
+	if _, leaked := byID[dlStoneID]; leaked {
+		t.Errorf("the ballast stone (nested in the crate) leaked in — co-location is by location_id, not nesting")
+	}
+}
+
+// TestPayload_PerceivedCandidates_OtherLocationExcluded builds a self-contained world to nail the
+// naming-reach wall directly: a viewer in a tavern perceives the bar + crate co-located there and the
+// note he carries, but an artifact placed in ANOTHER location (a cellar) is NOT a candidate — the
+// candidate set is perception-bounded, never a global id dump (RULINGS-2026-07-30 §1 + 2026-07-23 §3).
+// Hermetic: fresh random uuids, no make-reset dependency; payload only reads.
+func TestPayload_PerceivedCandidates_OtherLocationExcluded(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	var world, tavern, cellar, viewer, bar, crate, note, farLantern string
+	if err := pool.QueryRow(ctx,
+		`SELECT gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()`,
+	).Scan(&world, &tavern, &cellar, &viewer, &bar, &crate, &note, &farLantern); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+		 ($3,$1,'location','Tavern'),
+		 ($4,$1,'location','Cellar'),
+		 ($2,$1,'actor',   'Viewer'),
+		 ($5,$1,'artifact','the bar'),
+		 ($6,$1,'artifact','a crate'),
+		 ($7,$1,'artifact','a note'),
+		 ($8,$1,'artifact','a far lantern')`,
+		world, viewer, tavern, cellar, bar, crate, note, farLantern); err != nil {
+		t.Fatalf("registry: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO actor_state (entity_id, world_id, attrs) VALUES
+		 ($2,$1, jsonb_build_object('location_id',$3::text))`,
+		world, viewer, tavern); err != nil {
+		t.Fatalf("actor_state: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
+		 ($5,$1, jsonb_build_object('location_id',$3::text)),    -- bar co-located in the tavern
+		 ($6,$1, jsonb_build_object('location_id',$3::text)),    -- crate co-located in the tavern
+		 ($7,$1, jsonb_build_object('contained_by',$2::text)),   -- note carried by the viewer
+		 ($8,$1, jsonb_build_object('location_id',$4::text))     -- lantern in ANOTHER location (the cellar)
+		`,
+		world, viewer, tavern, cellar, bar, crate, note, farLantern); err != nil {
+		t.Fatalf("artifact_state: %v", err)
+	}
+
+	h := &beatHandler{pool: pool, dbg: true}
+	p, err := h.payload(ctx, world, viewer)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	in := map[string]bool{}
+	for _, c := range p.Candidates {
+		in[c.ID] = true
+	}
+	for _, want := range []string{bar, crate, note} {
+		if !in[want] {
+			t.Errorf("perceived artifact %s missing from candidates (co-located/carried must bind)", want)
+		}
+	}
+	if in[farLantern] {
+		t.Errorf("an artifact in ANOTHER location leaked into candidates — the naming-reach wall must hold (perception-bounded, not global)")
+	}
+}
+
 // Defense-in-depth: a misbehaving structured driver that emits out-of-vocab is rejected by the
 // handler's belt → 422 (the primary leash is the capability floor + constrained decoding; this is
 // the backstop, SPEC-015/D-1).

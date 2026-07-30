@@ -16,14 +16,14 @@
 --   the bar (fixed room feature) 2a7f0000-…-f1   ballast crate (container) …-f2   ballast stone …-f3
 --
 -- The COORDINATE LAYOUT this file pins (see the seed for the authored values):
---   Harbor Quarter frame (meters): tavern {200,200}, dock street {280,200} (80 m ⇒ CEIL(80/1.4)=58 s),
---     alley {200,240} (40 m), cellar {205,205} (beneath). tavern↔dock-street is the longer, sensible walk.
+--   Harbor Quarter frame (meters): tavern {200,200}, dock street {207,200} (7 m ⇒ CEIL(7/1.4)=5 s — a
+--     short step out the front door, Task 11 seed tune), alley {200,240} (40 m), cellar {205,205} (beneath).
 --   Tavern local frame (meters): Kade {6,1} at the door, the bar {6,9} along the back wall
 --     ⇒ fn_distance(Kade, bar) = 8 m ⇒ CEIL(8/1.4) = 6 s (the in-scene approach; fits tense's 30 s).
 --     Mara {6,10} behind the bar, Jonas {5,8} by it, the hooded woman {1,1} at the corner table.
 -- =====================================================================================
 BEGIN;
-SELECT plan(6);
+SELECT plan(7);
 
 -- (a) THE in-scene distance is real geometry: Kade → the bar is a few meters, not 0/NULL. The nearest
 -- common parent is the tavern (both share the scene), so fn_distance reads their own in-scene
@@ -117,6 +117,21 @@ SELECT ok(
                   '2ac70000-0000-0000-0000-0000000000a1',
                   '2a7f0000-0000-0000-0000-0000000000f2') < 9,
   '(f) fn_distance(Kade, crate) = sqrt(80) ~ 8.94 m via attrs.location_id -- NOT 0 (the silent-zero regression)');
+
+-- (g) THE FRONT-DOOR STEP fits the tense beat budget (Task 11 seed tune, RULINGS-2026-07-30 §1): dock
+-- street sits a short step outside the tavern door — {207,200} in the Harbor-Quarter frame, 7 m from the
+-- tavern {200,200}. Kade → dock street is a CROSS-LEVEL move measured at the common parent (the quarter):
+-- fn_distance = 7 m, walk 1.4 m/s ⇒ CEIL(7/1.4) = 5 s, which FITS the tense 30 s budget so "step out the
+-- front" plays. Before the tune it was 80 m ⇒ CEIL(80/1.4) = 58 s > 30 s — an over-budget dead end.
+SELECT ok(
+  fn_move_duration_actor('22222222-2222-2222-2222-222222222222',
+                         '2ac70000-0000-0000-0000-0000000000a1',   -- Kade (supplies the speed + origin)
+                         '210c0000-0000-0000-0000-0000000000d2')    -- dock street (a location target)
+    BETWEEN 1 AND 30
+  AND fn_move_duration_actor('22222222-2222-2222-2222-222222222222',
+                             '2ac70000-0000-0000-0000-0000000000a1',
+                             '210c0000-0000-0000-0000-0000000000d2') = 5,
+  '(g) front-door step Kade→dock street = CEIL(7/1.4) = 5 s: a short step, fits the tense 30 s budget');
 
 SELECT * FROM finish();
 ROLLBACK;

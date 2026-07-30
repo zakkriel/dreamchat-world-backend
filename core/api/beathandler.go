@@ -363,7 +363,9 @@ const (
 )
 
 // payload builds the perception-bound payload from the WALL (fn_visible_perceptions). No raw canon.
-// Also populates Candidates: present actors + current location.
+// Also populates Candidates: present actors + current location + the artifacts the viewer PERCEIVES
+// (co-located in his room + carried on his person) — the perceived-candidate whitelist (RULINGS-2026-07-30
+// §1), bounded by perception (the naming-reach wall, RULINGS-2026-07-23 §3), never a global id dump.
 func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (PerceptionPayload, error) {
 	// Recent window, oldest-first: keep rows within recencyTickWindow ticks of the newest visible row,
 	// take the newest recencyMaxRows of those (DESC LIMIT), then reverse to oldest-first for the seats.
@@ -454,11 +456,51 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 		}
 		p.Candidates = append(p.Candidates, Candidate{ID: loc, Name: locName, Kind: "location", Description: locDesc})
 
-		// Artifacts are deliberately ABSENT from the whitelist: naming reach = the
-		// actor's own perceived/known set (RULINGS-2026-07-23 §3), and no
-		// perception-subject link machinery exists yet to compute "artifacts this
-		// actor knows". Until Station E lands that lookup, artifacts are not
-		// nameable-by-id — fail closed beats leaking world contents.
+		// Perceived SCENE ARTIFACTS — the widening (RULINGS-2026-07-30 §1: candidates = everything the
+		// actor PERCEIVES, not actors+location only). Two perceived sets, so "approach the bar" / "grab
+		// the crate" / "give the note" finally have an id to bind:
+		//   • CO-LOCATED artifacts — attrs.location_id = the viewer's current location: the bar he can
+		//     approach, the crate he can grab. Same room = perceived, exactly the way present actors are
+		//     already treated (co-location IS perception in v1; the founder's "Before You Begin" ruling).
+		//   • CARRIED/HELD items — attrs.contained_by = the viewer (the Tier-1 carry edge, §4): the note
+		//     he carries, to give.
+		// BOUNDED BY PERCEPTION, not global — the naming-reach wall stands (RULINGS-2026-07-23 §3): this
+		// yields ONLY artifacts in the viewer's own room or on his own person. An artifact in ANOTHER
+		// location (location_id ≠ here) and an item on ANOTHER actor (contained_by ≠ viewer) are excluded
+		// by construction. Each labeled by the viewer's fn_display_name (viewer-relative, §3 — the model
+		// binds the real id, the label is the viewer's knowledge), same Candidate shape as the actors
+		// above. viewerID rides twice ($3 uuid for fn_display_name, $4 text for the contained_by compare)
+		// so each param has ONE unambiguous type; DISTINCT folds the (model-disjoint) sets defensively.
+		//
+		// FURTHER REFINEMENT (noted, deliberately NOT built here — RULINGS-2026-07-30 §1's "one-hop-known
+		// absent entities may be included IF the perception/knowledge query already yields them cleanly"):
+		// a thing the actor knows-of but cannot currently see needs perception/knowledge-subject-link
+		// machinery that does not yet exist cleanly. The co-located + carried set is the immediate correct
+		// fix that makes the founder's walkthrough bind; the absent-but-known set is a separate follow-up.
+		artRows, err := h.pool.Query(ctx,
+			`SELECT DISTINCT er.entity_id, fn_display_name($1, $3::uuid, er.entity_id), er.entity_kind
+			 FROM artifact_state a
+			 JOIN entity_registry er ON er.entity_id = a.entity_id AND er.world_id = $1
+			 WHERE a.world_id = $1
+			   AND ( a.attrs->>'location_id' = $2      -- co-located in the viewer's room (perceived)
+			      OR a.attrs->>'contained_by' = $4 )`, // carried/held by the viewer (§4 carry edge)
+			worldID, loc, viewerID, viewerID)
+		if err != nil {
+			return PerceptionPayload{}, err
+		}
+		for artRows.Next() {
+			var id, name, kind string
+			if err := artRows.Scan(&id, &name, &kind); err != nil {
+				artRows.Close()
+				return PerceptionPayload{}, err
+			}
+			p.Candidates = append(p.Candidates, Candidate{ID: id, Name: name, Kind: kind})
+		}
+		if err := artRows.Err(); err != nil {
+			artRows.Close()
+			return PerceptionPayload{}, err
+		}
+		artRows.Close()
 	}
 
 	return p, nil

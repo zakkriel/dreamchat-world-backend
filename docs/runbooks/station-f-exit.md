@@ -70,9 +70,10 @@ The play-world ids the founder walk uses (from the seed):
 | Cellar Hatch (closed, **LOCKED** → Cellar) | `2a7f0000-0000-0000-0000-0000000000c3` |
 | Ballast Crate (100 kg with the stone) | `2a7f0000-0000-0000-0000-0000000000f2` |
 
-The geometry that matters (Harbor-Quarter frame, meters): tavern `{200,200}`, dock street `{280,200}`
-(80 m out the front), alley `{200,240}` (40 m out the back), cellar `{205,205}` (beneath). In the tavern
-frame: Kade `{6,1}` just inside the door, the bar `{6,9}` along the back wall — 8 m, a ~6 s walk.
+The geometry that matters (Harbor-Quarter frame, meters): tavern `{200,200}`, dock street `{207,200}`
+(7 m out the front — a short step, `CEIL(7/1.4)=5 s`, fits the tense budget), alley `{200,240}` (40 m out
+the back), cellar `{205,205}` (beneath). In the tavern frame: Kade `{6,1}` just inside the door, the bar
+`{6,9}` along the back wall — 8 m, a ~6 s walk.
 
 ---
 
@@ -124,24 +125,22 @@ Play as Kade. Walk in to the Drowned Lantern; Mara, Jonas and the hooded woman a
 3. **Try the cellar** — e.g. *"I head down to the cellar."* The hatch is **locked** → the move is
    refused. The narration should not put Kade in the cellar; canon gains no move.
 4. **Go out the front door** — e.g. *"I step out the front door onto the street."* The door is open →
-   Kade crosses to Dock Street. **See the caveat in §5** — in a `tense` scene the 80 m walk may not fit
-   the 30 s budget; drop the scene tension (or expect a `turn_budget` halt) if the door "won't open."
+   Kade crosses to Dock Street. Dock Street sits a short step out the front (7 m ⇒ `CEIL(7/1.4)=5 s`), so
+   the walk **fits the tense 30 s budget** and the crossing commits. (A far-off destination would still
+   over-budget — correct §6 behavior — but the front door is close by design, Task 11 seed tune.)
 5. **(Optional) Grab something heavy** — e.g. *"I heave the ballast crate onto my shoulder."* Kade goes
    `encumbered`; a follow-up *"I carry it outside"* is **pinned** (he can't move under 100 kg).
 
-### ⚠️ Live-binding caveat — the bar is not a candidate yet
+### The bar, the crate and the note ARE candidates (RULINGS-2026-07-30 §1)
 
-The decompose seat is handed a candidate whitelist of **present actors + the current location only**;
-**artifacts are deliberately excluded** (`beatHandler.payload`, `core/api/beathandler.go:457-462` —
-"artifacts are not nameable-by-id yet, fail closed beats leaking world contents"). So a live *"approach
-the bar"* has **no bar id to bind** — the decompose model can only bind Mara/Jonas/the hooded woman or a
-location. The in-scene move **machinery** is real and is proven end-to-end in CI (the E2E scripts the bar
-as `to_target_id`, which the passthrough path accepts by existence, never by candidacy) — but the founder
-cannot reach it by typing until the bar joins the candidate set. **Two ways to still walk the move:**
-approach a **present actor** (Mara/Jonas — an actor target repositions you to them, same machinery), or
-move to a **location** (out the front door / down to the cellar — the location cases below). Adding
-artifacts (or at least fixed features like the bar) to the candidate whitelist is the follow-up that makes
-"approach the bar" playable by hand.
+The decompose seat's candidate whitelist is **everything the actor perceives** — present actors, the
+current location, **the artifacts co-located in the room** (the bar, the ballast crate) **and the items
+the actor carries** (the sealed note). So a live *"approach the bar"* / *"grab the crate"* / *"give the
+note"* each has a real id to bind (`beatHandler.payload`, `core/api/beathandler.go`). The set is bounded
+by perception (the naming-reach wall, RULINGS-2026-07-23 §3): an artifact in **another location**, or an
+item on **another actor's person** (e.g. Mara's cellar key), is NOT bindable — you can only name what you
+see or carry. This is the fix that makes the founder's walkthrough — approach the bar, grab the crate,
+give the note — playable by hand, not just scripted in CI.
 
 ---
 
@@ -152,7 +151,7 @@ artifacts (or at least fixed features like the bar) to the candidate whitelist i
 | "Approach the bar" feels instant / free | A move must cost `distance ÷ speed` ticks and draw down the beat budget. | `SELECT fn_distance(w,kade,bar);` then `SELECT fn_move_duration_actor(w,kade,bar);` — expect 8 and 6. |
 | Wrong distance / duration | Coordinates or the walk speed are off, or an entity has no coordinate (treated as origin `{0,0}`). | `fn_distance` (geometry) then `fn_move_duration_actor` (geometry ÷ `fn_effective_speed`). Distance is **LLM-free** — a wrong number is data, not prose. |
 | The cellar move "works" when it shouldn't (or the front door is refused) | The Portal gate read the wrong open/locked/connects. | `SELECT fn_portal_permits(w, tavern, cellar);` (expect **false** — locked) and `…(w, tavern, dock_street);` (expect **true**). Portal is accessibility, NOT geometry. |
-| "Go out the front door" halts `turn_budget` | The 80 m front-door walk is **58 s** (`CEIL(80/1.4)`), which **exceeds the 30 s `tense` budget** — so in a tense scene Kade is budget-bound indoors (the back door is closed, the hatch locked, and the front door too far). This is correct §6 behavior, not a bug. | Check the scene tension (`SELECT attrs->>'tension' FROM location_state WHERE entity_id = tavern`) and `fn_move_duration_actor`. Loosen the tension (`normal`/`calm`) for the walk to fit, or accept the pin. |
+| "Go out the front door" halts `turn_budget` unexpectedly | Dock Street is a short step out the front (7 m ⇒ **5 s**, `CEIL(7/1.4)`), which fits the 30 s `tense` budget — so a `turn_budget` halt here means either the scene tension is tighter than `tense` (e.g. `frantic` = 5 s and the step is exactly at the edge), or Kade is **encumbered** (speed 0 ⇒ no move fits any budget). A far-off destination *would* over-budget in a tense scene — correct §6 behavior — but the front door is close by design (Task 11 seed tune). | Check the scene tension (`SELECT attrs->>'tension' FROM location_state WHERE entity_id = tavern`) and `fn_move_duration_actor(w,kade,dock_street)` (expect 5); check `attrs->'statuses'` for `encumbered`. |
 | The heavy grab does NOT encumber | `carried_weight` or `max_load` is wrong, or the crate's contents aren't summing. | `SELECT fn_effective_weight(w, crate);` (expect 100 = empty 8 + stone 92) and `SELECT attrs->>'max_load' FROM actor_state WHERE entity_id = kade;` (80). Encumbered = `carried_weight > max_load`. |
 | A move that *should* commit `bounce`s / reads wrong | An adjudicated step (not a passthrough move) went to the resolve seat. | Dump the **resolve-seat** prompt: a bounce is the referee ruling the attempt impossible — read its `reasoning`/`therefore` in the resolve log to see *why* it refused. Passthrough moves (`ActorMoved`/`ObjectRelocated`) never hit resolve; a portal/budget refusal is `gate_reject`/`premise_broken`/`turn_budget`, not `bounce`. |
 

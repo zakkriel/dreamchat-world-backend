@@ -269,9 +269,13 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
 -- only for engine-read attrs (coordinates, parent_location_id, max_room, empty_weight, weight, size,
 -- contained_by; extent is descriptive). seq 26+ continues f9's single monotonic seq space.
 --
--- Harbor Quarter frame (meters): tavern {200,200}; dock street {280,200} → 80 m ⇒ CEIL(80/1.4)=58 s, the
--- longer sensible walk out the front door onto the harbor road; alley {200,240} → 40 m (out the back);
--- cellar {205,205} → beneath the tavern (portal-locked anyway). The quarter's 2000×2000 extent bounds them.
+-- Harbor Quarter frame (meters): tavern {200,200}; dock street {207,200} → 7 m ⇒ CEIL(7/1.4)=5 s, a SHORT
+-- STEP out the front door onto the harbor road (Task 11 seed tune, RULINGS-2026-07-30 §1: the playable
+-- moves must fit the beat budget — 5 s fits the tense 30 s budget so "step out the front" plays; the
+-- earlier {280,200} put it 80 m ⇒ 58 s away, an over-budget dead end. Dock Street stays a DISTINCT
+-- location behind the front-door portal — just a short step, not merged into the tavern); alley {200,240}
+-- → 40 m (out the back); cellar {205,205} → beneath the tavern (portal-locked anyway). The quarter's
+-- 2000×2000 extent bounds them.
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
                             valid_from_tick, valid_from_seq) VALUES
  -- Harbor Quarter of Vael: the root parent (no parent edge), its own origin + the extent that bounds the rooms.
@@ -281,7 +285,7 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,28),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.coordinates',        '{"x":200,"y":200}'::jsonb,   40,29),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,30),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.coordinates',        '{"x":280,"y":200}'::jsonb,   40,31),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.coordinates',        '{"x":207,"y":200}'::jsonb,   40,31),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,32),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d3','location','attrs.coordinates',        '{"x":200,"y":240}'::jsonb,   40,33),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d4','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,34),

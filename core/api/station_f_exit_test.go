@@ -25,13 +25,13 @@ package main
 // dependency (the deterministic-CI choice the task brief recommends; the play world 2222… needs seeding
 // and carries fixed ticks that a second run would collide with).
 //
-// FINDING (surfaced in docs/runbooks/station-f-exit.md and the task report): the bar is NOT a bindable
-// candidate for the LIVE decompose seat. h.payload builds the candidate whitelist from PRESENT ACTORS +
-// the current LOCATION only — artifacts are deliberately excluded (beathandler.go:457-462, "artifacts are
-// not nameable-by-id yet"). The move MACHINERY targets any positioned entity (apply_event validates only
-// vocabulary + entity existence, never candidate membership), so a SCRIPTED decompose can bind the bar and
-// this test proves the deliverable end to end — but a live founder typing "approach the bar" cannot bind
-// it until artifacts join the candidate set. That is a gap for the founder gate, not for the engine.
+// NOTE (Task 11, RULINGS-2026-07-30 §1): the bar IS now a bindable candidate for the live decompose seat.
+// h.payload's candidate whitelist widened from present actors + the current location to ALSO include the
+// artifacts the actor PERCEIVES — co-located artifacts (the bar, the crate) and carried items (the note)
+// — so a live founder typing "approach the bar" / "grab the crate" / "give the note" has a real id to bind
+// (proven by TestPayload_PerceivedCandidates_* in beathandler_test.go). This E2E still scripts the chain
+// (deterministic, zero-network), exercising the move MACHINERY end to end; the live-binding gap it once
+// flagged is closed.
 
 import (
 	"context"
