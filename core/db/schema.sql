@@ -1271,7 +1271,11 @@ CREATE FUNCTION public.fn_fact_sheet(p_world_id uuid, p_viewer uuid, p_involved 
            jsonb_build_object(
              'id',              t.target_id,
              'kind',            er.entity_kind,
-             'name',            er.canonical_name,
+             -- THE WALL (naming-reach, §3): truth-side always sees the canonical name (the referee is
+             -- licensed); perceived-side sees the viewer-relative label (known name → descriptor →
+             -- canonical fallback) — never a name the viewer hasn't earned a knowledge path to.
+             'name',            CASE WHEN p_truth_side THEN er.canonical_name
+                                      ELSE fn_display_name(p_world_id, p_viewer, t.target_id) END,
              'distance_m',      fn_distance(p_world_id, p_viewer, t.target_id),
              'move_duration_s', fn_move_duration_actor(p_world_id, p_viewer, t.target_id),
              -- same-scene is trivially reachable; else a Portal must permit viewer_scene → target_scene.

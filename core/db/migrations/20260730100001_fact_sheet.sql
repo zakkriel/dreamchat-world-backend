@@ -10,12 +10,17 @@
 -- Measurements-not-verdicts (§0, D-1): every fact is COMPUTED at ask-time from stored state; nothing is
 -- cached or stored. O(involved), never O(world²) — the aggregate walks unnest(p_involved) once.
 --
--- THE WALL (the one flavor difference in v1): p_truth_side selects the referee (truth) flavor vs the
+-- THE WALL (the flavor differences in v1): p_truth_side selects the referee (truth) flavor vs the
 -- character-mind (perceived) flavor. Spatial facts (distance, duration, reachability) are perceivable by
--- anyone in the scene, so they are identical across flavors. The ONLY gated state is a CLOSED container's
--- `contents`: truth-side always shows the id array; perceived-side WITHHOLDS it (json null) unless the
--- container is open (RULINGS-2026-07-23 §9 — the perception walls protect the character-mind seats,
--- never the referee).
+-- anyone in the scene, so they are identical across flavors. TWO fields are gated:
+--   `contents`  — a CLOSED container's contents: truth-side always shows the id array; perceived-side
+--                 WITHHOLDS it (json null) unless the container is open (RULINGS-2026-07-23 §9 — the
+--                 perception walls protect the character-mind seats, never the referee).
+--   `name`      — the naming-reach wall (§3, RULINGS-2026-07-23): truth-side shows the CANONICAL name
+--                 (the referee is licensed to see the truth); perceived-side shows the VIEWER-RELATIVE
+--                 label via fn_display_name (known name → descriptor → canonical fallback), so a
+--                 character-mind seat never sees a name past a knowledge path it doesn't hold (the same
+--                 wall TestWall_NameStringConfinedToKnower guards for the roster/prompt path).
 
 -- fn_fact_sheet: the action-scoped fact sheet over p_involved, relative to p_viewer.
 --   Returns { "budget_remaining": null, "targets": [ {…per target…} ] } — one entry per involved id
@@ -23,6 +28,8 @@
 --   (beat state), filled by the orchestrator later, NOT an entity fact this function can know.
 --
 --   Per target, relative to the viewer (all via the Station F contract functions):
+--     name            = truth-side: er.canonical_name. perceived-side: fn_display_name(viewer, target) —
+--                       THE WALL (naming-reach, §3): known name → descriptor → canonical fallback.
 --     distance_m      = fn_distance(viewer, target)                    — meters, nearest common parent (§3)
 --     move_duration_s = fn_move_duration_actor(viewer, target)         — CEIL(distance ÷ effective_speed) (§2)
 --     reachable       = same-scene OR fn_portal_permits(viewer_scene, target_scene)   (§5.3)
@@ -49,7 +56,11 @@ LANGUAGE sql STABLE AS $$
            jsonb_build_object(
              'id',              t.target_id,
              'kind',            er.entity_kind,
-             'name',            er.canonical_name,
+             -- THE WALL (naming-reach, §3): truth-side always sees the canonical name (the referee is
+             -- licensed); perceived-side sees the viewer-relative label (known name → descriptor →
+             -- canonical fallback) — never a name the viewer hasn't earned a knowledge path to.
+             'name',            CASE WHEN p_truth_side THEN er.canonical_name
+                                      ELSE fn_display_name(p_world_id, p_viewer, t.target_id) END,
              'distance_m',      fn_distance(p_world_id, p_viewer, t.target_id),
              'move_duration_s', fn_move_duration_actor(p_world_id, p_viewer, t.target_id),
              -- same-scene is trivially reachable; else a Portal must permit viewer_scene → target_scene.

@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(6);
+SELECT plan(8);
 
 -- Grounded Reasoning / Unit 1 (the Fact Sheet): fn_fact_sheet computes the deterministic physics facts
 -- AMONG an action's involved entities and hands them over as one action-scoped jsonb sheet. It stacks on
@@ -23,6 +23,8 @@ SELECT plan(6);
 --   coin  (in chest)               f6000000-0000-0000-0000-0000000000e1
 --   stone (in crate)               f6000000-0000-0000-0000-0000000000e2
 --   heavy "anvil"     {3,0}        f6000000-0000-0000-0000-0000000000a2  size 1, weight 100 (100 > 80)
+--   "stranger" (actor, descriptor 'a hooded stranger', V has NO name-knowledge of him)
+--                                   f6000000-0000-0000-0000-0000000000a9  naming-reach wall fixture (g)/(h)
 
 INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
   ('f6000000-0000-0000-0000-000000000001','f6000000-ffff-0000-0000-000000000000','actor',   'V-119'),
@@ -34,7 +36,8 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
   ('f6000000-0000-0000-0000-0000000000c5','f6000000-ffff-0000-0000-000000000000','artifact','crate-119'),
   ('f6000000-0000-0000-0000-0000000000e1','f6000000-ffff-0000-0000-000000000000','artifact','coin-119'),
   ('f6000000-0000-0000-0000-0000000000e2','f6000000-ffff-0000-0000-000000000000','artifact','stone-119'),
-  ('f6000000-0000-0000-0000-0000000000a2','f6000000-ffff-0000-0000-000000000000','artifact','anvil-119');
+  ('f6000000-0000-0000-0000-0000000000a2','f6000000-ffff-0000-0000-000000000000','artifact','anvil-119'),
+  ('f6000000-0000-0000-0000-0000000000a9','f6000000-ffff-0000-0000-000000000000','actor',   'Zoltan-119-canon');
 
 -- tavern is the root scene; cellar is a child (only referenced by the hatch's connects array).
 INSERT INTO location_state (entity_id, world_id, attrs) VALUES
@@ -44,9 +47,13 @@ INSERT INTO location_state (entity_id, world_id, attrs) VALUES
    '{"coordinates":{"x":0,"y":0},"parent_location_id":"f6000000-0000-0000-0000-000000000010"}'::jsonb);
 
 -- viewer V at the tavern, coord {0,0}, max_load 80, no statuses (→ walk speed is the clean base, 1.4).
+-- stranger: a Tier-2 descriptor ('a hooded stranger'), NO location (irrelevant — (g)/(h) only assert
+-- `name`), and NO name-knowledge perception seeded for V anywhere in this fixture — the naming-reach wall.
 INSERT INTO actor_state (entity_id, world_id, attrs) VALUES
   ('f6000000-0000-0000-0000-000000000001','f6000000-ffff-0000-0000-000000000000',
-   '{"location_id":"f6000000-0000-0000-0000-000000000010","coordinates":{"x":0,"y":0},"max_load":80}'::jsonb);
+   '{"location_id":"f6000000-0000-0000-0000-000000000010","coordinates":{"x":0,"y":0},"max_load":80}'::jsonb),
+  ('f6000000-0000-0000-0000-0000000000a9','f6000000-ffff-0000-0000-000000000000',
+   '{"descriptor":"a hooded stranger"}'::jsonb);
 
 INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
   -- bar: a positioned object 8 m east of V in the same scene (spatial facts only; no size/portal/room).
@@ -216,6 +223,44 @@ SELECT ok(
   AND (SELECT elem->'reachable'        FROM bar)   = 'true'::jsonb
   AND (SELECT elem->'reachable'        FROM hatch) = 'false'::jsonb,
   '(f) perceived: chest contents = ["<coin id>"] (open → shown); bar/hatch spatial facts unchanged');
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- (g) TRUTH: stranger — the naming-reach wall (§3). Truth-side ALWAYS shows the canonical name; the
+--     referee is licensed to see the truth regardless of what any viewer's knowledge would resolve.
+-- ──────────────────────────────────────────────────────────────────────────────
+WITH fs AS (
+  SELECT fn_fact_sheet('f6000000-ffff-0000-0000-000000000000',
+                       'f6000000-0000-0000-0000-000000000001',
+                       ARRAY['f6000000-0000-0000-0000-0000000000a9']::uuid[],
+                       true) AS j
+), stranger AS (
+  SELECT elem FROM fs CROSS JOIN LATERAL jsonb_array_elements(fs.j->'targets') AS t(elem)
+  WHERE elem->>'id' = 'f6000000-0000-0000-0000-0000000000a9'
+)
+SELECT is(
+  (SELECT elem->>'name' FROM stranger),
+  'Zoltan-119-canon',
+  '(g) truth: stranger name = canonical (the referee is truth-side, licensed by design)');
+
+-- ──────────────────────────────────────────────────────────────────────────────
+-- (h) PERCEIVED (p_truth_side=false): V holds NO name-knowledge of the stranger (no perception seeded
+--     anywhere in this fixture) → fn_display_name falls through known-name (none) to the DESCRIPTOR
+--     ('a hooded stranger'), NEVER the canonical name. THE WALL — proves the same-prompt contradiction
+--     TestWall_NameStringConfinedToKnower guards against cannot happen via the fact sheet either.
+-- ──────────────────────────────────────────────────────────────────────────────
+WITH fs AS (
+  SELECT fn_fact_sheet('f6000000-ffff-0000-0000-000000000000',
+                       'f6000000-0000-0000-0000-000000000001',
+                       ARRAY['f6000000-0000-0000-0000-0000000000a9']::uuid[],
+                       false) AS j
+), stranger AS (
+  SELECT elem FROM fs CROSS JOIN LATERAL jsonb_array_elements(fs.j->'targets') AS t(elem)
+  WHERE elem->>'id' = 'f6000000-0000-0000-0000-0000000000a9'
+)
+SELECT is(
+  (SELECT elem->>'name' FROM stranger),
+  'a hooded stranger',
+  '(h) perceived: stranger name = descriptor (viewer has no name-knowledge) — never the canonical name');
 
 SELECT * FROM finish();
 ROLLBACK;
