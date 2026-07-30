@@ -22,7 +22,7 @@ func TestVocabularyV2IsTheSixTypesPlusUnresolved(t *testing.T) {
 
 func TestDecodeV2RejectsOutcomeShapedAndAcceptsAttempts(t *testing.T) {
 	// A valid three-attempt chain (the Drowned Lantern opening).
-	ok := `[{"type":"ActorMoved","stated":"I cross to the bar","to_location_id":"11111111-1111-1111-1111-111111111111"},
+	ok := `[{"type":"ActorMoved","stated":"I cross to the bar","to_target_id":"11111111-1111-1111-1111-111111111111"},
 	 {"type":"ObjectRelocated","stated":"slip her the note","object_id":"22222222-2222-2222-2222-222222222222","dest_kind":"actor","dest_id":"33333333-3333-3333-3333-333333333333"},
 	 {"type":"Communicated","stated":"ask about the harbormaster","listener_id":"33333333-3333-3333-3333-333333333333","content":"what do you know of the harbormaster?"}]`
 	if _, err := DecodeAndValidateChainV2(ok); err != nil {

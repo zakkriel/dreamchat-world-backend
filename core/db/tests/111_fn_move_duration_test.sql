@@ -43,16 +43,17 @@ SELECT is(
   1.4::numeric,
   '(a) fn_effective_speed(A, walk) = 1.4 with no active statuses');
 
--- (c) Duration is distance/speed, engine-owned. Checked here in the UNMODIFIED walker state so the
--- value is the clean base case: CEIL(800 / 1.4) = CEIL(571.42...) = 572 ticks (1 tick = 1 s).
--- (Ordered before (b) deliberately: (c) is the no-status base; (b)/(d) then escalate A's statuses.)
+-- (c) Duration is distance/speed, engine-owned. 3-arg TARGET form (Task 8): the actor's origin is
+-- IMPLICIT (A stands at the tavern), the target supplies the destination — fn_distance(A, alley) = 800.
+-- Checked in the UNMODIFIED walker state so the value is the clean base case: CEIL(800 / 1.4) =
+-- CEIL(571.42...) = 572 ticks (1 tick = 1 s). (Ordered before (b): (c) is the no-status base; (b)/(d)
+-- then escalate A's statuses.)
 SELECT is(
   fn_move_duration_actor('fb000000-ffff-0000-0000-000000000000',
                          'fb000000-0000-0000-0000-0000000000a1',
-                         'fb000000-0000-0000-0000-0000000000c1',
                          'fb000000-0000-0000-0000-0000000000c2'),
   572::bigint,
-  '(c) fn_move_duration_actor(A, tavern, alley) = CEIL(800/1.4) = 572');
+  '(c) fn_move_duration_actor(A, alley) = CEIL(fn_distance(A@tavern, alley)=800 / 1.4) = 572 (target form)');
 
 -- (b) Mint a limping modifier (-30% on walk) and mark A limping. 1.4 * (1 - 0.30) = 1.4 * 0.70 = 0.98.
 INSERT INTO status_modifier (world_id, status_type_id, action_type, movement_type_id, modifier_percent)
@@ -80,7 +81,6 @@ SELECT ok(
   AND
   fn_move_duration_actor('fb000000-ffff-0000-0000-000000000000',
                          'fb000000-0000-0000-0000-0000000000a1',
-                         'fb000000-0000-0000-0000-0000000000c1',
                          'fb000000-0000-0000-0000-0000000000c2') = 9223372036854775807::bigint,
   '(d) encumbered (-100%) → speed 0 AND duration = max bigint (blocked by arithmetic)');
 

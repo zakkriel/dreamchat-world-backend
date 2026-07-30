@@ -162,7 +162,7 @@ SELECT is(
   (SELECT (apply_event(
       'e6000000-ffff-0000-0000-000000000000',
       'e6000000-0000-0000-0000-000000000001',
-      '{"type":"ActorMoved","stated":"moved to dest","to_location_id":"e6000000-0000-0000-0000-000000000012"}'::jsonb,
+      '{"type":"ActorMoved","stated":"moved to dest","to_target_id":"e6000000-0000-0000-0000-000000000012"}'::jsonb,
       2003, 0, 'freeform'
   ))->>'halt_reason'),
   'committed',

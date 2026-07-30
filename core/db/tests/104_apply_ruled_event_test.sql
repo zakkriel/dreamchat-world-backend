@@ -176,7 +176,7 @@ SELECT is(
       'type',           'ActorMoved',
       'actor_id',       'e4000000-0000-0000-0000-000000000001',
       'truth',          'Mara steps through the door',
-      'to_location_id', 'e4000000-0000-0000-0000-000000000012'
+      'to_target_id', 'e4000000-0000-0000-0000-000000000012'
     ),
     2003, 0, 'ruling'
   ))->>'halt_reason'),

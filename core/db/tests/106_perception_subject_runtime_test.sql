@@ -63,7 +63,7 @@ SELECT is(
 SELECT apply_event(
   'f1060000-ffff-0000-0000-000000000000',
   'f1060000-0000-0000-0000-000000000003',
-  '{"type":"ActorMoved","stated":"M moves into the room","to_location_id":"f1060000-0000-0000-0000-000000000010"}'::jsonb,
+  '{"type":"ActorMoved","stated":"M moves into the room","to_target_id":"f1060000-0000-0000-0000-000000000010"}'::jsonb,
   2001, 0, 'freeform'
 );
 SELECT ok(

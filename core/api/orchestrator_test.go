@@ -139,9 +139,9 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 	// then two AttributeChanged on doorID (adjudicated).
 	chain := []Attempt{
 		{
-			Type:         "ActorMoved",
-			Stated:       "I move to locB",
-			ToLocationID: locB,
+			Type:       "ActorMoved",
+			Stated:     "I move to locB",
+			ToTargetID: locB,
 		},
 		{
 			Type:     "AttributeChanged",
@@ -237,9 +237,9 @@ func TestRunBeatPremiseBreakStopsChain(t *testing.T) {
 	// (still at locA) — premise fails because they're no longer co-located.
 	chain := []Attempt{
 		{
-			Type:         "ActorMoved",
-			Stated:       "I move to locB to get away",
-			ToLocationID: locB,
+			Type:       "ActorMoved",
+			Stated:     "I move to locB to get away",
+			ToTargetID: locB,
 		},
 		{
 			Type:       "Communicated",
@@ -441,7 +441,7 @@ func TestRunBeatZeroDurationMoveKeepsSeqMonotonic(t *testing.T) {
 
 	// [ same-location ActorMoved (dur=0), then Communicated to co-located Mara ].
 	chain := []Attempt{
-		{Type: "ActorMoved", Stated: "I shift my weight but stay put", ToLocationID: locA},
+		{Type: "ActorMoved", Stated: "I shift my weight but stay put", ToTargetID: locA},
 		{Type: "Communicated", Stated: "I lean in and speak", ListenerID: maraID, Content: "a word"},
 	}
 

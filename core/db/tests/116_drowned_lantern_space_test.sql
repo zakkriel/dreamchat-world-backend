@@ -39,20 +39,17 @@ SELECT ok(
                   '2a7f0000-0000-0000-0000-0000000000f1') < 15,
   '(a) fn_distance(Kade, bar) is a few meters (0 < d < 15), not 0/NULL — computed 8 m');
 
--- (b) The in-scene APPROACH fits the tense beat budget. fn_move_duration_actor's p_from/p_to are
--- ENTITIES (fn_distance is entity-agnostic): the meaningful "in-tavern approach" per the task Context is
--- Kade → the bar (the literal same-LOCATION pair (kade, tavern, tavern) is distance 0 → 0 s, a degenerate
--- pair that exercises no geometry). Kade carries no movement statuses ⇒ speed = seeded walk 1.4 m/s, so
--- duration = CEIL(8 / 1.4) = 6 s. tense = 30 s (core/api/tension.go tensionBudgetSeconds) ⇒ 6 s fits with
--- room to spare, which is exactly what Task 8's "walk to the bar" needs.
+-- (b) The in-scene APPROACH fits the tense beat budget. fn_move_duration_actor is the 3-arg TARGET form
+-- (Task 8): the actor's origin is IMPLICIT (Kade's own position), the target supplies the destination —
+-- Kade → the bar, fn_distance(Kade, bar) = 8 m. Kade carries no movement statuses ⇒ speed = seeded walk
+-- 1.4 m/s, so duration = CEIL(8 / 1.4) = 6 s. tense = 30 s (core/api/tension.go tensionBudgetSeconds) ⇒
+-- 6 s fits with room to spare, which is exactly what Task 8's "walk to the bar" needs.
 SELECT ok(
   fn_move_duration_actor('22222222-2222-2222-2222-222222222222',
-                         '2ac70000-0000-0000-0000-0000000000a1',   -- Kade (supplies the speed)
-                         '2ac70000-0000-0000-0000-0000000000a1',   -- from: Kade's position
-                         '2a7f0000-0000-0000-0000-0000000000f1')    -- to:   the bar
+                         '2ac70000-0000-0000-0000-0000000000a1',   -- Kade (supplies the speed + origin)
+                         '2a7f0000-0000-0000-0000-0000000000f1')    -- the bar (the target)
     BETWEEN 1 AND 30
   AND fn_move_duration_actor('22222222-2222-2222-2222-222222222222',
-                             '2ac70000-0000-0000-0000-0000000000a1',
                              '2ac70000-0000-0000-0000-0000000000a1',
                              '2a7f0000-0000-0000-0000-0000000000f1') = 6,
   '(b) in-scene approach Kade→bar = CEIL(8/1.4) = 6 s: a few seconds, fits the tense 30 s beat budget');

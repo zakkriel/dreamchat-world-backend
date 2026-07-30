@@ -201,7 +201,7 @@ func TestStationE_FakeE2E(t *testing.T) {
 	// Jonas (batch): a disruptive TELEGRAPH of his full intended ActorMoved (his real act, held).
 	batch1 := &scriptedCognitionDriver{name: "scripted-batch-b1", body: `[{"actor_id":"` + id.J +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUp +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	// Mara (isolated): her secret rides her own call; she does nothing this moment.
 	iso1 := &scriptedCognitionDriver{name: "scripted-isolated-b1", body: `[{"actor_id":"` + id.M + `","decision":"none"}]`}
 	// Resolve must be BOUND but is never called on the telegraph path (it commits via apply_ruled_event).
@@ -292,7 +292,7 @@ func TestStationE_FakeE2E(t *testing.T) {
 	if err := json.Unmarshal([]byte(heldAttemptJSON), &heldAttempt); err != nil {
 		t.Fatalf("beat 1 held attempt not valid Attempt JSON: %v", err)
 	}
-	if heldAttempt.Type != "ActorMoved" || heldAttempt.Stated != windUp || heldAttempt.ToLocationID != id.L2 {
+	if heldAttempt.Type != "ActorMoved" || heldAttempt.Stated != windUp || heldAttempt.ToTargetID != id.L2 {
 		t.Fatalf("beat 1 held attempt = %+v, want Jonas's full ActorMoved to the bar", heldAttempt)
 	}
 
@@ -336,8 +336,8 @@ func TestStationE_FakeE2E(t *testing.T) {
 		SeatDecompose.Name:         beat2Decompose,
 		SeatNarrate.Name:           NewFakeTextDriver("fake-text:station-e-b2"),
 		SeatResolve.Name:           resolve2,
-		SeatCognitionBatch.Name:    NewFakeCognitionDriver(),    // quiet: the collision IS the world's move (depth-1)
-		SeatCognitionIsolated.Name: NewFakeCognitionDriver(),    // quiet
+		SeatCognitionBatch.Name:    NewFakeCognitionDriver(), // quiet: the collision IS the world's move (depth-1)
+		SeatCognitionIsolated.Name: NewFakeCognitionDriver(), // quiet
 		SeatWorldActor.Name:        NewFakeWorldActorDriver(),
 	}, SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor)
 	if err != nil {

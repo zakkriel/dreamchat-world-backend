@@ -90,9 +90,9 @@ BEGIN
       dur := 0;
     ELSIF step->>'type' = 'move' THEN
       attempt := jsonb_build_object(
-        'type',           'ActorMoved',
-        'stated',         'move',
-        'to_location_id', step->>'to'
+        'type',         'ActorMoved',
+        'stated',       'move',
+        'to_target_id', step->>'to'
       );
       dur := fn_move_duration(p_world_id, here, (step->>'to')::uuid);
     ELSE
@@ -145,7 +145,9 @@ DECLARE
   ev_type      text;
   ev_id        uuid;
   listener     uuid;
-  to_loc       uuid;
+  to_target    uuid;   -- the move's target: ANY positioned entity (location | object | actor)
+  v_scene      uuid;   -- resolved: the target's containing scene (a location resolves to itself)
+  v_coord      jsonb;  -- resolved: the target's position — the mover's new coordinate
   object_eid   uuid;
   dest_eid     uuid;
   target_eid   uuid;
@@ -169,12 +171,12 @@ BEGIN
 
   -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
-    to_loc := (p_attempt->>'to_location_id')::uuid;
-    -- ACCESSIBILITY FLOOR (§5.3): destination exists (as before) AND a Portal permits here→dest. A
-    -- SAME-SCENE move (here == dest) is not a traversal and needs no portal. The whole decision lives
-    -- in the shared fn_actor_move_permitted so this twin, apply_ruled_event, and the Go premiseHolds
-    -- mirror never drift. Portal is accessibility, NOT geometry — this never touches fn_distance.
-    IF NOT fn_actor_move_permitted(p_world_id, p_actor_id, to_loc) THEN
+    to_target := (p_attempt->>'to_target_id')::uuid;
+    -- ACCESSIBILITY FLOOR (§5.3): the target exists AND a Portal permits here→(target's scene). A
+    -- SAME-SCENE move (the target's scene == here) is not a traversal and needs no portal. The whole
+    -- decision lives in the shared fn_actor_move_permitted so this twin, apply_ruled_event, and the Go
+    -- premiseHolds mirror never drift. Portal is accessibility, NOT geometry — never touches fn_distance.
+    IF NOT fn_actor_move_permitted(p_world_id, p_actor_id, to_target) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
@@ -261,12 +263,20 @@ BEGIN
       VALUES (ev_id, p_actor_id, 'actor', 'instigator');
   END IF;
 
-  -- state_mutation: ActorMoved only — trigger projects it into actor_state.
+  -- state_mutation: ActorMoved only — the trigger projects it into actor_state.
+  -- §2/§3 UNIFIED MOVE: resolve the target's position ONCE (the same fn_target_position the gate used)
+  -- and write BOTH the mover's new scene AND coordinate. location_id = the target's containing scene (or
+  -- the target itself when it IS a location); coordinates = the target's position. A SAME-SCENE move
+  -- writes location_id unchanged-in-value — only coordinates move — so the "in-scene reposition" case
+  -- falls out of this uniform write with no branch. Moving to a LOCATION lands the actor at that
+  -- location's local origin/authored entry (§3 ACCEPTED IMPRECISION — no exit-point inference).
   IF ev_type = 'ActorMoved' THEN
+    SELECT scene, coord INTO v_scene, v_coord FROM fn_target_position(p_world_id, to_target);
     INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
                                 new_value, valid_from_tick, valid_from_seq)
-    VALUES (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.location_id',
-            to_jsonb(to_loc::text), p_tick, p_seq);
+    VALUES
+      (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.location_id', to_jsonb(v_scene::text), p_tick, p_seq),
+      (p_world_id, ev_id, p_actor_id, 'actor', 'attrs.coordinates', v_coord,                 p_tick, p_seq);
   END IF;
 
   -- ObjectRelocated: EAGER carry change (§4) — write the new contained_by edge, then recompute
@@ -403,7 +413,9 @@ DECLARE
   actor_id   uuid;
   ev_id      uuid;
   listener   uuid;
-  to_loc     uuid;
+  to_target  uuid;   -- the move's target: ANY positioned entity (location | object | actor)
+  v_scene    uuid;   -- resolved: the target's containing scene
+  v_coord    jsonb;  -- resolved: the target's position — the mover's new coordinate
   object_eid uuid;
   dest_eid   uuid;
   target_eid uuid;
@@ -443,11 +455,12 @@ BEGIN
 
   -- Type-specific floor checks.
   IF ev_type = 'ActorMoved' THEN
-    to_loc := (p_ruled->>'to_location_id')::uuid;
-    -- ACCESSIBILITY FLOOR (§5.3): destination exists AND a Portal permits here→dest, unless it is a
-    -- SAME-SCENE move (here == dest, not a traversal). Shared fn_actor_move_permitted = same decision
-    -- as apply_event and the Go premiseHolds mirror (no twin drift). Accessibility, NOT geometry.
-    IF NOT fn_actor_move_permitted(p_world_id, actor_id, to_loc) THEN
+    to_target := (p_ruled->>'to_target_id')::uuid;
+    -- ACCESSIBILITY FLOOR (§5.3): the target exists AND a Portal permits here→(target's scene), unless
+    -- it is a SAME-SCENE move (the target's scene == here, not a traversal). Shared fn_actor_move_permitted
+    -- = same decision as apply_event and the Go premiseHolds mirror (no twin drift). Accessibility, NOT
+    -- geometry.
+    IF NOT fn_actor_move_permitted(p_world_id, actor_id, to_target) THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
@@ -524,12 +537,16 @@ BEGIN
     participant_ids := ARRAY[actor_id];
   END IF;
 
-  -- state_mutation: ActorMoved only — trigger projects it into actor_state.
+  -- state_mutation: ActorMoved only — §2/§3 unified move (twin of apply_event; keep in sync). Resolve the
+  -- target's position ONCE and write the mover's new scene + coordinate. Same-scene ⇒ location_id
+  -- unchanged-in-value (only coordinates move); location target ⇒ its local origin/authored entry (§3).
   IF ev_type = 'ActorMoved' THEN
+    SELECT scene, coord INTO v_scene, v_coord FROM fn_target_position(p_world_id, to_target);
     INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
                                 new_value, valid_from_tick, valid_from_seq)
-    VALUES (p_world_id, ev_id, actor_id, 'actor', 'attrs.location_id',
-            to_jsonb(to_loc::text), p_tick, p_seq);
+    VALUES
+      (p_world_id, ev_id, actor_id, 'actor', 'attrs.location_id', to_jsonb(v_scene::text), p_tick, p_seq),
+      (p_world_id, ev_id, actor_id, 'actor', 'attrs.coordinates', v_coord,                 p_tick, p_seq);
   END IF;
 
   -- ObjectRelocated: EAGER carry change (§4), identical to apply_event via the shared helper.
@@ -710,26 +727,29 @@ END $$;
 -- Name: fn_actor_move_permitted(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_actor_move_permitted(p_world_id uuid, p_actor_id uuid, p_to_loc uuid) RETURNS boolean
+CREATE FUNCTION public.fn_actor_move_permitted(p_world_id uuid, p_actor_id uuid, p_target uuid) RETURNS boolean
     LANGUAGE plpgsql STABLE
     AS $$
 DECLARE
-  v_here uuid;
+  v_here  uuid;
+  v_scene uuid;
 BEGIN
   IF NOT EXISTS (
-    SELECT 1 FROM entity_registry WHERE entity_id = p_to_loc AND world_id = p_world_id
+    SELECT 1 FROM entity_registry WHERE entity_id = p_target AND world_id = p_world_id
   ) THEN
-    RETURN false;   -- destination not a registered entity: the existence floor (as before Portal)
+    RETURN false;   -- target not a registered entity: the existence floor (as before Portal)
   END IF;
+
+  SELECT scene INTO v_scene FROM fn_target_position(p_world_id, p_target);
 
   SELECT (attrs->>'location_id')::uuid INTO v_here
     FROM actor_state WHERE world_id = p_world_id AND entity_id = p_actor_id;
 
-  IF v_here IS NULL OR v_here = p_to_loc THEN
+  IF v_here IS NULL OR v_here = v_scene THEN
     RETURN true;    -- same-scene (or no origin): not a traversal → no portal required
   END IF;
 
-  RETURN fn_portal_permits(p_world_id, v_here, p_to_loc);   -- cross-location: a portal must permit it
+  RETURN fn_portal_permits(p_world_id, v_here, v_scene);   -- cross-location: a portal must permit it
 END $$;
 
 
@@ -1325,17 +1345,17 @@ $$;
 
 
 --
--- Name: fn_move_duration_actor(uuid, uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+-- Name: fn_move_duration_actor(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.fn_move_duration_actor(p_world_id uuid, p_actor uuid, p_from uuid, p_to uuid) RETURNS bigint
+CREATE FUNCTION public.fn_move_duration_actor(p_world_id uuid, p_actor uuid, p_target uuid) RETURNS bigint
     LANGUAGE sql STABLE
     AS $$
   SELECT CASE
     WHEN COALESCE(fn_effective_speed(p_world_id, p_actor, 'walk'), 0) <= 0
       THEN 9223372036854775807::bigint   -- infinite duration: blocked by arithmetic (§2), not a branch
     ELSE CEIL(
-      fn_distance(p_world_id, p_from, p_to) / fn_effective_speed(p_world_id, p_actor, 'walk')
+      fn_distance(p_world_id, p_actor, p_target) / fn_effective_speed(p_world_id, p_actor, 'walk')
     )::bigint
   END;
 $$;
@@ -1516,6 +1536,31 @@ CREATE FUNCTION public.fn_public_moment(p_world_id uuid, p_present uuid[], p_k i
   SELECT r.source_event_id, r.tick AS acquired_tick, r.modal_content AS content
   FROM recent r
   ORDER BY r.tick ASC, r.source_event_id ASC   -- append-only, cache-native
+$$;
+
+
+--
+-- Name: fn_target_position(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_target_position(p_world_id uuid, p_target uuid, OUT scene uuid, OUT coord jsonb) RETURNS record
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT
+    CASE er.entity_kind
+      WHEN 'location' THEN p_target
+      WHEN 'actor'    THEN (ast.attrs->>'location_id')::uuid
+      WHEN 'artifact' THEN COALESCE((art.attrs->>'location_id')::uuid, er.current_scene_id)
+    END AS scene,
+    CASE er.entity_kind
+      WHEN 'location' THEN COALESCE(ls.attrs->'entry_point', '{"x":0,"y":0}'::jsonb)
+      ELSE COALESCE(ast.attrs->'coordinates', art.attrs->'coordinates', '{"x":0,"y":0}'::jsonb)
+    END AS coord
+  FROM entity_registry er
+  LEFT JOIN actor_state    ast ON ast.world_id = p_world_id AND ast.entity_id = p_target
+  LEFT JOIN artifact_state art ON art.world_id = p_world_id AND art.entity_id = p_target
+  LEFT JOIN location_state  ls ON  ls.world_id = p_world_id AND  ls.entity_id = p_target
+  WHERE er.world_id = p_world_id AND er.entity_id = p_target;
 $$;
 
 
@@ -2743,4 +2788,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100002'),
     ('20260729100003'),
     ('20260729100004'),
-    ('20260729100005');
+    ('20260729100005'),
+    ('20260729100006');

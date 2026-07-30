@@ -18,7 +18,7 @@ func TestVerdictRulingActorIDNotInSlice(t *testing.T) {
 					Type:       "ActorMoved",
 					ActorID:    "unknown-uuid-12345",
 					Truth:      "moved to location",
-					ToLocationID: "loc-456",
+					ToTargetID: "loc-456",
 				},
 			},
 		},
@@ -330,4 +330,3 @@ func TestJsonTypeOfString(t *testing.T) {
 		})
 	}
 }
-

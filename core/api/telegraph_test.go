@@ -83,7 +83,7 @@ func TestTelegraphEndsBeat(t *testing.T) {
 	// Batch cognition: Jonas TELEGRAPHS a full ActorMoved (his real intended act) — disruptive.
 	batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUp +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[]`}
 	resolve := &countingResolveDriver{inner: NewFakeResolveDriver()}
 	orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
@@ -91,7 +91,7 @@ func TestTelegraphEndsBeat(t *testing.T) {
 	// The player's two-attempt chain: cross to the bar, then slip Jonas the note. World-first fires
 	// on the FIRST attempt and ends the beat before either step resolves.
 	chain := []Attempt{
-		{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2},
+		{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2},
 		{Type: "Communicated", Stated: "I slip him the note", ListenerID: id.J, Content: "here"},
 	}
 	outcome, err := orc.RunBeat(ctx, id.World, id.P, chain, baseTick)
@@ -170,7 +170,7 @@ func TestTelegraphEndsBeat(t *testing.T) {
 	if err := json.Unmarshal([]byte(attemptJSON), &gotAttempt); err != nil {
 		t.Fatalf("held attempt not valid Attempt JSON: %v", err)
 	}
-	wantAttempt := Attempt{Type: "ActorMoved", Stated: windUp, ToLocationID: id.L2}
+	wantAttempt := Attempt{Type: "ActorMoved", Stated: windUp, ToTargetID: id.L2}
 	gotJSON, _ := json.Marshal(gotAttempt)
 	wantJSON, _ := json.Marshal(wantAttempt)
 	if string(gotJSON) != string(wantJSON) {

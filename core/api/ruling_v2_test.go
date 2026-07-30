@@ -51,8 +51,8 @@ func TestRulingV2_ValidFailureWithAppearanceAndVariant(t *testing.T) {
 	}
 }
 
-// (c) ruled ActorMoved without to_location_id must be rejected.
-func TestRulingV2_ActorMovedMissingToLocationID(t *testing.T) {
+// (c) ruled ActorMoved without to_target_id must be rejected.
+func TestRulingV2_ActorMovedMissingToTargetID(t *testing.T) {
 	bad := `{
 		"reasoning": "she slips away",
 		"therefore": "fails",
@@ -68,7 +68,7 @@ func TestRulingV2_ActorMovedMissingToLocationID(t *testing.T) {
 		}
 	}`
 	if _, err := DecodeAndValidateRulingV2(bad); err == nil {
-		t.Fatal("ActorMoved without to_location_id accepted — per-type check missing")
+		t.Fatal("ActorMoved without to_target_id accepted — per-type check missing")
 	}
 }
 

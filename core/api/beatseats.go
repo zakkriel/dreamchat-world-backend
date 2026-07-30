@@ -56,7 +56,7 @@ func DecodeAndValidateChain(raw string) ([]BeatStep, error) {
 type Attempt struct {
 	Type         string   `json:"type"`
 	Stated       string   `json:"stated"`
-	ToLocationID string   `json:"to_location_id,omitempty"`
+	ToTargetID   string   `json:"to_target_id,omitempty"` // ActorMoved: id of ANY positioned entity (location|object|actor)
 	ListenerID   string   `json:"listener_id,omitempty"`
 	Content      string   `json:"content,omitempty"`
 	ObjectID     string   `json:"object_id,omitempty"`
@@ -95,8 +95,8 @@ func DecodeAndValidateChainV2(raw string) ([]Attempt, error) {
 func validateAttemptFields(i int, a Attempt) error {
 	switch a.Type {
 	case "ActorMoved":
-		if a.ToLocationID == "" {
-			return fmt.Errorf("step %d ActorMoved requires to_location_id", i)
+		if a.ToTargetID == "" {
+			return fmt.Errorf("step %d ActorMoved requires to_target_id", i)
 		}
 	case "Communicated":
 		if a.ListenerID == "" || a.Content == "" {

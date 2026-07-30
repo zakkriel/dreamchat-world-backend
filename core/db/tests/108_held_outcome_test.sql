@@ -28,7 +28,7 @@ SELECT is(
 INSERT INTO held_outcome (held_id, world_id, actor_id, attempt, telegraph_event_id, created_tick)
 VALUES ('10800000-0000-0000-0000-000000000003','10800000-ffff-0000-0000-000000000000',
         '10800000-0000-0000-0000-000000000001',
-        '{"type":"ActorMoved","stated":"Jonas pushes off the bar, moving to cut in","to_location_id":"10800000-0000-0000-0000-000000000009"}'::jsonb,
+        '{"type":"ActorMoved","stated":"Jonas pushes off the bar, moving to cut in","to_target_id":"10800000-0000-0000-0000-000000000009"}'::jsonb,
         '10800000-0000-0000-0000-000000000002', 5000);
 SELECT is(
   (SELECT status FROM held_outcome WHERE held_id='10800000-0000-0000-0000-000000000003'),

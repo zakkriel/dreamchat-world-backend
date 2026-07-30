@@ -189,11 +189,11 @@ func TestReactionBeat_WorkedExample(t *testing.T) {
 	baseTick := reactionBaseTick(t, ctx, pool, id.World)
 	batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUp +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[]`}
 	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
 	chain1 := []Attempt{
-		{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2},
+		{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2},
 		{Type: "Communicated", Stated: "I slip her the note", ListenerID: id.W, Content: "here"},
 	}
 	out1, err := orc1.RunBeat(ctx, id.World, id.P, chain1, baseTick)
@@ -291,7 +291,7 @@ func TestReactionBeat_NonResisting(t *testing.T) {
 	id := setupReactionWorld(t, ctx, pool)
 
 	const windUp = "Jonas moves to cut in"
-	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: windUp, ToLocationID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
+	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: windUp, ToTargetID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
 
 	held, err := pendingHeldOutcomes(ctx, pool, id.World)
 	if err != nil {
@@ -342,10 +342,10 @@ func TestReactionBeat_EmptyReactionAnswerEntersRuling(t *testing.T) {
 	baseTick := reactionBaseTick(t, ctx, pool, id.World)
 	batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUp +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[]`}
 	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
-	chain1 := []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2}}
+	chain1 := []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2}}
 	out1, err := orc1.RunBeat(ctx, id.World, id.P, chain1, baseTick)
 	if err != nil {
 		t.Fatalf("beat 1 RunBeat: %v", err)
@@ -438,7 +438,7 @@ func TestReactionBeat_AnswerIsJSONEscaped(t *testing.T) {
 	id := setupReactionWorld(t, ctx, pool)
 
 	const windUp = "Jonas moves to cut in"
-	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: windUp, ToLocationID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
+	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: windUp, ToTargetID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
 	held, err := pendingHeldOutcomes(ctx, pool, id.World)
 	if err != nil {
 		t.Fatalf("pendingHeldOutcomes: %v", err)
@@ -489,7 +489,7 @@ func TestReactionBeat_UnresolvedFirst(t *testing.T) {
 	ctx := context.Background()
 	id := setupReactionWorld(t, ctx, pool)
 
-	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: "Jonas moves to cut in", ToLocationID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
+	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: "Jonas moves to cut in", ToTargetID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
 	held, err := pendingHeldOutcomes(ctx, pool, id.World)
 	if err != nil {
 		t.Fatalf("pendingHeldOutcomes: %v", err)
@@ -531,7 +531,7 @@ func TestReactionBeat_BounceKeepsHoldsPending(t *testing.T) {
 	ctx := context.Background()
 	id := setupReactionWorld(t, ctx, pool)
 
-	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: "Jonas moves to cut in", ToLocationID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
+	seedHeld(t, ctx, pool, id.World, id.J, Attempt{Type: "ActorMoved", Stated: "Jonas moves to cut in", ToTargetID: id.L2}, reactionBaseTick(t, ctx, pool, id.World))
 	held, err := pendingHeldOutcomes(ctx, pool, id.World)
 	if err != nil {
 		t.Fatalf("pendingHeldOutcomes: %v", err)
@@ -579,12 +579,12 @@ func TestReactionBeat_TwoSimultaneousTelegraphs(t *testing.T) {
 	const womanWind = "the hooded woman rises, about to speak"
 	baseTick := reactionBaseTick(t, ctx, pool, id.World)
 	batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[` +
-		`{"actor_id":"` + id.J + `","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + jonasWind + `","to_location_id":"` + id.L2 + `"}}},` +
+		`{"actor_id":"` + id.J + `","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + jonasWind + `","to_target_id":"` + id.L2 + `"}}},` +
 		`{"actor_id":"` + id.W + `","decision":{"commit_kind":"telegraph","attempt":{"type":"Communicated","stated":"` + womanWind + `","listener_id":"` + id.P + `","content":"you"}}}` +
 		`]`}
 	isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[]`}
 	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
-	out1, err := orc1.RunBeat(ctx, id.World, id.P, []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2}}, baseTick)
+	out1, err := orc1.RunBeat(ctx, id.World, id.P, []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2}}, baseTick)
 	if err != nil {
 		t.Fatalf("beat 1 RunBeat: %v", err)
 	}
@@ -651,9 +651,9 @@ func TestReactionBeat_TelegraphDuringRemainder(t *testing.T) {
 	baseTick := reactionBaseTick(t, ctx, pool, id.World)
 	batch1 := &scriptedCognitionDriver{name: "b1-batch", body: `[{"actor_id":"` + id.J +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUpA +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	orc1 := &Orchestrator{DB: pool, Resolve: NewFakeResolveDriver(), CognitionBatch: batch1, CognitionIsolated: &scriptedCognitionDriver{name: "b1-iso", body: `[]`}, WorldActor: NewFakeWorldActorDriver()}
-	out1, err := orc1.RunBeat(ctx, id.World, id.P, []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToLocationID: id.L2}}, baseTick)
+	out1, err := orc1.RunBeat(ctx, id.World, id.P, []Attempt{{Type: "ActorMoved", Stated: "I cross to the bar", ToTargetID: id.L2}}, baseTick)
 	if err != nil {
 		t.Fatalf("beat 1 RunBeat: %v", err)
 	}
@@ -678,7 +678,7 @@ func TestReactionBeat_TelegraphDuringRemainder(t *testing.T) {
 	// The remainder's batch cognition telegraphs the hooded woman (W has no private record → batch).
 	remainderBatch := &scriptedCognitionDriver{name: "remainder-batch", body: `[{"actor_id":"` + id.W +
 		`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"` + windUpB +
-		`","to_location_id":"` + id.L2 + `"}}}]`}
+		`","to_target_id":"` + id.L2 + `"}}}]`}
 	orc2 := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: remainderBatch, CognitionIsolated: &scriptedCognitionDriver{name: "b2-iso", body: `[]`}, WorldActor: NewFakeWorldActorDriver()}
 
 	// chain: [ first action → combined ruling ] + [ remainderStep1 (world-first telegraphs here),

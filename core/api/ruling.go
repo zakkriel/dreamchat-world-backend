@@ -76,14 +76,14 @@ type RuledEventV2 struct {
 	Visible          *bool             `json:"visible,omitempty"`
 	ReceiverVariants []ReceiverVariant `json:"receiver_variants,omitempty"`
 	// Typed id slots — mirror Attempt fields (sans stated/component_ids/reference/candidate_ids).
-	ToLocationID string `json:"to_location_id,omitempty"`
-	ListenerID   string `json:"listener_id,omitempty"`
-	Content      string `json:"content,omitempty"`
-	ObjectID     string `json:"object_id,omitempty"`
-	DestKind     string `json:"dest_kind,omitempty"`
-	DestID       string `json:"dest_id,omitempty"`
-	TargetID     string `json:"target_id,omitempty"`
-	GranteeID    string `json:"grantee_id,omitempty"`
+	ToTargetID string `json:"to_target_id,omitempty"` // ActorMoved: id of ANY positioned entity (location|object|actor)
+	ListenerID string `json:"listener_id,omitempty"`
+	Content    string `json:"content,omitempty"`
+	ObjectID   string `json:"object_id,omitempty"`
+	DestKind   string `json:"dest_kind,omitempty"`
+	DestID     string `json:"dest_id,omitempty"`
+	TargetID   string `json:"target_id,omitempty"`
+	GranteeID  string `json:"grantee_id,omitempty"`
 }
 
 // ReceiverVariant grants a specific perceiver a sharper or duller read of a ruled event.
@@ -97,8 +97,8 @@ type ReceiverVariant struct {
 func validateRuledEventFields(i int, e RuledEventV2) error {
 	switch e.Type {
 	case "ActorMoved":
-		if e.ToLocationID == "" {
-			return fmt.Errorf("event %d ActorMoved requires to_location_id", i)
+		if e.ToTargetID == "" {
+			return fmt.Errorf("event %d ActorMoved requires to_target_id", i)
 		}
 	case "Communicated":
 		if e.ListenerID == "" || e.Content == "" {

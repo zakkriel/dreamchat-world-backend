@@ -56,7 +56,7 @@
                       "additionalProperties": false
                     }
                   },
-                  "to_location_id": {"type": "string"},
+                  "to_target_id": {"type": "string"},
                   "listener_id": {"type": "string"},
                   "content": {"type": "string"},
                   "object_id": {"type": "string"},

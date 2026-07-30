@@ -72,8 +72,8 @@ func verdictRuling(r RulingV2, sliceIDs map[string]bool, attemptIDs []string) []
 		}
 
 		// Check typed slots
-		if event.ToLocationID != "" && !isWhitelisted(event.ToLocationID) {
-			violations = append(violations, formatUUIDViolation("event", i, "to_location_id", event.ToLocationID))
+		if event.ToTargetID != "" && !isWhitelisted(event.ToTargetID) {
+			violations = append(violations, formatUUIDViolation("event", i, "to_target_id", event.ToTargetID))
 		}
 		if event.ListenerID != "" && !isWhitelisted(event.ListenerID) {
 			violations = append(violations, formatUUIDViolation("event", i, "listener_id", event.ListenerID))

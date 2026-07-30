@@ -66,7 +66,7 @@ SELECT ok(
   ((apply_event(
       'f5000000-ffff-0000-0000-000000000000',
       'f5000000-0000-0000-0000-000000000001',
-      '{"type":"ActorMoved","stated":"P tries the cellar hatch","to_location_id":"f5000000-0000-0000-0000-000000000011"}'::jsonb,
+      '{"type":"ActorMoved","stated":"P tries the cellar hatch","to_target_id":"f5000000-0000-0000-0000-000000000011"}'::jsonb,
       2001, 0, 'freeform'
    ))->>'halt_reason' = 'gate_reject')
   AND (SELECT count(*)::int FROM canon_event
@@ -79,7 +79,7 @@ SELECT is(
   (apply_event(
       'f5000000-ffff-0000-0000-000000000000',
       'f5000000-0000-0000-0000-000000000001',
-      '{"type":"ActorMoved","stated":"P steps out the front door","to_location_id":"f5000000-0000-0000-0000-000000000012"}'::jsonb,
+      '{"type":"ActorMoved","stated":"P steps out the front door","to_target_id":"f5000000-0000-0000-0000-000000000012"}'::jsonb,
       2002, 0, 'freeform'
    ))->>'halt_reason',
   'committed',

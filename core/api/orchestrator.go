@@ -156,25 +156,23 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		switch attempt.Type {
 		case "ActorMoved", "Communicated", "ObjectRelocated":
 			// Passthrough: commit directly via apply_event (gate enforces structural floor).
-			// Capture "from" location before commit (for move duration calculation).
-			fromLoc, err := o.actorLocation(ctx, worldID, actorID)
-			if err != nil {
-				return fmt.Errorf("actor location (pre-move): %w", err)
-			}
 
 			// ── §6 tension budget: a move must FIT the remaining beat budget BEFORE it commits ──────
-			// Compute the move's real, status-aware duration up front (§2: distance(from,to) /
-			// effective_speed(actor,'walk'); a -100% modifier → speed 0 → max-bigint sentinel). If it
-			// exceeds what remains, the chain halts turn_budget and this move does NOT commit — the
-			// prefix stands (§6 example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects).
-			// The runaway/overflow guard (dur > MaxInt64-curTick) is belt-and-suspenders and, under
-			// `none` (∞ budget) where the first clause never fires, still catches the speed-0 sentinel.
+			// Compute the move's real, status-aware duration up front (§2: distance(actor,target) /
+			// effective_speed(actor,'walk'); a -100% modifier → speed 0 → max-bigint sentinel). The
+			// actor's origin is IMPLICIT — the target (a location, an object, an actor) supplies the
+			// destination (Task 8: the move targets any positioned entity). If the duration exceeds what
+			// remains, the chain halts turn_budget and this move does NOT commit — the prefix stands (§6
+			// example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects). The runaway/overflow
+			// guard (dur > MaxInt64-curTick) is belt-and-suspenders and, under `none` (∞ budget) where the
+			// first clause never fires, still catches the speed-0 sentinel.
 			var dur int64
 			if attempt.Type == "ActorMoved" {
-				dur, err = o.fnMoveDurationActor(ctx, worldID, actorID, fromLoc, attempt.ToLocationID)
-				if err != nil {
-					return fmt.Errorf("fn_move_duration_actor: %w", err)
+				d, derr := o.fnMoveDurationActor(ctx, worldID, actorID, attempt.ToTargetID)
+				if derr != nil {
+					return fmt.Errorf("fn_move_duration_actor: %w", derr)
 				}
+				dur = d
 				if dur > budgetRemaining || dur > math.MaxInt64-curTick {
 					outcome.HaltReason = "turn_budget"
 					outcome.TicksAdvanced = curTick - startTick
@@ -700,21 +698,27 @@ func (o *Orchestrator) premiseHolds(ctx context.Context, worldID, actorID string
 	switch a.Type {
 	case "ActorMoved":
 		// Floor/premise parity with apply_event/apply_ruled_event's ActorMoved accessibility floor
-		// (§5.3, via fn_actor_move_permitted): the destination must still exist AND a Portal must
-		// permit here→dest (open ∧ ¬locked) — UNLESS it is a SAME-SCENE move (here == dest, or the
-		// actor has no origin yet), which is not a traversal and needs no portal. Portal is
-		// accessibility, NOT geometry: this mirror never consults fn_distance/coordinates.
-		if ok, err := exists(a.ToLocationID, "location"); err != nil || !ok {
+		// (§5.3, via fn_actor_move_permitted): the TARGET (any positioned entity — a location, an object
+		// like the bar, an actor) must still exist AND, for a CROSS-LOCATION move, a Portal must permit
+		// here→(the target's scene) (open ∧ ¬locked) — UNLESS it is a SAME-SCENE move (the target's
+		// scene == here, or the actor has no origin yet), which is not a traversal and needs no portal.
+		// The scene is resolved via fn_target_position (the SAME resolution the SQL twins commit). Portal
+		// is accessibility, NOT geometry: this mirror never consults fn_distance/coordinates.
+		if ok, err := exists(a.ToTargetID, ""); err != nil || !ok {
 			return ok, err
 		}
 		here, err := o.actorLocation(ctx, worldID, actorID)
 		if err != nil {
 			return false, err
 		}
-		if here == "" || here == a.ToLocationID {
+		scene, err := o.fnTargetScene(ctx, worldID, a.ToTargetID)
+		if err != nil {
+			return false, err
+		}
+		if here == "" || here == scene {
 			return true, nil // same-scene / no origin — not a traversal, no portal required
 		}
-		return o.fnPortalPermits(ctx, worldID, here, a.ToLocationID)
+		return o.fnPortalPermits(ctx, worldID, here, scene)
 	case "Communicated":
 		// Listener must still be co-located with the speaker.
 		return coLocated(a.ListenerID)
@@ -795,18 +799,35 @@ func (o *Orchestrator) fnPortalPermits(ctx context.Context, worldID, fromLoc, to
 	return ok, nil
 }
 
-// fnMoveDurationActor calls fn_move_duration_actor(world, actor, from, to) and returns the tick count.
-// The actor supplies the effective speed (movement type + active statuses); distance is between the two
-// locations. Speed 0 (e.g. encumbered, -100%) → max bigint, so an impossible move never fits the budget.
-func (o *Orchestrator) fnMoveDurationActor(ctx context.Context, worldID, actorID, fromLoc, toLoc string) (int64, error) {
-	if fromLoc == "" || toLoc == "" {
+// fnMoveDurationActor calls fn_move_duration_actor(world, actor, target) and returns the tick count.
+// Task 8: the 3-arg TARGET form — the actor's origin is implicit (its own coordinate/scene), the target
+// (a location, an object, an actor) supplies the destination; distance = fn_distance(actor, target). The
+// actor supplies the effective speed (movement type + active statuses). Speed 0 (e.g. encumbered, -100%)
+// → max bigint, so an impossible move never fits the budget.
+func (o *Orchestrator) fnMoveDurationActor(ctx context.Context, worldID, actorID, target string) (int64, error) {
+	if target == "" {
 		return 0, nil
 	}
 	var dur int64
 	err := o.DB.QueryRow(ctx,
-		`SELECT fn_move_duration_actor($1, $2::uuid, $3::uuid, $4::uuid)`,
-		worldID, actorID, fromLoc, toLoc).Scan(&dur)
+		`SELECT fn_move_duration_actor($1, $2::uuid, $3::uuid)`,
+		worldID, actorID, target).Scan(&dur)
 	return dur, err
+}
+
+// fnTargetScene resolves ANY positioned target to its containing SCENE via fn_target_position — a
+// location resolves to itself, an actor/artifact to its attrs.location_id. It backs the premiseHolds
+// ActorMoved mirror so the Go premise re-check gates the portal on the SAME scene the SQL commit twins
+// resolve. Empty target → "". A NULL scene (target with no location) coalesces to "".
+func (o *Orchestrator) fnTargetScene(ctx context.Context, worldID, target string) (string, error) {
+	if target == "" {
+		return "", nil
+	}
+	var scene string
+	err := o.DB.QueryRow(ctx,
+		`SELECT COALESCE(tp.scene::text, '') FROM fn_target_position($1, $2::uuid) tp`,
+		worldID, target).Scan(&scene)
+	return scene, err
 }
 
 // existingMovementTypes reads the world's committed movement vocabulary (movement_type_ids) as a set —

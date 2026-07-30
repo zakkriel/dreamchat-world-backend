@@ -167,9 +167,9 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	placeActorAt(t, ctx, playerID, tenA, baseTick) // start the beat at tenA (tension 'tense' → 30 s)
 
 	chain := []Attempt{
-		{Type: "ActorMoved", Stated: "I cross to B", ToLocationID: tenB},
-		{Type: "ActorMoved", Stated: "I cross to C", ToLocationID: tenC},
-		{Type: "ActorMoved", Stated: "I cross to D", ToLocationID: tenD},
+		{Type: "ActorMoved", Stated: "I cross to B", ToTargetID: tenB},
+		{Type: "ActorMoved", Stated: "I cross to C", ToTargetID: tenC},
+		{Type: "ActorMoved", Stated: "I cross to D", ToTargetID: tenD},
 	}
 
 	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+1)
@@ -219,7 +219,7 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	placeActorAt(t, ctx, playerID, tenD, noneTick) // start the beat at tenD (no tension stamp → 'none' → ∞)
 
 	noneChain := []Attempt{
-		{Type: "ActorMoved", Stated: "I make the long crossing to A", ToLocationID: tenA},
+		{Type: "ActorMoved", Stated: "I make the long crossing to A", ToTargetID: tenA},
 	}
 	noneOutcome, err := orc.RunBeat(ctx, worldID, playerID, noneChain, noneTick+1)
 	if err != nil {

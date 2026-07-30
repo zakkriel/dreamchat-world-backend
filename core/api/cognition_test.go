@@ -13,7 +13,7 @@ func TestNPCDecisionsValidateActorsAndShape(t *testing.T) {
 	if _, err := DecodeAndValidateNPCDecisions(ghost, present); err == nil {
 		t.Fatal("decision for a non-present actor accepted")
 	}
-	tele := `[{"actor_id":"33333333-3333-3333-3333-333333333333","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"Jonas pushes off the bar, moving to cut in","to_location_id":"11111111-1111-1111-1111-111111111111"}}}]`
+	tele := `[{"actor_id":"33333333-3333-3333-3333-333333333333","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"Jonas pushes off the bar, moving to cut in","to_target_id":"11111111-1111-1111-1111-111111111111"}}}]`
 	ds, err = DecodeAndValidateNPCDecisions(tele, present)
 	if err != nil || ds[0].Reaction == nil || ds[0].Reaction.CommitKind != "telegraph" {
 		t.Fatalf("telegraph decision: %v %+v", err, ds)
