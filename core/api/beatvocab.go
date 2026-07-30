@@ -57,14 +57,15 @@ func vocabularyTypesV2() map[string]bool {
 }
 
 // allowedBeatTypesV2 is the canonical closed set for beat_chain/2 (kept in sync with
-// beat_chain.v2.schema.json; TestVocabularyV2IsTheSixTypesPlusUnresolved asserts they match).
+// beat_chain.v2.schema.json; TestVocabularyV2IsTheSixTypesPlusUnresolvedAndQuery asserts they match).
 var allowedBeatTypesV2 = map[string]bool{
-	"ActorMoved":                true,
-	"Communicated":              true,
-	"ObjectRelocated":           true,
-	"OwnershipAccessChanged":    true,
-	"EntityCreated":             true,
-	"EntityDestroyed":           true,
-	"AttributeChanged":          true,
-	"UNRESOLVED":                true,
+	"ActorMoved":             true,
+	"Communicated":           true,
+	"ObjectRelocated":        true,
+	"OwnershipAccessChanged": true,
+	"EntityCreated":          true,
+	"EntityDestroyed":        true,
+	"AttributeChanged":       true,
+	"UNRESOLVED":             true,
+	"QUERY":                  true,
 }

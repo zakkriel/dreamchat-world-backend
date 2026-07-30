@@ -67,6 +67,11 @@ type Attempt struct {
 	ComponentIDs []string `json:"component_ids,omitempty"`
 	Reference    string   `json:"reference,omitempty"`
 	CandidateIDs []string `json:"candidate_ids,omitempty"`
+	// QueryTargetIDs binds a QUERY's asked-about entities (Grounded Reasoning Unit 2). QUERY is
+	// NOT an action — it carries no outcome and binds no other slot; it is a parse shape, a
+	// sibling of UNRESOLVED, recognizing interrogative form and binding ids from the candidate
+	// whitelist (RULINGS-2026-07-23 §4; RULINGS-2026-07-30 §1).
+	QueryTargetIDs []string `json:"query_target_ids,omitempty"`
 }
 
 // DecodeAndValidateChainV2 is the belt behind the leash: valid JSON, every
@@ -118,6 +123,10 @@ func validateAttemptFields(i int, a Attempt) error {
 	case "UNRESOLVED":
 		if a.Reference == "" || len(a.CandidateIDs) < 2 {
 			return fmt.Errorf("step %d UNRESOLVED requires reference + >=2 candidates", i)
+		}
+	case "QUERY":
+		if len(a.QueryTargetIDs) < 1 {
+			return fmt.Errorf("step %d QUERY requires >=1 query_target_ids", i)
 		}
 	}
 	return nil

@@ -2,10 +2,12 @@ package main
 
 import "testing"
 
-func TestVocabularyV2IsTheSixTypesPlusUnresolved(t *testing.T) {
+func TestVocabularyV2IsTheSixTypesPlusUnresolvedAndQuery(t *testing.T) {
+	// QUERY joined the set (Task 4, Grounded Reasoning Unit 2): a bound, read-only
+	// question is a parse shape, not an attempt — a sibling of UNRESOLVED.
 	want := []string{"ActorMoved", "Communicated", "ObjectRelocated",
 		"OwnershipAccessChanged", "EntityCreated", "EntityDestroyed",
-		"AttributeChanged", "UNRESOLVED"}
+		"AttributeChanged", "UNRESOLVED", "QUERY"}
 	got := vocabularyTypesV2()
 	if len(got) != len(want) {
 		t.Fatalf("vocabulary = %v, want %v", got, want)
@@ -42,5 +44,47 @@ func TestDecodeV2RejectsOutcomeShapedAndAcceptsAttempts(t *testing.T) {
 	invalidDestKind := `[{"type":"ObjectRelocated","stated":"slip her the note","object_id":"22222222-2222-2222-2222-222222222222","dest_kind":"basket","dest_id":"33333333-3333-3333-3333-333333333333"}]`
 	if _, err := DecodeAndValidateChainV2(invalidDestKind); err == nil {
 		t.Fatal("ObjectRelocated with invalid dest_kind 'basket' accepted")
+	}
+}
+
+// A question is not an action (RULINGS-2026-07-23 §3: the player gets a reaction, never a record).
+// QUERY binds the asked entity's id from the CANDIDATES and carries no outcome (Task 4, Unit 2).
+func TestDecodeV2AcceptsQuery(t *testing.T) {
+	query := `[{"type":"QUERY","stated":"how long to the bar?","query_target_ids":["11111111-1111-1111-1111-111111111111"]}]`
+	chain, err := DecodeAndValidateChainV2(query)
+	if err != nil {
+		t.Fatalf("valid QUERY rejected: %v", err)
+	}
+	if len(chain) != 1 || chain[0].Type != "QUERY" ||
+		len(chain[0].QueryTargetIDs) != 1 ||
+		chain[0].QueryTargetIDs[0] != "11111111-1111-1111-1111-111111111111" {
+		t.Fatalf("chain = %+v, want one QUERY bound to the bar", chain)
+	}
+}
+
+func TestDecodeV2RejectsQueryWithoutTargetIDs(t *testing.T) {
+	missing := `[{"type":"QUERY","stated":"is the door locked?"}]`
+	if _, err := DecodeAndValidateChainV2(missing); err == nil {
+		t.Fatal("QUERY with missing query_target_ids accepted")
+	}
+	empty := `[{"type":"QUERY","stated":"is the door locked?","query_target_ids":[]}]`
+	if _, err := DecodeAndValidateChainV2(empty); err == nil {
+		t.Fatal("QUERY with empty query_target_ids accepted")
+	}
+}
+
+func TestDecodeV2MixedChainResolvesActionAndQuery(t *testing.T) {
+	// "I walk over — how long to slip her the note?" (design doc Unit 2, mixed input).
+	mixed := `[{"type":"ActorMoved","stated":"I walk over","to_target_id":"11111111-1111-1111-1111-111111111111"},
+	 {"type":"QUERY","stated":"how long to slip her the note?","query_target_ids":["22222222-2222-2222-2222-222222222222","33333333-3333-3333-3333-333333333333"]}]`
+	chain, err := DecodeAndValidateChainV2(mixed)
+	if err != nil {
+		t.Fatalf("mixed ActorMoved+QUERY chain rejected: %v", err)
+	}
+	if len(chain) != 2 || chain[0].Type != "ActorMoved" || chain[1].Type != "QUERY" {
+		t.Fatalf("chain = %+v, want [ActorMoved, QUERY]", chain)
+	}
+	if len(chain[1].QueryTargetIDs) != 2 {
+		t.Fatalf("QUERY target ids = %v, want 2 bound ids", chain[1].QueryTargetIDs)
 	}
 }
