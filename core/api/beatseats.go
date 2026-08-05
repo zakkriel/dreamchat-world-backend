@@ -72,6 +72,12 @@ type Attempt struct {
 	// sibling of UNRESOLVED, recognizing interrogative form and binding ids from the candidate
 	// whitelist (RULINGS-2026-07-23 §4; RULINGS-2026-07-30 §1).
 	QueryTargetIDs []string `json:"query_target_ids,omitempty"`
+	// DurationClass is the decomposer's parse-shape estimate of how long a NON-MOVE act takes in the
+	// fiction — one of instant|short|medium|long|extremely_long (a validated enum, like a QUERY shape,
+	// NOT a raw number and NOT the banned outcome/tension/intent judgment; RULINGS-2026-07-23 §4). The
+	// engine maps class→seconds per world (fn_duration_class_seconds). Empty on ActorMoved (physics owns
+	// move duration) and on legacy input.
+	DurationClass string `json:"duration_class,omitempty"`
 }
 
 // DecodeAndValidateChainV2 is the belt behind the leash: valid JSON, every
@@ -127,6 +133,13 @@ func validateAttemptFields(i int, a Attempt) error {
 	case "QUERY":
 		if len(a.QueryTargetIDs) < 1 {
 			return fmt.Errorf("step %d QUERY requires >=1 query_target_ids", i)
+		}
+	}
+	if a.DurationClass != "" {
+		switch a.DurationClass {
+		case "instant", "short", "medium", "long", "extremely_long":
+		default:
+			return fmt.Errorf("step %d duration_class %q outside enum", i, a.DurationClass)
 		}
 	}
 	return nil

@@ -28,6 +28,24 @@ func TestDecodeAndValidateChain_AcceptsClosedVocab(t *testing.T) {
 	}
 }
 
+// duration_class is the decomposer's parse-shape estimate of how long a NON-MOVE act takes in the
+// fiction (RULINGS-2026-07-23 §4) — decoded when present, and rejected when outside the enum.
+func TestDecodeChainV2_DurationClass(t *testing.T) {
+	ok := `[{"type":"Communicated","stated":"I tell Mara my whole life story","listener_id":"11111111-1111-1111-1111-111111111111","content":"...","duration_class":"long"}]`
+	chain, err := DecodeAndValidateChainV2(ok)
+	if err != nil {
+		t.Fatalf("valid class rejected: %v", err)
+	}
+	if chain[0].DurationClass != "long" {
+		t.Fatalf("class not decoded: %q", chain[0].DurationClass)
+	}
+
+	bad := `[{"type":"Communicated","stated":"x","listener_id":"11111111-1111-1111-1111-111111111111","content":"x","duration_class":"aeon"}]`
+	if _, err := DecodeAndValidateChainV2(bad); err == nil {
+		t.Fatalf("out-of-enum duration_class accepted")
+	}
+}
+
 func TestPayload_IsPerceptionBound(t *testing.T) {
 	// the payload type carries ONLY safety-filtered perception lines — no field can hold raw canon.
 	p := PerceptionPayload{Lines: []string{"You told Mara about the note."}}
