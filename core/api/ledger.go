@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 )
 
 // pendingPayload is the {"actor_id":..., "attempt":{...}} shape a pending_event.payload carries — the
@@ -34,11 +35,21 @@ var magnitudeRank = map[string]int{"small": 1, "medium": 2, "large": 3}
 //
 // Every row that fires this call commits at tickAfter (the tick the beat crossed into firing it — the
 // row's own fire_at_tick is only ever used as the WHERE-clause cutoff, never as the commit tick), with
-// curSeq starting at seq and advancing per commit so two rows firing in the same call never collide on
-// (tick, seq). Each fired row's committed id(s) are appended to outcome.Committed and its status flips
-// to 'fired'. The return value is the LARGEST magnitude fired, ranked small<medium<large ("" if
-// nothing fired this call) — the caller (Task 9's composer) decides the §5 beat-cut from that
-// magnitude; this helper never applies the cut itself.
+// curSeq starting at seq and advancing per attempted row so two rows processed in the same call never
+// collide on (tick, seq).
+//
+// A row only counts as FIRED if its payload actually landed in canon — a gate-rejected passthrough
+// (e.g. Communicated's listener walked off co-presence) or a bounced/gate-rejected adjudication (the
+// referee couldn't produce a valid ruling, or one of its events failed the structural floor) never
+// flips to 'fired' and never folds into the returned magnitude: Task 9's composer reads that magnitude
+// to decide the §5 beat-cut, and cutting a beat for an event that isn't actually in canon would be a
+// lie. A row that didn't land instead flips to the terminal 'cancelled' state (never retried, never
+// silently re-attempted) with an observable log line — see review fix (Critical #1).
+//
+// Each fired row's committed id(s) are appended to outcome.Committed. The return value is the LARGEST
+// magnitude ACTUALLY fired, ranked small<medium<large ("" if nothing fired this call) — the caller
+// (Task 9's composer) decides the §5 beat-cut from that magnitude; this helper never applies the cut
+// itself.
 func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickBefore, tickAfter int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (firedMag string, err error) {
 	rows, err := o.DB.Query(ctx,
 		`SELECT pending_id, magnitude, payload FROM pending_event
@@ -76,6 +87,11 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			return "", fmt.Errorf("fireDuePending: pending_event %s payload: %w", d.id, unmarshalErr)
 		}
 
+		// committedIDs + haltReason together decide whether this row actually landed in canon.
+		// haltReason != "" OR committedIDs empty ⇒ nothing committed ⇒ this row cancels, not fires.
+		var committedIDs []string
+		var haltReason string
+
 		switch pp.Attempt.Type {
 		case "ActorMoved", "Communicated", "ObjectRelocated":
 			// Passthrough — the same routing runChain's Stage 3 uses for these three types.
@@ -87,8 +103,14 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			if applyErr != nil {
 				return "", fmt.Errorf("fireDuePending: pending_event %s apply_event: %w", d.id, applyErr)
 			}
-			if evID, _ := result["event_id"].(string); evID != "" {
-				outcome.Committed = append(outcome.Committed, evID)
+			// Mirror runChain's own passthrough check (orchestrator.go Stage 3, ~line 251): halt_reason
+			// is the authoritative signal from apply_event's structural floor, not just an empty
+			// event_id. If it isn't gate_reject, fall through to the event_id check as a
+			// belt-and-suspenders guard against a hypothetically malformed result.
+			if hr, _ := result["halt_reason"].(string); hr == "gate_reject" {
+				haltReason = "gate_reject"
+			} else if evID, _ := result["event_id"].(string); evID != "" {
+				committedIDs = []string{evID}
 			}
 			curSeq++
 
@@ -98,7 +120,11 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			if adjErr != nil {
 				return "", fmt.Errorf("fireDuePending: pending_event %s adjudicate: %w", d.id, adjErr)
 			}
-			outcome.Committed = append(outcome.Committed, ar.Committed...)
+			if ar.Halt != "" {
+				haltReason = ar.Halt
+			} else {
+				committedIDs = ar.Committed
+			}
 			if ar.SeqAdvance > 0 {
 				curSeq += ar.SeqAdvance
 			} else {
@@ -106,6 +132,23 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			}
 		}
 
+		if haltReason != "" || len(committedIDs) == 0 {
+			reason := haltReason
+			if reason == "" {
+				reason = "no committed ids"
+			}
+			log.Printf("fireDuePending: pending_event %s did not commit (%s) — marking cancelled", d.id, reason)
+			if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='cancelled' WHERE pending_id=$1`, d.id); execErr != nil {
+				return "", fmt.Errorf("fireDuePending: pending_event %s cancel status: %w", d.id, execErr)
+			}
+			continue
+		}
+
+		outcome.Committed = append(outcome.Committed, committedIDs...)
+
+		// TODO(Task 9): the payload commit and this status flip are not yet in one transaction — the
+		// world's-turn composer owns the beat's tx boundary and retry semantics and will make
+		// commit+flip atomic (cf. commitRulingTx/resolveHeldIDs).
 		if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='fired' WHERE pending_id=$1`, d.id); execErr != nil {
 			return "", fmt.Errorf("fireDuePending: pending_event %s flip status: %w", d.id, execErr)
 		}

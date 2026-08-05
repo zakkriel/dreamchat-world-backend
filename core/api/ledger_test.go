@@ -153,3 +153,165 @@ func TestFireDuePending_BeforeWindowFiresNothing(t *testing.T) {
 		t.Fatalf("outcome.Committed = %v, want empty", out.Committed)
 	}
 }
+
+// TestFireDuePending_AdjudicatedTypeCommits: review fix (Important #3a). A pending row whose Attempt
+// is an ADJUDICATED type (AttributeChanged — none of the three passthrough types) must route through
+// o.adjudicate (the Stage-3 default branch), and on a successful ruling behaves exactly like the
+// passthrough case: canon count +1, row 'fired', magnitude folded. The driver is a fixed
+// inlineRulingDriver (defined in orchestrator_ruled_test.go, same package) rather than
+// wtOrchestrator's fakeResolveDriver, so the ruling's actor_id/target_id are deterministic and known
+// to satisfy verdictRuling's whitelist (they equal the single ActorAttempt's own actor/target ids,
+// which adjudicate always seeds into sliceIDs regardless of what gather_slice returns).
+func TestFireDuePending_AdjudicatedTypeCommits(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	rulingJSON := `{"reasoning":"The bell's echo rattles the bar counter.","therefore":"succeeds","outcome":{"kind":"resolved","events":[` +
+		`{"type":"AttributeChanged","actor_id":"` + wtMaraID + `","target_id":"` + dlBarID + `","truth":"The bar rattles faintly as the bell tolls."}` +
+		`]}}`
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           &inlineRulingDriver{name: "ledger-adjudicated-commit", ruling: rulingJSON},
+		CognitionBatch:    NewFakeCognitionDriver(),
+		CognitionIsolated: NewFakeCognitionDriver(),
+		WorldActor:        NewFakeWorldActorDriver(),
+	}
+
+	attempt := `{"type":"AttributeChanged","stated":"the bell rattles the bar","target_id":"` + dlBarID + `"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, baseTick, "large", wtMaraID, attempt)
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	before := lgCanonCount(t, ctx, pool, dlWorldID)
+	var out BeatOutcome
+
+	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
+	if err != nil {
+		t.Fatalf("fireDuePending: %v", err)
+	}
+	if mag != "large" {
+		t.Fatalf("fired mag = %q, want large", mag)
+	}
+	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
+		t.Fatalf("canon count = %d, want %d (adjudicated payload not committed)", got, before+1)
+	}
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
+		t.Fatalf("pending_event status = %q, want fired", status)
+	}
+	if len(out.Committed) != 1 {
+		t.Fatalf("outcome.Committed = %v, want exactly one committed id", out.Committed)
+	}
+}
+
+// TestFireDuePending_GateRejectCancelsRow: review fix (Critical #1 + Important #3b). A pending row
+// whose Communicated payload targets a listener who is NOT co-located with the actor fails
+// apply_event's structural floor (gate_reject) — the SAME check runChain's own passthrough branch
+// honors. Before the review fix, fireDuePending folded ANY row into 'fired' + magnitude regardless of
+// whether anything actually committed; this test directly guards that fix: the row must land in the
+// terminal 'cancelled' state (not 'fired', not left 'pending' for an endless retry), the returned
+// magnitude must exclude it ("" — nothing else is due), canon count must be untouched, and
+// outcome.Committed must stay empty.
+func TestFireDuePending_GateRejectCancelsRow(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	orc := wtOrchestrator(pool)
+
+	baseTick := wtBaseTick(t, ctx, pool)
+	// A listener uuid that is guaranteed NOT co-located with wtMaraID (it doesn't exist in
+	// entity_registry at all) — fn_actors_at(Mara's location) will never contain it.
+	const nowhereListener = "99999999-9999-9999-9999-999999999999"
+	attempt := `{"type":"Communicated","stated":"a message meant for someone not here","listener_id":"` + nowhereListener + `","content":"can anyone hear me?"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, baseTick, "large", wtMaraID, attempt)
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	before := lgCanonCount(t, ctx, pool, dlWorldID)
+	var out BeatOutcome
+
+	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
+	if err != nil {
+		t.Fatalf("fireDuePending: %v", err)
+	}
+	if mag != "" {
+		t.Fatalf("fired mag = %q, want \"\" (the only due row gate-rejected, so nothing actually fired)", mag)
+	}
+	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before {
+		t.Fatalf("canon count = %d, want unchanged %d (a gate-rejected payload must not commit canon)", got, before)
+	}
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "cancelled" {
+		t.Fatalf("pending_event status = %q, want cancelled", status)
+	}
+	if len(out.Committed) != 0 {
+		t.Fatalf("outcome.Committed = %v, want empty", out.Committed)
+	}
+}
+
+// TestFireDuePending_AtTickBeforeDoesNotFire: review fix (Minor #5). A row at fire_at_tick EXACTLY
+// equal to tickBefore is outside the window — the lower bound is strict (>) — so it must not fire.
+func TestFireDuePending_AtTickBeforeDoesNotFire(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	orc := wtOrchestrator(pool)
+
+	baseTick := wtBaseTick(t, ctx, pool)
+	tickBefore := baseTick
+	tickAfter := baseTick + 3
+
+	attempt := `{"type":"Communicated","stated":"the bell tolls","listener_id":"` + dlKadeID + `","content":"a bell tolls over the docks"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, tickBefore, "small", wtMaraID, attempt) // fire_at_tick == tickBefore
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	before := lgCanonCount(t, ctx, pool, dlWorldID)
+	var out BeatOutcome
+
+	mag, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
+	if err != nil {
+		t.Fatalf("fireDuePending: %v", err)
+	}
+	if mag != "" {
+		t.Fatalf("fired mag = %q, want \"\" (fire_at_tick == tickBefore must NOT fire — strict lower bound)", mag)
+	}
+	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before {
+		t.Fatalf("canon count = %d, want unchanged %d", got, before)
+	}
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "pending" {
+		t.Fatalf("pending_event status = %q, want still pending", status)
+	}
+}
+
+// TestFireDuePending_AtTickAfterFires: review fix (Minor #5). A row at fire_at_tick EXACTLY equal to
+// tickAfter IS inside the window — the upper bound is inclusive (<=) — so it must fire.
+func TestFireDuePending_AtTickAfterFires(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	orc := wtOrchestrator(pool)
+
+	baseTick := wtBaseTick(t, ctx, pool)
+	tickBefore := baseTick
+	tickAfter := baseTick + 3
+
+	attempt := `{"type":"Communicated","stated":"the bell tolls","listener_id":"` + dlKadeID + `","content":"a bell tolls over the docks"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, tickAfter, "small", wtMaraID, attempt) // fire_at_tick == tickAfter
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	before := lgCanonCount(t, ctx, pool, dlWorldID)
+	var out BeatOutcome
+
+	mag, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
+	if err != nil {
+		t.Fatalf("fireDuePending: %v", err)
+	}
+	if mag != "small" {
+		t.Fatalf("fired mag = %q, want small (fire_at_tick == tickAfter must fire — inclusive upper bound)", mag)
+	}
+	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
+		t.Fatalf("canon count = %d, want %d", got, before+1)
+	}
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
+		t.Fatalf("pending_event status = %q, want fired", status)
+	}
+}
