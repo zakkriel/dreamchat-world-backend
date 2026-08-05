@@ -3,8 +3,10 @@ package main
 // Grounded Reasoning / Unit 2 — the QUERY path (route read-only + the narrator answers).
 //
 // A QUERY is a beat_chain element that ASKS about the world (Task 4). It is NOT an action: asking is
-// not acting (RULINGS-2026-07-23 §3), so it writes NO canon, never advances the clock, and NEVER
-// reaches the referee. The orchestrator routes a QUERY to a read-only PERCEIVED fact-sheet build
+// not acting (RULINGS-2026-07-23 §3), so it writes NO canon, never advances the clock ITSELF, and
+// NEVER reaches the referee. (Living World Task 3: a beat where NO element advanced world-time — a
+// QUERY-only chain included — still costs the beat-level "instant" stillness floor; that floor is the
+// BEAT's cost, not the QUERY's own.) The orchestrator routes a QUERY to a read-only PERCEIVED fact-sheet build
 // (fn_fact_sheet, p_truth_side=false — the narrator is a character-mind seat) and hands the answer to
 // the narrator, who phrases it in-world. A mixed [action, QUERY] beat still commits its action AND
 // answers the question in one narration.
@@ -133,8 +135,11 @@ func queryHandler(t *testing.T, pool *pgxpool.Pool, decomposeText, chainJSON str
 }
 
 // TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate is the brief's (a)+(b): a pure QUERY beat
-// commits nothing (canon UNCHANGED), TicksAdvanced==0, the referee gets ZERO Generate calls, and the
-// narrate prompt carries the QUESTIONS block with the bar's PERCEIVED fact sheet (its computed distance).
+// commits nothing (canon UNCHANGED), the referee gets ZERO Generate calls, and the narrate prompt
+// carries the QUESTIONS block with the bar's PERCEIVED fact sheet (its computed distance). The QUERY
+// element itself still never touches curTick (asking is not acting, RULINGS-2026-07-23 §3) — but
+// Living World Task 3's beat-level stillness floor now fires because NOTHING in this chain advanced
+// world-time, so TicksAdvanced==2 (the seeded "instant" duration_class), not 0.
 func TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -155,15 +160,18 @@ func TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate(t *testing.T) {
 		t.Fatalf("parse: %v\nbody: %s", err, body)
 	}
 
-	// (a1) a query writes NO canon and does not advance the clock.
+	// (a1) a query writes NO canon.
 	if len(r.Result.Committed) != 0 {
 		t.Fatalf("committed = %v, want none (asking is not acting — a query writes no canon)", r.Result.Committed)
 	}
 	if r.Result.HaltReason != "completed" {
 		t.Fatalf("halt = %q, want completed", r.Result.HaltReason)
 	}
-	if r.Result.TicksAdvanced != 0 {
-		t.Fatalf("ticks_advanced = %d, want 0 (a query never advances the clock)", r.Result.TicksAdvanced)
+	// (Task 3) the QUERY itself never advanced curTick, but the beat-level stillness floor does: no
+	// attempt in this chain moved the clock, so the beat costs the "instant" floor (2s) — asking still
+	// takes a beat, even though the ASKING itself carries no duration of its own.
+	if r.Result.TicksAdvanced != 2 {
+		t.Fatalf("ticks_advanced = %d, want 2 (the instant floor — a query-only beat still costs stillness, Task 3)", r.Result.TicksAdvanced)
 	}
 	if after := countCanon(t, ctx, pool, id.World); after != before {
 		t.Fatalf("canon grew by %d, want 0 (a query writes NO canon)", after-before)

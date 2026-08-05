@@ -189,14 +189,19 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		case "ActorMoved", "Communicated", "ObjectRelocated":
 			// Passthrough: commit directly via apply_event (gate enforces structural floor).
 
-			// ── §6 tension budget: a move must FIT the remaining beat budget BEFORE it commits ──────
-			// Compute the move's real, status-aware duration up front (§2: distance(actor,target) /
-			// effective_speed(actor,'walk'); a -100% modifier → speed 0 → max-bigint sentinel). The
-			// actor's origin is IMPLICIT — the target (a location, an object, an actor) supplies the
-			// destination (Task 8: the move targets any positioned entity). If the duration exceeds what
-			// remains, the chain halts turn_budget and this move does NOT commit — the prefix stands (§6
-			// example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects). The runaway/overflow
-			// guard (dur > MaxInt64-curTick) is belt-and-suspenders and, under `none` (∞ budget) where the
+			// ── §6 tension budget: EVERY passthrough — move OR non-move — must FIT the remaining beat
+			// budget BEFORE it commits (Task 3/Living World: non-move acts now cost world-time too, so
+			// the world can move even during talk). A move's duration is real physics (§2:
+			// distance(actor,target) / effective_speed(actor,'walk'); a -100% modifier → speed 0 →
+			// max-bigint sentinel; the actor's origin is IMPLICIT, the target supplies the destination,
+			// Task 8). A non-move's duration is its decomposer-tagged duration_class → seconds
+			// (fn_duration_class_seconds, per-world retunable, Task 1/Task 2); an EMPTY class (legacy
+			// input, or simply no estimate) floors to "instant" so even stillness ticks. If the duration
+			// exceeds what remains, the chain halts turn_budget and this step does NOT commit — the
+			// prefix stands (§6 example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects; the
+			// same shape now applies to a non-move that can't fit — this is the honest INTERIM
+			// over-budget behavior, no Journey/accumulation logic yet). The runaway/overflow guard
+			// (dur > MaxInt64-curTick) is belt-and-suspenders and, under `none` (∞ budget) where the
 			// first clause never fires, still catches the speed-0 sentinel.
 			var dur int64
 			if attempt.Type == "ActorMoved" {
@@ -205,25 +210,35 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 					return fmt.Errorf("fn_move_duration_actor: %w", derr)
 				}
 				dur = d
-				overBudget := dur > budgetRemaining || dur > math.MaxInt64-curTick
-				// Trace (Unit 3): capture the move's physics + the §6 gate result. The perceived fact
-				// sheet is a DEBUG-ONLY extra read, so it is gated on trace != nil — a non-debug beat
-				// (nil trace) issues NO extra query and pays zero. A capture-read failure degrades (log +
-				// record without the sheet) rather than failing the beat: the trace is a debug affordance,
-				// never load-bearing for the commit.
-				if trace != nil {
-					fs, fsErr := o.factSheetJSON(ctx, worldID, actorID, []string{attempt.ToTargetID}, false)
-					if fsErr != nil {
-						log.Printf("trace: move fact sheet failed (debug-only capture, degrading): %v", fsErr)
-						fs = ""
-					}
-					trace.appendMove(attempt, fs, dur, budgetRemaining, !overBudget)
+			} else {
+				class := attempt.DurationClass
+				if class == "" {
+					class = "instant"
 				}
-				if overBudget {
-					outcome.HaltReason = "turn_budget"
-					outcome.TicksAdvanced = curTick - startTick
-					return nil
+				d, derr := o.durationClassSeconds(ctx, worldID, class)
+				if derr != nil {
+					return fmt.Errorf("fn_duration_class_seconds: %w", derr)
 				}
+				dur = d
+			}
+			overBudget := dur > budgetRemaining || dur > math.MaxInt64-curTick
+			// Trace (Unit 3): capture the MOVE's physics + the §6 gate result. The perceived fact sheet
+			// is a DEBUG-ONLY extra read, so it is gated on trace != nil — a non-debug beat (nil trace)
+			// issues NO extra query and pays zero. A capture-read failure degrades (log + record without
+			// the sheet) rather than failing the beat: the trace is a debug affordance, never
+			// load-bearing for the commit. Non-move trace capture is not part of this task.
+			if trace != nil && attempt.Type == "ActorMoved" {
+				fs, fsErr := o.factSheetJSON(ctx, worldID, actorID, []string{attempt.ToTargetID}, false)
+				if fsErr != nil {
+					log.Printf("trace: move fact sheet failed (debug-only capture, degrading): %v", fsErr)
+					fs = ""
+				}
+				trace.appendMove(attempt, fs, dur, budgetRemaining, !overBudget)
+			}
+			if overBudget {
+				outcome.HaltReason = "turn_budget"
+				outcome.TicksAdvanced = curTick - startTick
+				return nil
 			}
 
 			attemptJSONBytes, _ := json.Marshal(attempt)
@@ -241,20 +256,16 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				outcome.Committed = append(outcome.Committed, evID)
 			}
 
-			// Stage 4: advance the clock + consume the budget after a committed passthrough.
-			if attempt.Type == "ActorMoved" {
-				budgetRemaining -= dur // cumulative consumption (§6); under `none` it stays effectively unbounded
-				curTick += dur
-				if dur > 0 {
-					// The clock advanced to a fresh tick — seq restarts at 0.
-					curSeq = 0
-				} else {
-					// Zero-duration (same-location) move: the tick did NOT advance, so seq must keep
-					// incrementing or the next event collides with the move on (tick,seq).
-					curSeq++
-				}
+			// Stage 4: advance the clock + consume the budget after a committed passthrough (move or
+			// non-move alike — every beat costs world-time now, Task 3).
+			budgetRemaining -= dur // cumulative consumption (§6); under `none` it stays effectively unbounded
+			curTick += dur
+			if dur > 0 {
+				// The clock advanced to a fresh tick — seq restarts at 0.
+				curSeq = 0
 			} else {
-				// Non-move passthrough: no computable duration in v1 → consumes 0 budget.
+				// Zero-duration (same-location) move: the tick did NOT advance, so seq must keep
+				// incrementing or the next event collides with the move on (tick,seq).
 				curSeq++
 			}
 
@@ -275,6 +286,20 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		}
 	}
 
+	// §6 / Task 3 floor: a beat where NOTHING advanced world-time — an empty "I watch" beat (no
+	// attempts at all) or a chain of QUERY-only elements (QUERY is not an action and never reaches
+	// Stage 3/4 — RULINGS-2026-07-23 §3 — so it cannot tick the clock itself) — still costs the
+	// instant floor: stillness ticks too. This applies ONLY on the completed path, here at the tail
+	// after every attempt has run without halting; every halt branch above (turn_budget, gate_reject,
+	// premise_broken, telegraph, unresolved) returns before reaching this line, so a halted beat keeps
+	// its own halt semantics untouched — the floor is never a consolation prize for a beat that stopped.
+	if curTick == startTick {
+		floor, floorErr := o.durationClassSeconds(ctx, worldID, "instant")
+		if floorErr != nil {
+			return fmt.Errorf("fn_duration_class_seconds (floor): %w", floorErr)
+		}
+		curTick += floor
+	}
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick
 	return nil
@@ -963,6 +988,17 @@ func (o *Orchestrator) factSheetJSON(ctx context.Context, worldID, viewer string
 		return "", fmt.Errorf("fn_fact_sheet: %w", err)
 	}
 	return string(raw), nil
+}
+
+// durationClassSeconds reads fn_duration_class_seconds: this world's seconds for a non-move
+// duration_class (Task 1's parse-shape enum instant|short|medium|long|extremely_long), retunable
+// per-world via the duration_class_seconds table with a built-in fallback so the lookup never fails
+// closed on an unseeded world (Task 2). Mirrors factSheetJSON's Go→SQL pattern — the small helper
+// runChain's Stage-4 clock advance and the Step-5 stillness floor both call (Task 3).
+func (o *Orchestrator) durationClassSeconds(ctx context.Context, worldID, class string) (int64, error) {
+	var s int64
+	err := o.DB.QueryRow(ctx, `SELECT fn_duration_class_seconds($1,$2)`, worldID, class).Scan(&s)
+	return s, err
 }
 
 // collectParticipantIDs gathers all UUID fields from a single Attempt (for backward compat).
