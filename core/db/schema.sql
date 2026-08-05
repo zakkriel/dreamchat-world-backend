@@ -1140,6 +1140,22 @@ $$;
 
 
 --
+-- Name: fn_duration_class_seconds(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_duration_class_seconds(p_world_id uuid, p_class text) RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT COALESCE(
+    (SELECT seconds FROM duration_class_seconds WHERE world_id = p_world_id AND class = p_class),
+    CASE p_class  -- built-in fallback (retune per-world via the table)
+      WHEN 'instant' THEN 2 WHEN 'short' THEN 5 WHEN 'medium' THEN 60
+      WHEN 'long' THEN 300 WHEN 'extremely_long' THEN 7200 ELSE 2 END
+  );
+$$;
+
+
+--
 -- Name: fn_effective_speed(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2018,6 +2034,9 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
   VALUES (p_world_id, 'walk', 1.4) ON CONFLICT DO NOTHING;
   INSERT INTO status_modifier (world_id, status_type_id, action_type, movement_type_id, modifier_percent)
   VALUES (p_world_id, 'encumbered', 'move', 'walk', -100) ON CONFLICT DO NOTHING;
+  INSERT INTO duration_class_seconds (world_id, class, seconds)
+  VALUES (p_world_id, 'instant', 2), (p_world_id, 'short', 5), (p_world_id, 'medium', 60),
+         (p_world_id, 'long', 300), (p_world_id, 'extremely_long', 7200) ON CONFLICT DO NOTHING;
 $$;
 
 
@@ -2145,6 +2164,19 @@ CREATE TABLE public.causal_bundle_input (
     CONSTRAINT causal_bundle_input_input_kind_check CHECK ((input_kind = ANY (ARRAY['event'::text, 'mutation'::text, 'perception'::text]))),
     CONSTRAINT causal_bundle_input_polarity_check CHECK ((polarity = ANY (ARRAY[1, '-1'::integer]))),
     CONSTRAINT causal_bundle_input_role_check CHECK ((role = ANY (ARRAY['trigger'::text, 'enabler'::text, 'blocker'::text, 'influence'::text])))
+);
+
+
+--
+-- Name: duration_class_seconds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.duration_class_seconds (
+    world_id uuid NOT NULL,
+    class text NOT NULL,
+    seconds bigint NOT NULL,
+    CONSTRAINT duration_class_seconds_class_check CHECK ((class = ANY (ARRAY['instant'::text, 'short'::text, 'medium'::text, 'long'::text, 'extremely_long'::text]))),
+    CONSTRAINT duration_class_seconds_seconds_check CHECK ((seconds > 0))
 );
 
 
@@ -2377,6 +2409,14 @@ ALTER TABLE ONLY public.causal_bundle_input
 
 ALTER TABLE ONLY public.causal_bundle
     ADD CONSTRAINT causal_bundle_pkey PRIMARY KEY (bundle_id);
+
+
+--
+-- Name: duration_class_seconds duration_class_seconds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.duration_class_seconds
+    ADD CONSTRAINT duration_class_seconds_pkey PRIMARY KEY (world_id, class);
 
 
 --
@@ -2882,4 +2922,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100005'),
     ('20260729100006'),
     ('20260729100007'),
-    ('20260730100001');
+    ('20260730100001'),
+    ('20260805100001');
