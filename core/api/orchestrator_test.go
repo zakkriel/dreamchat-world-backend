@@ -136,7 +136,9 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 	}
 
 	// Chain: player at locA moves to locB (ActorMoved → passthrough, ticks+CEIL(7/1.4)=5),
-	// then two AttributeChanged on doorID (adjudicated).
+	// then two AttributeChanged on doorID (adjudicated; each costs the "instant" duration_class
+	// floor, 2s — Task 3 review fix: adjudicated non-moves now charge their class duration too,
+	// symmetric with the passthrough branch, so 5 + 2 + 2 = 9 total).
 	chain := []Attempt{
 		{
 			Type:       "ActorMoved",
@@ -166,8 +168,8 @@ func TestRunBeatPassthroughAndAdjudicated(t *testing.T) {
 	if outcome.HaltReason != "completed" {
 		t.Fatalf("halt_reason = %q, want %q", outcome.HaltReason, "completed")
 	}
-	if outcome.TicksAdvanced != 5 {
-		t.Fatalf("ticks_advanced = %d, want 5 (one locA→locB move: CEIL(7m / 1.4 m/s) = 5)", outcome.TicksAdvanced)
+	if outcome.TicksAdvanced != 9 {
+		t.Fatalf("ticks_advanced = %d, want 9 (move CEIL(7m/1.4m/s)=5, plus two adjudicated AttributeChanged at the instant floor 2s each)", outcome.TicksAdvanced)
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))

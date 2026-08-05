@@ -146,3 +146,112 @@ func TestRunBeat_EmptyBeatAdvancesByInstantFloor(t *testing.T) {
 		t.Fatalf("TicksAdvanced = %d, want 2 (the instant floor — an empty beat still costs stillness)", out.TicksAdvanced)
 	}
 }
+
+// ── Review fix: the adjudicated default: branch must charge duration_class too ──────────────────────
+//
+// The passthrough branch above (Communicated/ObjectRelocated) was the only place attempt.DurationClass
+// was ever read; the adjudicated default: branch (AttributeChanged/OwnershipAccessChanged/
+// EntityCreated/EntityDestroyed) only did curSeq += ar.SeqAdvance, so a chain of adjudicated non-moves
+// cost ZERO world-time regardless of duration_class — breaking "beat world-time = sum of per-attempt
+// durations" for a whole attempt category. These two tests use the world-1111 fixture + the
+// inlineRulingDriver/validRulingJSON adjudicated-path setup from orchestrator_ruled_test.go (a fake
+// resolver that returns a committing AttributeChanged ruling), and tension_test.go's seedTensionGeometry
+// (tenA stamped 'tense' → 30s budget; tenD unstamped → 'none' → unbounded) so no new fixtures are needed.
+
+// TestRunBeat_AdjudicatedNonMoveCostsWorldTime is the adjudicated-path mirror of
+// TestRunBeat_NonMoveCostsWorldTime: a single adjudicated AttributeChanged{duration_class:"long"}
+// advances TicksAdvanced by 300 (the class duration), NOT the 2s instant floor. Starts at tenD
+// (unstamped → unbounded budget) so the 300s duration always fits.
+func TestRunBeat_AdjudicatedNonMoveCostsWorldTime(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	seedTensionGeometry(t, ctx)
+
+	var baseTick int64
+	if err := pool.QueryRow(ctx,
+		`SELECT GREATEST(COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1,92000)`,
+		worldID).Scan(&baseTick); err != nil {
+		t.Fatalf("base tick: %v", err)
+	}
+	placeActorAt(t, ctx, playerID, tenD, baseTick) // tenD: unstamped → 'none' (unbounded budget)
+
+	driver := &inlineRulingDriver{
+		name:   "adj-worldtime-long",
+		ruling: validRulingJSON(playerID, playerID, "Kade steels himself and begins the long telling", "he takes a slow breath and starts"),
+	}
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           driver,
+		CognitionBatch:    &scriptedCognitionDriver{name: "quiet-batch", body: `[]`},
+		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		WorldActor:        NewFakeWorldActorDriver(),
+	}
+
+	chain := []Attempt{{Type: "AttributeChanged", Stated: "I brace myself and begin the long telling", TargetID: playerID, DurationClass: "long"}}
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+1, nil)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	if outcome.HaltReason != "completed" {
+		t.Fatalf("halt_reason = %q, want completed", outcome.HaltReason)
+	}
+	if len(outcome.Committed) != 1 {
+		t.Fatalf("committed = %v, want exactly 1", outcome.Committed)
+	}
+	if outcome.TicksAdvanced != 300 {
+		t.Fatalf("ticks_advanced = %d, want 300 (the adjudicated AttributeChanged's 'long' duration_class — NOT the 2s instant floor)", outcome.TicksAdvanced)
+	}
+}
+
+// TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget is the adjudicated-path mirror of
+// TestRunBeat_NonMoveOverBudgetHaltsTurnBudget: starting at tenA ('tense' → 30s budget), the same
+// 'long' (300s) AttributeChanged cannot fit, so the chain halts turn_budget WITHOUT calling adjudicate
+// at all (driver.callCount stays 0 — the budget gate fires strictly before the referee is consulted,
+// mirroring the pre-commit gate on every other branch of this loop) and commits nothing.
+func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	seedTensionGeometry(t, ctx)
+
+	var baseTick int64
+	if err := pool.QueryRow(ctx,
+		`SELECT GREATEST(COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1,93000)`,
+		worldID).Scan(&baseTick); err != nil {
+		t.Fatalf("base tick: %v", err)
+	}
+	placeActorAt(t, ctx, playerID, tenA, baseTick) // tenA: stamped 'tense' → 30s budget
+
+	driver := &inlineRulingDriver{
+		name:   "adj-worldtime-overbudget",
+		ruling: validRulingJSON(playerID, playerID, "Kade steels himself and begins the long telling", "he takes a slow breath and starts"),
+	}
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           driver,
+		CognitionBatch:    &scriptedCognitionDriver{name: "quiet-batch", body: `[]`},
+		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		WorldActor:        NewFakeWorldActorDriver(),
+	}
+
+	chain := []Attempt{{Type: "AttributeChanged", Stated: "I brace myself and begin the long telling", TargetID: playerID, DurationClass: "long"}}
+	outcome, err := orc.RunBeat(ctx, worldID, playerID, chain, baseTick+1, nil)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	if outcome.HaltReason != "turn_budget" {
+		t.Fatalf("halt_reason = %q, want turn_budget (a 300s adjudicated non-move cannot fit a tense scene's 30s budget)", outcome.HaltReason)
+	}
+	if len(outcome.Committed) != 0 {
+		t.Fatalf("committed = %v, want empty — the over-budget adjudicated non-move must NOT commit", outcome.Committed)
+	}
+	if outcome.TicksAdvanced != 0 {
+		t.Fatalf("ticks_advanced = %d, want 0 (the halt fires before curTick ever advances)", outcome.TicksAdvanced)
+	}
+	if driver.callCount != 0 {
+		t.Fatalf("resolve driver called %d times, want 0 — the budget gate must fire BEFORE adjudicate() ever consults the referee", driver.callCount)
+	}
+}

@@ -23,7 +23,7 @@ import (
 // Stage 1: World-first hook (CognitionBatch) — NPC decisions.
 // Stage 2: Premise re-check (deterministic, generalized) — premiseHolds over all six types.
 // Stage 3: Route — passthrough (apply_event) or adjudicate (Resolve driver).
-// Stage 4: Advance clock — ActorMoved adds fn_move_duration_actor ticks; others add seq.
+// Stage 4: Advance clock — ActorMoved adds fn_move_duration_actor ticks; every other non-move (passthrough or adjudicated) adds its duration_class seconds (fn_duration_class_seconds).
 // Stage 5: UNRESOLVED sentinel — halt immediately with candidate list.
 type Orchestrator struct {
 	DB                *pgxpool.Pool
@@ -111,8 +111,10 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 // budgetRemaining is the tension-derived beat budget in seconds (§6), consumed CUMULATIVELY: each
 // ActorMoved subtracts its real duration, and a move whose duration exceeds what remains halts the
 // chain (turn_budget) WITHOUT committing — the prefix stands. `none` passes ∞ (math.MaxInt64), so it
-// never blocks. Non-move steps have no computable duration in v1 and consume 0 (Way-A long-action
-// accumulation is a later station, §6).
+// never blocks. Non-move steps (passthrough OR adjudicated) subtract their decomposer-tagged
+// duration_class → seconds the SAME way (fn_duration_class_seconds; an empty class floors to
+// "instant" — Task 3, Living World); Way-A long-action accumulation across multiple beats is a later
+// station, §6.
 func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, chain []Attempt, startTick int64, startSeq int, budgetRemaining int64, outcome *BeatOutcome, trace *BeatTrace) error {
 	curTick := startTick
 	curSeq := startSeq
@@ -272,6 +274,29 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		default:
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated,
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
+
+			// ── §6 tension budget: an adjudicated non-move must ALSO fit the remaining beat budget
+			// BEFORE it is adjudicated/committed — symmetric with the passthrough non-move branch above
+			// (every non-move attempt now charges its class duration, whether routed via apply_event or
+			// the referee; Task 3 review fix). Its duration is its decomposer-tagged duration_class →
+			// seconds (fn_duration_class_seconds; an EMPTY class floors to "instant", same as the
+			// passthrough branch). If the duration exceeds what remains, the chain halts turn_budget
+			// WITHOUT calling adjudicate — the prefix stands, mirroring the pre-commit gate every other
+			// branch in this loop already uses. Still no Journey/accumulation logic.
+			class := attempt.DurationClass
+			if class == "" {
+				class = "instant"
+			}
+			dur, durErr := o.durationClassSeconds(ctx, worldID, class)
+			if durErr != nil {
+				return fmt.Errorf("fn_duration_class_seconds: %w", durErr)
+			}
+			if dur > budgetRemaining || dur > math.MaxInt64-curTick {
+				outcome.HaltReason = "turn_budget"
+				outcome.TicksAdvanced = curTick - startTick
+				return nil
+			}
+
 			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "", trace)
 			if adjErr != nil {
 				return adjErr
@@ -282,7 +307,17 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
 			}
-			curSeq += ar.SeqAdvance
+
+			// Stage 4: advance the clock + consume the budget after a committed adjudication (Task 3
+			// review fix — symmetric with the passthrough branch).
+			budgetRemaining -= dur
+			curTick += dur
+			if dur > 0 {
+				// The clock advanced to a fresh tick — seq restarts at 0.
+				curSeq = 0
+			} else {
+				curSeq += ar.SeqAdvance
+			}
 		}
 	}
 
@@ -298,7 +333,14 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		if floorErr != nil {
 			return fmt.Errorf("fn_duration_class_seconds (floor): %w", floorErr)
 		}
-		curTick += floor
+		// Belt-and-suspenders overflow guard, matching the loop's dur > MaxInt64-curTick check: at
+		// startTick == math.MaxInt64 (or within floor of it) curTick+floor would wrap. Clamp instead of
+		// overflowing — this is defensive only, never expected to fire in practice.
+		if floor > math.MaxInt64-curTick {
+			curTick = math.MaxInt64
+		} else {
+			curTick += floor
+		}
 	}
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick
