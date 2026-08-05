@@ -1557,6 +1557,25 @@ $$;
 
 
 --
+-- Name: fn_pressure_chance(uuid, text, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_pressure_chance(p_world_id uuid, p_tier text, p_now bigint) RETURNS numeric
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE WHEN COALESCE((SELECT enabled FROM world_actor_setting WHERE world_id=p_world_id), true) IS FALSE
+              THEN 0
+         ELSE LEAST(c.cap,
+                    c.climb_rate * ((p_now - COALESCE(
+                      (SELECT max(fired_tick) FROM world_eruption WHERE world_id=p_world_id AND tier=p_tier), 0
+                    ))::numeric / c.climb_chunk_ticks))
+              * COALESCE((SELECT intensity FROM world_actor_setting WHERE world_id=p_world_id), 1.0)
+         END
+  FROM world_actor_config c WHERE c.world_id=p_world_id AND c.tier=p_tier;
+$$;
+
+
+--
 -- Name: fn_private_records(uuid, uuid, uuid[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2037,6 +2056,11 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
   INSERT INTO duration_class_seconds (world_id, class, seconds)
   VALUES (p_world_id, 'instant', 2), (p_world_id, 'short', 5), (p_world_id, 'medium', 60),
          (p_world_id, 'long', 300), (p_world_id, 'extremely_long', 7200) ON CONFLICT DO NOTHING;
+  INSERT INTO world_actor_config (world_id, tier, climb_rate, climb_chunk_ticks, cap)
+  VALUES (p_world_id, 'small', 0.01, 60, 0.70),
+         (p_world_id, 'medium', 0.01, 3600, 0.70),
+         (p_world_id, 'large', 0.01, 86400, 0.70) ON CONFLICT DO NOTHING;
+  INSERT INTO world_actor_setting (world_id) VALUES (p_world_id) ON CONFLICT DO NOTHING;
 $$;
 
 
@@ -2359,6 +2383,48 @@ CREATE TABLE public.trait_provenance (
 
 
 --
+-- Name: world_actor_config; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world_actor_config (
+    world_id uuid NOT NULL,
+    tier text NOT NULL,
+    climb_rate numeric NOT NULL,
+    climb_chunk_ticks bigint NOT NULL,
+    cap numeric NOT NULL,
+    CONSTRAINT world_actor_config_cap_check CHECK (((cap >= (0)::numeric) AND (cap <= (1)::numeric))),
+    CONSTRAINT world_actor_config_climb_chunk_ticks_check CHECK ((climb_chunk_ticks > 0)),
+    CONSTRAINT world_actor_config_climb_rate_check CHECK ((climb_rate >= (0)::numeric)),
+    CONSTRAINT world_actor_config_tier_check CHECK ((tier = ANY (ARRAY['small'::text, 'medium'::text, 'large'::text])))
+);
+
+
+--
+-- Name: world_actor_setting; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world_actor_setting (
+    world_id uuid NOT NULL,
+    enabled boolean DEFAULT true NOT NULL,
+    intensity numeric DEFAULT 1.0 NOT NULL,
+    CONSTRAINT world_actor_setting_intensity_check CHECK ((intensity >= (0)::numeric))
+);
+
+
+--
+-- Name: world_eruption; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world_eruption (
+    world_id uuid NOT NULL,
+    tier text NOT NULL,
+    fired_tick bigint NOT NULL,
+    event_id uuid NOT NULL,
+    CONSTRAINT world_eruption_tier_check CHECK ((tier = ANY (ARRAY['small'::text, 'medium'::text, 'large'::text])))
+);
+
+
+--
 -- Name: world_pressure; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2548,6 +2614,22 @@ ALTER TABLE ONLY public.trait_provenance
 
 
 --
+-- Name: world_actor_config world_actor_config_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_actor_config
+    ADD CONSTRAINT world_actor_config_pkey PRIMARY KEY (world_id, tier);
+
+
+--
+-- Name: world_actor_setting world_actor_setting_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_actor_setting
+    ADD CONSTRAINT world_actor_setting_pkey PRIMARY KEY (world_id);
+
+
+--
 -- Name: world_pressure world_pressure_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2679,6 +2761,13 @@ CREATE INDEX idx_sm_entity ON public.state_mutation USING btree (entity_id, vali
 --
 
 CREATE INDEX idx_sm_event ON public.state_mutation USING btree (event_id);
+
+
+--
+-- Name: idx_world_eruption_lookup; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_world_eruption_lookup ON public.world_eruption USING btree (world_id, tier, fired_tick DESC);
 
 
 --
@@ -2923,4 +3012,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100006'),
     ('20260729100007'),
     ('20260730100001'),
-    ('20260805100001');
+    ('20260805100001'),
+    ('20260805100002');
