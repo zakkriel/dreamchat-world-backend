@@ -32,15 +32,22 @@ CREATE INDEX idx_world_eruption_lookup ON world_eruption (world_id, tier, fired_
 
 CREATE FUNCTION fn_pressure_chance(p_world_id uuid, p_tier text, p_now bigint) RETURNS numeric
   LANGUAGE sql STABLE AS $$
-  SELECT CASE WHEN COALESCE((SELECT enabled FROM world_actor_setting WHERE world_id=p_world_id), true) IS FALSE
-              THEN 0
-         ELSE LEAST(c.cap,
-                    c.climb_rate * ((p_now - COALESCE(
-                      (SELECT max(fired_tick) FROM world_eruption WHERE world_id=p_world_id AND tier=p_tier), 0
-                    ))::numeric / c.climb_chunk_ticks))
-              * COALESCE((SELECT intensity FROM world_actor_setting WHERE world_id=p_world_id), 1.0)
-         END
-  FROM world_actor_config c WHERE c.world_id=p_world_id AND c.tier=p_tier;
+  -- Outer COALESCE guarantees a defined number in [0,1] even for a world with
+  -- no world_actor_config row: the inner FROM yields zero rows for an
+  -- unconfigured (world_id, tier), which would otherwise make this scalar
+  -- function return NULL rather than 0 ("no config" == "no eruptions").
+  SELECT COALESCE(
+    (SELECT CASE WHEN COALESCE((SELECT enabled FROM world_actor_setting WHERE world_id=p_world_id), true) IS FALSE
+                 THEN 0
+            ELSE LEAST(c.cap,
+                       c.climb_rate * ((p_now - COALESCE(
+                         (SELECT max(fired_tick) FROM world_eruption WHERE world_id=p_world_id AND tier=p_tier), 0
+                       ))::numeric / c.climb_chunk_ticks))
+                 * COALESCE((SELECT intensity FROM world_actor_setting WHERE world_id=p_world_id), 1.0)
+            END
+     FROM world_actor_config c WHERE c.world_id=p_world_id AND c.tier=p_tier),
+    0
+  );
 $$;
 
 -- Extend seed_world_defaults (existing function, currently seeds movement_type +
@@ -64,6 +71,20 @@ CREATE OR REPLACE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS v
          (p_world_id, 'large', 0.01, 86400, 0.70) ON CONFLICT DO NOTHING;
   INSERT INTO world_actor_setting (world_id) VALUES (p_world_id) ON CONFLICT DO NOTHING;
 $$;
+
+-- Backfill: no world-enumerating table exists (Task 2), but movement_type
+-- DOES enumerate every world (seed_world_defaults always seeds a 'walk' row
+-- into it), so use it to backfill pressure config + setting onto any world
+-- that already existed before this migration. Same tier/rate/chunk/cap values
+-- as seed_world_defaults above, so newly- and previously-seeded worlds match.
+-- No-op against `make reset` (no worlds exist yet at migrate-time); this is
+-- for applying the migration to an already-populated DB.
+INSERT INTO world_actor_config (world_id, tier, climb_rate, climb_chunk_ticks, cap)
+SELECT DISTINCT mt.world_id, v.tier, v.rate, v.chunk, 0.70
+FROM (SELECT DISTINCT world_id FROM movement_type) mt,
+     (VALUES ('small',0.01,60),('medium',0.01,3600),('large',0.01,86400)) AS v(tier,rate,chunk)
+ON CONFLICT DO NOTHING;
+INSERT INTO world_actor_setting (world_id) SELECT DISTINCT world_id FROM movement_type ON CONFLICT DO NOTHING;
 
 -- migrate:down
 

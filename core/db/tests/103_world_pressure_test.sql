@@ -1,11 +1,14 @@
 BEGIN;
-SELECT plan(13);
+SELECT plan(15);
 
 -- Living World Task 5: per-world pressure config + append-only fire-log
 -- (world_eruption) + fn_pressure_chance. Pressure is DERIVED — "how much
 -- world-time has passed since that tier last erupted" — never a stored
 -- counter. Self-contained fixture on the shared seeded world.
 -- world:   22222222-2222-2222-2222-222222222222
+-- unconfigured world (assertion f only): 44444444-4444-4444-4444-444444444444
+--   (NEVER passed to seed_world_defaults — no world_actor_config row at all,
+--   exercises the outer COALESCE NULL-safety net rather than the formula)
 --
 -- Seeded pressure config for this world (via seed_world_defaults):
 --   small:  climb_rate=0.01, climb_chunk_ticks=60,    cap=0.70
@@ -104,6 +107,23 @@ SELECT is(
   fn_pressure_chance('22222222-2222-2222-2222-222222222222','small',6060),
   0::numeric,
   '(d1) disabled setting forces small-tier chance to exactly 0 despite climbed pressure');
+
+-- (f) a completely unconfigured world (no world_actor_config row at all, for
+-- any tier) must return exactly 0, NOT NULL — a missing config means "no
+-- eruptions ever", the safe default. Task 6 will do `roll < fn_pressure_chance
+-- (...)`; a NULL there either fails the Go float64 scan or silently never
+-- fires. Sanity-check the world really is unconfigured first, same pattern as
+-- 102_duration_class_test.sql's unseeded-world fallback check.
+SELECT is(
+  (SELECT count(*)::int FROM world_actor_config
+   WHERE world_id = '44444444-4444-4444-4444-444444444444'),
+  0,
+  '(f0) unconfigured world has no world_actor_config rows (sanity: NULL-safety path is live)');
+
+SELECT is(
+  fn_pressure_chance('44444444-4444-4444-4444-444444444444','small',1000),
+  0::numeric,
+  '(f1) fn_pressure_chance on a totally unconfigured world returns exactly 0, never NULL');
 
 SELECT * FROM finish();
 ROLLBACK;
