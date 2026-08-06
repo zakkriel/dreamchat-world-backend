@@ -123,8 +123,18 @@ func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (strin
 	return "[]", nil
 }
 
-// fakeWorldActorDriver: returns empty action list for CI (stand-in for the undelivered world-actor station).
-// FAKE: CI stand-in for an undelivered station. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
+// fakeWorldActorDriver: a deterministic stand-in for the World Actor seat (Living World / Task 8). Every
+// other seat's fake stays a passive "[]" stub because nothing calls WorldActor.Generate yet ANYWHERE
+// except Task 8's own direct tests (the seat is not wired into the beat — Task 9 does that); this one is
+// forceable, so a test can drive runWorldActor to a real, size-appropriate eruption. It always authors a
+// Communicated attributed to Mara (the seeded play world's tavern keeper, 2ac70000-…-a2), addressed to
+// Jonas (…-a3) — both seeded at the Drowned Lantern (seed_drowned_lantern.sql) — matching
+// world_actor.v1.schema.json. Hardcoding these seeded ids is safe: the fake is wired into every OTHER
+// package test's Orchestrator too (dozens of call sites), but none of them ever exercises
+// WorldActor.Generate — only worldactor_test.go calls runWorldActor directly, against the real seeded
+// play world these ids belong to. Still errors when req.Schema == nil (the structured-output floor every
+// other fake enforces).
+// FAKE: CI stand-in for an undelivered live model. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
 type fakeWorldActorDriver struct{ name string }
 
 func NewFakeWorldActorDriver() Driver { return &fakeWorldActorDriver{name: "fake-world-actor"} }
@@ -132,9 +142,20 @@ func NewFakeWorldActorDriver() Driver { return &fakeWorldActorDriver{name: "fake
 func (f *fakeWorldActorDriver) Name() string                { return f.name }
 func (f *fakeWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
 
+// fakeWorldActorMaraID/fakeWorldActorJonasID are the seeded play-world actors (seed_drowned_lantern.sql)
+// this fake always attributes its authored intrusion to/at — both placed at the Drowned Lantern tavern.
+const (
+	fakeWorldActorMaraID  = "2ac70000-0000-0000-0000-0000000000a2"
+	fakeWorldActorJonasID = "2ac70000-0000-0000-0000-0000000000a3"
+)
+
 func (f *fakeWorldActorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: world-actor driver used without a schema", f.name)
 	}
-	return "[]", nil
+	return fmt.Sprintf(
+		`{"actor_id":%s,"attempt":{"type":"Communicated","stated":"a commotion breaks out at the bar",`+
+			`"listener_id":%s,"content":"Oi — mind yourself!"}}`,
+		jsonStr(fakeWorldActorMaraID), jsonStr(fakeWorldActorJonasID),
+	), nil
 }

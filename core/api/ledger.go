@@ -20,6 +20,77 @@ type pendingPayload struct {
 // LARGEST magnitude fired across a crossing. Unranked/empty ("") sorts below every real magnitude.
 var magnitudeRank = map[string]int{"small": 1, "medium": 2, "large": 3}
 
+// commitWorldPayload commits ONE world-sourced payload — an acting entity's Attempt, not yet canon —
+// through the SAME routing runChain's Stage 3 uses for a live attempt: the three passthrough types
+// (ActorMoved, Communicated, ObjectRelocated) commit via applyEvent; every other type adjudicates as a
+// single-actor set via o.adjudicate. This is the ONE place that routing lives (Task 8's DRY extraction,
+// task-8-brief ambiguity resolution #3, folding the founder's modular mandate into a station that
+// otherwise would have grown a second copy): fireDuePending (pre-caused world truth firing off the
+// ledger, below) and runWorldActor (worldactor.go — freshly authored world truth) BOTH call this
+// instead of each carrying its own copy of the switch.
+//
+// seqAdvance mirrors fireDuePending's original per-branch bookkeeping exactly: a passthrough commit
+// always consumes exactly one (tick,seq) slot (1), committed or not; an adjudicated commit consumes
+// ar.SeqAdvance when the ruling reports one, else falls back to 1 — the SAME fallback fireDuePending's
+// prior inline switch used (`if ar.SeqAdvance > 0 { curSeq += ar.SeqAdvance } else { curSeq++ }`). The
+// caller adds seqAdvance to its own running curSeq unconditionally, exactly as before.
+//
+// On a successful commit, every committed event id is appended to outcome.Committed (nil-safe: a nil
+// outcome is a no-op append) and returned in eventIDs; halt is "" and err is nil. On gate_reject /
+// bounce / ruled_event_rejected / an empty committed set — the attempt reached the pipeline but did NOT
+// land in canon — eventIDs is nil, halt carries the reason (never "" in this branch), and err is nil:
+// this is an ordinary, expected outcome the caller decides how to handle (fireDuePending cancels the
+// row; runWorldActor fails loud — an authored intrusion that doesn't land is not silently swallowed).
+// err is reserved for a genuine infrastructure failure (a DB error, a malformed adjudicate call).
+func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID string, attempt Attempt, tick int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventIDs []string, seqAdvance int, halt string, err error) {
+	switch attempt.Type {
+	case "ActorMoved", "Communicated", "ObjectRelocated":
+		// Passthrough — the same routing runChain's Stage 3 uses for these three types.
+		attemptJSON, marshalErr := json.Marshal(attempt)
+		if marshalErr != nil {
+			return nil, 1, "", fmt.Errorf("commitWorldPayload: marshal attempt: %w", marshalErr)
+		}
+		result, applyErr := o.applyEvent(ctx, worldID, actorID, attemptJSON, tick, seq)
+		if applyErr != nil {
+			return nil, 1, "", fmt.Errorf("commitWorldPayload: apply_event: %w", applyErr)
+		}
+		// Mirror runChain's own passthrough check (orchestrator.go Stage 3): halt_reason is the
+		// authoritative signal from apply_event's structural floor, not just an empty event_id.
+		if hr, _ := result["halt_reason"].(string); hr == "gate_reject" {
+			return nil, 1, "gate_reject", nil
+		}
+		evID, _ := result["event_id"].(string)
+		if evID == "" {
+			return nil, 1, "no_event_id", nil
+		}
+		if outcome != nil {
+			outcome.Committed = append(outcome.Committed, evID)
+		}
+		return []string{evID}, 1, "", nil
+
+	default:
+		// Adjudicated — a single-actor set, mirroring runChain's Stage 3 default branch.
+		ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, tick, seq, "", trace)
+		if adjErr != nil {
+			return nil, 1, "", fmt.Errorf("commitWorldPayload: adjudicate: %w", adjErr)
+		}
+		adv := ar.SeqAdvance
+		if adv <= 0 {
+			adv = 1
+		}
+		if ar.Halt != "" {
+			return nil, adv, ar.Halt, nil
+		}
+		if len(ar.Committed) == 0 {
+			return nil, adv, "no_committed_ids", nil
+		}
+		if outcome != nil {
+			outcome.Committed = append(outcome.Committed, ar.Committed...)
+		}
+		return ar.Committed, adv, "", nil
+	}
+}
+
 // fireDuePending fires every pending_event row for worldID whose fire_at_tick falls inside the
 // clock-crossing window (tickBefore, tickAfter] — strict lower bound, inclusive upper (brief ambiguity
 // resolution #3): a row exactly AT tickBefore already fired in a prior slot, a row exactly AT
@@ -87,53 +158,19 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			return "", fmt.Errorf("fireDuePending: pending_event %s payload: %w", d.id, unmarshalErr)
 		}
 
-		// committedIDs + haltReason together decide whether this row actually landed in canon.
-		// haltReason != "" OR committedIDs empty ⇒ nothing committed ⇒ this row cancels, not fires.
-		var committedIDs []string
-		var haltReason string
-
-		switch pp.Attempt.Type {
-		case "ActorMoved", "Communicated", "ObjectRelocated":
-			// Passthrough — the same routing runChain's Stage 3 uses for these three types.
-			attemptJSON, marshalErr := json.Marshal(pp.Attempt)
-			if marshalErr != nil {
-				return "", fmt.Errorf("fireDuePending: pending_event %s attempt marshal: %w", d.id, marshalErr)
-			}
-			result, applyErr := o.applyEvent(ctx, worldID, pp.ActorID, attemptJSON, tickAfter, curSeq)
-			if applyErr != nil {
-				return "", fmt.Errorf("fireDuePending: pending_event %s apply_event: %w", d.id, applyErr)
-			}
-			// Mirror runChain's own passthrough check (orchestrator.go Stage 3, ~line 251): halt_reason
-			// is the authoritative signal from apply_event's structural floor, not just an empty
-			// event_id. If it isn't gate_reject, fall through to the event_id check as a
-			// belt-and-suspenders guard against a hypothetically malformed result.
-			if hr, _ := result["halt_reason"].(string); hr == "gate_reject" {
-				haltReason = "gate_reject"
-			} else if evID, _ := result["event_id"].(string); evID != "" {
-				committedIDs = []string{evID}
-			}
-			curSeq++
-
-		default:
-			// Adjudicated — a single-actor set, mirroring runChain's Stage 3 default branch.
-			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: pp.ActorID, Attempt: pp.Attempt}}, nil, tickAfter, curSeq, "", trace)
-			if adjErr != nil {
-				return "", fmt.Errorf("fireDuePending: pending_event %s adjudicate: %w", d.id, adjErr)
-			}
-			if ar.Halt != "" {
-				haltReason = ar.Halt
-			} else {
-				committedIDs = ar.Committed
-			}
-			if ar.SeqAdvance > 0 {
-				curSeq += ar.SeqAdvance
-			} else {
-				curSeq++
-			}
+		// commitWorldPayload IS Stage 3's routing (Task 8's DRY extraction) — the passthrough/adjudicated
+		// switch that used to live inline here now lives in ONE place, shared with runWorldActor
+		// (worldactor.go). committedIDs + halt together decide whether this row actually landed in canon,
+		// exactly as before: halt != "" OR committedIDs empty ⇒ nothing committed ⇒ this row cancels, not
+		// fires. commitWorldPayload already appended any committed ids to outcome.Committed on success.
+		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, outcome, trace)
+		if commitErr != nil {
+			return "", fmt.Errorf("fireDuePending: pending_event %s: %w", d.id, commitErr)
 		}
+		curSeq += seqAdvance
 
-		if haltReason != "" || len(committedIDs) == 0 {
-			reason := haltReason
+		if halt != "" || len(committedIDs) == 0 {
+			reason := halt
 			if reason == "" {
 				reason = "no committed ids"
 			}
@@ -143,8 +180,6 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			}
 			continue
 		}
-
-		outcome.Committed = append(outcome.Committed, committedIDs...)
 
 		// TODO(Task 9): the payload commit and this status flip are not yet in one transaction — the
 		// world's-turn composer owns the beat's tx boundary and retry semantics and will make

@@ -1,0 +1,87 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+// Living World / Task 8 (Unit 5) — the World Actor seat. The ONLY LLM boundary in the Living World
+// station: when a pressure tier fires (Task 9's composer decides that), this authors ONE intrusion
+// within the drawn size. It sees the WHOLE WORLD (fn_world_slice — unlike every other seat, which
+// reasons over a gather_slice-bounded action or a fn_fact_sheet-bounded set of targets), authors a truth
+// event constrained to the drawn size, and commits it through the SAME pipeline everyone else uses
+// (commitWorldPayload — ledger.go's Task 8 DRY extraction, shared with fireDuePending). Not yet wired
+// into the beat (Task 9 does that) — directly callable and directly tested until then.
+
+// runWorldActor builds the world-scope payload (fn_world_slice(worldID, scene)), hands it to the bound
+// WorldActor driver with `size` as an input constraint (the drawn tier: "small"|"medium"|"large") and
+// the world_actor.v1 schema (the leash), decodes the ONE authored {actor_id, attempt} it returns,
+// validates the attempt against the SAME closed-vocabulary field rules every other attempt obeys
+// (validateAttemptFields — no bypass: the World Actor is not a trusted fast path), and commits it via
+// commitWorldPayload — the SAME routing fireDuePending uses for pre-caused world truth. Returns the
+// committed event's id.
+//
+// B-GROWTH INVARIANT (do not violate — design doc Unit 5): the World Actor authors a TRUTH event that
+// carries a LOCATION; it NEVER encodes who perceives it. This function does NO perception-edge
+// computation of its own — it commits the truth event and the EXISTING commit-path fan-out
+// (generate_perceptions for a passthrough commit; apply_ruled_event's own receiver loop for an
+// adjudicated one) delivers it to witnesses, exactly as it does for every other committed event. v1
+// scope: the authored event manifests perceivably AT `scene` (world_actor.txt instructs the seat to
+// attribute the intrusion to a world entity already at the scene, or to bring a non-present NPC INTO it
+// via an ActorMoved — the presence-boundary mover, a power unique to this seat) — the location is
+// whatever the commit path's own accessibility/co-location floor already enforces (apply_event's
+// Communicated co-presence check, an ActorMoved's resolved destination scene, …), never a location this
+// function assigns itself.
+//
+// Does NOT write world_eruption — Task 9's composer owns the fire-log row; this seat only authors and
+// commits the truth event itself.
+func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size string, now int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventID string, err error) {
+	var sliceRaw []byte
+	if err := o.DB.QueryRow(ctx, `SELECT fn_world_slice($1::uuid, $2::uuid)`, worldID, scene).Scan(&sliceRaw); err != nil {
+		return "", fmt.Errorf("runWorldActor: fn_world_slice: %w", err)
+	}
+
+	prompt := buildWorldActorPrompt(string(sliceRaw), size)
+	raw, genErr := o.WorldActor.Generate(ctx, GenRequest{
+		Schema: json.RawMessage(worldActorSchemaJSON),
+		Prompt: prompt,
+	})
+	if genErr != nil {
+		return "", fmt.Errorf("runWorldActor: Generate: %w", genErr)
+	}
+
+	// The authored shape is EXACTLY pendingPayload's {"actor_id":..., "attempt":{...}} (ledger.go) — Task
+	// 4 established it so the World Actor could reuse it verbatim (task-8-brief ambiguity resolution #2).
+	var authored pendingPayload
+	if unmarshalErr := json.Unmarshal([]byte(raw), &authored); unmarshalErr != nil {
+		return "", fmt.Errorf("runWorldActor: decode authored intrusion: %w", unmarshalErr)
+	}
+	if authored.ActorID == "" {
+		return "", fmt.Errorf("runWorldActor: authored intrusion missing actor_id")
+	}
+	// Belt-and-suspenders behind the schema leash (SPEC-015/D-1 pattern): a correctly-bound structured
+	// driver never trips this, a rogue/misbound one does. The World Actor always ACTS — UNRESOLVED/QUERY
+	// are player-decompose-only parse shapes, never a valid authored intrusion (mirrors
+	// DecodeAndValidateNPCDecisions' own belt for the cognition seats).
+	if authored.Attempt.Stated == "" || !allowedBeatTypesV2[authored.Attempt.Type] ||
+		authored.Attempt.Type == "UNRESOLVED" || authored.Attempt.Type == "QUERY" {
+		return "", fmt.Errorf("runWorldActor: authored attempt type %q invalid", authored.Attempt.Type)
+	}
+	if fieldErr := validateAttemptFields(0, authored.Attempt); fieldErr != nil {
+		return "", fmt.Errorf("runWorldActor: %w", fieldErr)
+	}
+
+	eventIDs, _, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, outcome, trace)
+	if commitErr != nil {
+		return "", fmt.Errorf("runWorldActor: commit: %w", commitErr)
+	}
+	if halt != "" || len(eventIDs) == 0 {
+		reason := halt
+		if reason == "" {
+			reason = "no committed ids"
+		}
+		return "", fmt.Errorf("runWorldActor: authored intrusion did not commit (%s)", reason)
+	}
+	return eventIDs[0], nil
+}
