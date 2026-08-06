@@ -434,3 +434,93 @@ func TestTrace_WorldTurn_LedgerFireRecordsFiredAndSkipsRolls(t *testing.T) {
 		t.Fatalf("world_turn.eruption = %+v, want nil — no pressure-roll eruption occurred", wt.Eruption)
 	}
 }
+
+// TestTrace_WorldTurn_MultiTierHot_DebugAndNonDebugAgree closes the Task 10 review's Important gap:
+// every existing test that reaches the roll loop (wtForceTierFires) pins the OTHER two tiers to
+// climb_rate=0/cap=0 — structurally unable to fire — so no test ever put ALL THREE tiers simultaneously
+// fire-eligible through the plain roll loop (not fireDuePending's medium/large ledger-skip branch, which
+// is the only place wtForceAllTiersFire was previously exercised) and checked that only the
+// FIRST-scanned tier acts, in BOTH debug and non-debug mode.
+//
+// wtForceAllTiersFire saturates every tier's chance to 1.0; there is NO pending ledger row, so the roll
+// loop itself runs. The SAME fixture (same actor, same chain shape) runs twice — once with trace == nil
+// (non-debug: runWorldTurn's `if trace == nil { break }` short-circuit), once with a real trace (debug:
+// the loop keeps scanning all three tiers for capture) — asserting in BOTH runs that EXACTLY ONE
+// world_eruption row was written, its tier is "small" (the first tier in the small→medium→large scan
+// order — medium/large must NOT act even though they are ALSO hot), and exactly one eruption event
+// committed. This pins debug/non-debug equivalence directly and guards against a future
+// "simplification" of the debug/non-debug guard silently letting a later tier act, or double-inserting.
+func TestTrace_WorldTurn_MultiTierHot_DebugAndNonDebugAgree(t *testing.T) {
+	pool := testPool(t)
+	// t.Cleanup (not defer) — LIFO with wtForceAllTiersFire's own config-restore t.Cleanup, so the
+	// restore runs BEFORE the pool closes (ledger_test.go's/worldturn_test.go's documented pattern).
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	// One shared forced-hot config for BOTH runs below — every tier certain to fire, no pending row, so
+	// the roll loop (not the ledger-skip branch) runs both times.
+	wtForceAllTiersFire(t, ctx, pool, dlWorldID)
+
+	orc := wtOrchestrator(pool)
+
+	run := func(t *testing.T, useTrace bool) {
+		t.Helper()
+		baseTick := wtBaseTick(t, ctx, pool)
+		chain := []Attempt{
+			{Type: "Communicated", Stated: "Kade murmurs something under his breath", ListenerID: wtMaraID, Content: "just thinking aloud"},
+		}
+		var trace *BeatTrace
+		if useTrace {
+			trace = NewBeatTrace(chain)
+		}
+		out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, chain, baseTick, trace)
+		if err != nil {
+			t.Fatalf("RunBeat: %v", err)
+		}
+		t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+
+		// Exactly ONE world_eruption row referencing this beat's committed ids — even though small,
+		// medium, AND large were all certain to fire, at most one tier may ever act per turn.
+		var totalCount int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM world_eruption WHERE world_id=$1 AND event_id = ANY($2)`,
+			dlWorldID, out.Committed).Scan(&totalCount); err != nil {
+			t.Fatalf("count world_eruption: %v", err)
+		}
+		if totalCount != 1 {
+			t.Fatalf("world_eruption rows referencing this beat = %d, want exactly 1 (only ONE tier may act per turn, even with all three hot)", totalCount)
+		}
+		tier, _, eventID, ok := wtEruptionRowForEvent(t, ctx, pool, dlWorldID, out.Committed)
+		if !ok {
+			t.Fatalf("no world_eruption row references any committed event id %v", out.Committed)
+		}
+		if tier != "small" {
+			t.Fatalf("world_eruption.tier = %q, want small (first in scan order — medium/large must NOT act despite also being hot)", tier)
+		}
+		if eventID == "" {
+			t.Fatalf("world_eruption.event_id is empty")
+		}
+
+		if useTrace {
+			if len(trace.WorldTurn) != 1 {
+				t.Fatalf("trace.WorldTurn = %+v, want exactly 1 entry", trace.WorldTurn)
+			}
+			wt := trace.WorldTurn[0]
+			if len(wt.Rolls) != 3 {
+				t.Fatalf("world_turn.rolls = %+v, want exactly 3 (small, medium, large — all captured even though only small acts)", wt.Rolls)
+			}
+			for _, r := range wt.Rolls {
+				if !r.Fired {
+					t.Fatalf("world_turn.rolls = %+v, want ALL THREE fired=true (wtForceAllTiersFire saturates every tier)", wt.Rolls)
+				}
+			}
+			if wt.Eruption == nil || wt.Eruption.Type != "small" || len(wt.Eruption.IDs) != 1 || wt.Eruption.IDs[0] != eventID {
+				t.Fatalf("world_turn.eruption = %+v, want {Type:small, IDs:[%s]}", wt.Eruption, eventID)
+			}
+		}
+	}
+
+	// Same fixture, both modes — the crux equivalence this test exists to pin.
+	t.Run("non-debug", func(t *testing.T) { run(t, false) })
+	t.Run("debug", func(t *testing.T) { run(t, true) })
+}
