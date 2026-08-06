@@ -36,10 +36,15 @@ import (
 //
 // Does NOT write world_eruption — Task 9's composer owns the fire-log row; this seat only authors and
 // commits the truth event itself.
-func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size string, now int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventID string, err error) {
+//
+// seqUsed reports how many (tick,seq) slots the commit consumed (commitWorldPayload's own seqAdvance —
+// 1 for a passthrough commit, ar.SeqAdvance/fallback-1 for an adjudicated one) — 0 on every error path
+// (the composer treats any error here as fatal and never threads seqUsed past it; task-9 review,
+// Important #1).
+func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size string, now int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventID string, seqUsed int, err error) {
 	var sliceRaw []byte
 	if err := o.DB.QueryRow(ctx, `SELECT fn_world_slice($1::uuid, $2::uuid)`, worldID, scene).Scan(&sliceRaw); err != nil {
-		return "", fmt.Errorf("runWorldActor: fn_world_slice: %w", err)
+		return "", 0, fmt.Errorf("runWorldActor: fn_world_slice: %w", err)
 	}
 
 	prompt := buildWorldActorPrompt(string(sliceRaw), size)
@@ -48,17 +53,17 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 		Prompt: prompt,
 	})
 	if genErr != nil {
-		return "", fmt.Errorf("runWorldActor: Generate: %w", genErr)
+		return "", 0, fmt.Errorf("runWorldActor: Generate: %w", genErr)
 	}
 
 	// The authored shape is EXACTLY pendingPayload's {"actor_id":..., "attempt":{...}} (ledger.go) — Task
 	// 4 established it so the World Actor could reuse it verbatim (task-8-brief ambiguity resolution #2).
 	var authored pendingPayload
 	if unmarshalErr := json.Unmarshal([]byte(raw), &authored); unmarshalErr != nil {
-		return "", fmt.Errorf("runWorldActor: decode authored intrusion: %w", unmarshalErr)
+		return "", 0, fmt.Errorf("runWorldActor: decode authored intrusion: %w", unmarshalErr)
 	}
 	if authored.ActorID == "" {
-		return "", fmt.Errorf("runWorldActor: authored intrusion missing actor_id")
+		return "", 0, fmt.Errorf("runWorldActor: authored intrusion missing actor_id")
 	}
 	// Belt-and-suspenders behind the schema leash (SPEC-015/D-1 pattern): a correctly-bound structured
 	// driver never trips this, a rogue/misbound one does. The World Actor always ACTS — UNRESOLVED/QUERY
@@ -66,22 +71,22 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 	// DecodeAndValidateNPCDecisions' own belt for the cognition seats).
 	if authored.Attempt.Stated == "" || !allowedBeatTypesV2[authored.Attempt.Type] ||
 		authored.Attempt.Type == "UNRESOLVED" || authored.Attempt.Type == "QUERY" {
-		return "", fmt.Errorf("runWorldActor: authored attempt type %q invalid", authored.Attempt.Type)
+		return "", 0, fmt.Errorf("runWorldActor: authored attempt type %q invalid", authored.Attempt.Type)
 	}
 	if fieldErr := validateAttemptFields(0, authored.Attempt); fieldErr != nil {
-		return "", fmt.Errorf("runWorldActor: %w", fieldErr)
+		return "", 0, fmt.Errorf("runWorldActor: %w", fieldErr)
 	}
 
-	eventIDs, _, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, outcome, trace)
+	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, outcome, trace)
 	if commitErr != nil {
-		return "", fmt.Errorf("runWorldActor: commit: %w", commitErr)
+		return "", 0, fmt.Errorf("runWorldActor: commit: %w", commitErr)
 	}
 	if halt != "" || len(eventIDs) == 0 {
 		reason := halt
 		if reason == "" {
 			reason = "no committed ids"
 		}
-		return "", fmt.Errorf("runWorldActor: authored intrusion did not commit (%s)", reason)
+		return "", 0, fmt.Errorf("runWorldActor: authored intrusion did not commit (%s)", reason)
 	}
-	return eventIDs[0], nil
+	return eventIDs[0], seqAdvance, nil
 }

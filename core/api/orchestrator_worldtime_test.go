@@ -71,7 +71,9 @@ func wtOrchestrator(pool *pgxpool.Pool) *Orchestrator {
 // tension, the only way the 300 s assertion can hold (task-3-brief ambiguity resolution #3).
 func TestRunBeat_NonMoveCostsWorldTime(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup (not defer) — LIFO with the world_eruption cleanup below, so the delete runs BEFORE the
+	// pool closes (ledger_test.go's documented t.Cleanup-ordering pattern).
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	wtSetTavernTension(t, ctx, pool, "none")
@@ -84,6 +86,18 @@ func TestRunBeat_NonMoveCostsWorldTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
+	// Living World / Task 9 review (Important #2): this is the ONLY dlWorldID RunBeat call in this file
+	// that actually reaches a committed, clock-advancing Stage-4 (the other two either halt turn_budget
+	// before Stage 4 or run an empty chain) — so it is the one place the NOW-WIRED world's-turn composer
+	// can, against dlWorldID's DEFAULT (unforced) pressure config, incidentally roll a REAL eruption
+	// depending on exactly which tick wtBaseTick lands on (itself a function of every canon_event already
+	// committed by earlier tests/earlier `go test` invocations without an intervening `make reset`).
+	// world_eruption is deliberately append-only in production, so clean up whatever this call wrote —
+	// mirrors worldturn_test.go's own wtDeleteEruptionRows (same package, defined there for Task 9's
+	// forced-fire tests) — otherwise a leftover row here breaks pressure_test.go's
+	// TestRollTier_FiredMatchesRollLessThanChance (hardcodes lastEruption=0 for dlWorldID/small) on the
+	// very next `go test` invocation.
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	if out.HaltReason != "completed" {
 		t.Fatalf("HaltReason = %q, want completed", out.HaltReason)
 	}

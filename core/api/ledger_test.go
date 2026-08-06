@@ -95,12 +95,15 @@ func TestFireDuePending_CrossingFires(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "medium" {
 		t.Fatalf("fired mag = %q, want medium", mag)
+	}
+	if seqUsed != 1 {
+		t.Fatalf("seqUsed = %d, want 1 (one passthrough commit consumes exactly one (tick,seq) slot)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
 		t.Fatalf("canon count = %d, want %d (payload not committed)", got, before+1)
@@ -136,12 +139,15 @@ func TestFireDuePending_BeforeWindowFiresNothing(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-100, baseTick-1, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, baseTick-100, baseTick-1, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "" {
 		t.Fatalf("fired mag = %q, want \"\" (nothing due before fire_at_tick)", mag)
+	}
+	if seqUsed != 0 {
+		t.Fatalf("seqUsed = %d, want 0 (nothing due, nothing processed)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before {
 		t.Fatalf("canon count = %d, want unchanged %d", got, before)
@@ -187,12 +193,15 @@ func TestFireDuePending_AdjudicatedTypeCommits(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "large" {
 		t.Fatalf("fired mag = %q, want large", mag)
+	}
+	if seqUsed != 1 {
+		t.Fatalf("seqUsed = %d, want 1 (one adjudicated event committed, one (tick,seq) slot consumed)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
 		t.Fatalf("canon count = %d, want %d (adjudicated payload not committed)", got, before+1)
@@ -230,12 +239,18 @@ func TestFireDuePending_GateRejectCancelsRow(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, baseTick-1, baseTick+2, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "" {
 		t.Fatalf("fired mag = %q, want \"\" (the only due row gate-rejected, so nothing actually fired)", mag)
+	}
+	// commitWorldPayload's passthrough branch consumes its (tick,seq) slot whether or not the commit
+	// actually landed (its own docstring: "consumes exactly one (tick,seq) slot (1), committed or not") —
+	// so seqUsed is 1 here even though nothing fired.
+	if seqUsed != 1 {
+		t.Fatalf("seqUsed = %d, want 1 (the gate-rejected row's slot was still consumed)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before {
 		t.Fatalf("canon count = %d, want unchanged %d (a gate-rejected payload must not commit canon)", got, before)
@@ -267,12 +282,15 @@ func TestFireDuePending_AtTickBeforeDoesNotFire(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "" {
 		t.Fatalf("fired mag = %q, want \"\" (fire_at_tick == tickBefore must NOT fire — strict lower bound)", mag)
+	}
+	if seqUsed != 0 {
+		t.Fatalf("seqUsed = %d, want 0 (nothing due, nothing processed)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before {
 		t.Fatalf("canon count = %d, want unchanged %d", got, before)
@@ -301,12 +319,15 @@ func TestFireDuePending_AtTickAfterFires(t *testing.T) {
 	before := lgCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	mag, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
+	mag, seqUsed, err := orc.fireDuePending(ctx, dlWorldID, tickBefore, tickAfter, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("fireDuePending: %v", err)
 	}
 	if mag != "small" {
 		t.Fatalf("fired mag = %q, want small (fire_at_tick == tickAfter must fire — inclusive upper bound)", mag)
+	}
+	if seqUsed != 1 {
+		t.Fatalf("seqUsed = %d, want 1 (one passthrough commit consumes exactly one (tick,seq) slot)", seqUsed)
 	}
 	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
 		t.Fatalf("canon count = %d, want %d", got, before+1)

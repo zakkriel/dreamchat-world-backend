@@ -26,19 +26,17 @@ import (
 // the insert site below, and ledger.go's own TODO(Task 9) on fireDuePending's row commit + status flip.
 // Both are flagged for a dedicated whole-branch atomicity follow-up; no tx refactor happens in this task.
 //
-// seqUsed reports how many (tick,seq) slots this call consumed — 1 if anything fired this turn (either
-// the ledger or the roll; a turn fires at most one thing that matters to the caller), 0 otherwise — so
-// runChain can thread it into curSeq and the next chain step never collides with what this turn wrote
-// at tickAfter. NOTE: fireDuePending can itself fire SEVERAL due rows inside one crossing window, each
-// consuming its own seq slot internally, but its signature (fixed by Task 4) reports back only the
-// largest magnitude fired, not a count — so a turn where the ledger fires more than one row AND the
-// roll also fires in the very same turn is a known, untested edge (seqUsed would undercount). The
-// ambiguity resolution this task follows passes runWorldActor the plain `seq` this function received
-// (not a ledger-adjusted one), matching that same simplification — see task-9-brief ambiguity
-// resolution #2. Not exercised by this task's tests; flagged here for the atomicity follow-up above.
+// seqUsed reports how many (tick,seq) slots this call ACTUALLY consumed at tickAfter — the ledger's own
+// seqUsed (fireDuePending, Task 4/task-9-review) plus, if the roll also fires, the eruption commit's own
+// seqUsed (commitWorldPayload's seqAdvance, surfaced through runWorldActor). This matters because a
+// small-magnitude ledger fire does NOT skip the pressure roll (only medium/large do) — so a due pending
+// row firing AND a tier rolling a fire in the SAME turn is an ordinary, reachable combination, not a
+// hypothetical (task-9 review, Important #1). The roll's own commit is offset past whatever the ledger
+// already wrote (seq+ledgerSeq, not the raw seq) so both commits land on distinct (tick,seq) pairs
+// instead of colliding on the identical slot.
 func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, tickBefore, tickAfter int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (firedMag string, seqUsed int, err error) {
 	// (a) Scheduled/deterministic ledger fires FIRST — pre-caused world truth due in this crossing.
-	ledgerMag, err := o.fireDuePending(ctx, worldID, tickBefore, tickAfter, seq, outcome, trace)
+	ledgerMag, ledgerSeq, err := o.fireDuePending(ctx, worldID, tickBefore, tickAfter, seq, outcome, trace)
 	if err != nil {
 		return "", 0, fmt.Errorf("runWorldTurn: fireDuePending: %w", err)
 	}
@@ -46,11 +44,14 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 		// The beat is already ending on ledger-fired scheduled truth — SKIP the pressure roll entirely
 		// (ambiguity resolution #2a): rolling a fresh eruption on top of a beat that's already over
 		// would never be seen (the caller discards the rest of the chain on this magnitude).
-		return ledgerMag, 1, nil
+		return ledgerMag, ledgerSeq, nil
 	}
 
-	// (b) Roll each tier small→medium→large; the MOST-significant tier that fires wins — a single turn
-	// fires AT MOST ONE eruption (ambiguity resolution #2b).
+	// (b) Roll each tier small→medium→large; the FIRST tier that fires in this fixed scan order wins —
+	// a single turn fires AT MOST ONE eruption (ambiguity resolution #2b; this is a fixed-order scan,
+	// not a cross-tier "most significant chance" comparison). Its commit starts PAST every (tick,seq)
+	// slot the ledger already used above, so it can never collide with a pending row fired this turn.
+	nextSeq := seq + ledgerSeq
 	for _, tier := range livingWorldTierOrder {
 		lastEruption, lastErr := o.lastEruptionTick(ctx, worldID, tier)
 		if lastErr != nil {
@@ -64,7 +65,7 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 			continue
 		}
 
-		eventID, actorErr := o.runWorldActor(ctx, worldID, scene, tier, tickAfter, seq, outcome, trace)
+		eventID, actorSeq, actorErr := o.runWorldActor(ctx, worldID, scene, tier, tickAfter, nextSeq, outcome, trace)
 		if actorErr != nil {
 			return "", 0, fmt.Errorf("runWorldTurn: runWorldActor(%s): %w", tier, actorErr)
 		}
@@ -76,15 +77,12 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 			worldID, tier, tickAfter, eventID); execErr != nil {
 			return "", 0, fmt.Errorf("runWorldTurn: insert world_eruption(%s): %w", tier, execErr)
 		}
-		return tier, 1, nil
+		return tier, ledgerSeq + actorSeq, nil
 	}
 
-	// Nothing in the roll fired. A "small" ledger fire (the only non-empty magnitude that can reach
-	// here — medium/large already returned above) still consumed one (tick,seq) slot.
-	if ledgerMag != "" {
-		return ledgerMag, 1, nil
-	}
-	return "", 0, nil
+	// Nothing in the roll fired — whatever the ledger itself consumed (possibly 0, possibly nonzero even
+	// on a "" magnitude — e.g. a due row that gate-rejected still consumes its slot) is the total.
+	return ledgerMag, ledgerSeq, nil
 }
 
 // livingWorldTierOrder is the fixed rank order the composer rolls: small→medium→large — mirrors

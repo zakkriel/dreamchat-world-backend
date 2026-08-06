@@ -66,12 +66,15 @@ func TestRunWorldActor_AuthorsWithinSize(t *testing.T) {
 	before := waCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	eventID, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "medium", baseTick, 0, &out, nil)
+	eventID, seqUsed, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "medium", baseTick, 0, &out, nil)
 	if err != nil {
 		t.Fatalf("runWorldActor: %v", err)
 	}
 	if eventID == "" {
 		t.Fatalf("runWorldActor returned an empty event id")
+	}
+	if seqUsed != 1 {
+		t.Fatalf("seqUsed = %d, want 1 (one passthrough commit consumes exactly one (tick,seq) slot)", seqUsed)
 	}
 	if got := waCanonCount(t, ctx, pool, dlWorldID); got != before+1 {
 		t.Fatalf("canon count = %d, want %d (exactly one committed event)", got, before+1)
@@ -109,7 +112,7 @@ func TestRunWorldActor_InvalidAttemptFailsClosed(t *testing.T) {
 	before := waCanonCount(t, ctx, pool, dlWorldID)
 
 	var out BeatOutcome
-	if _, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "small", baseTick, 0, &out, nil); err == nil {
+	if _, _, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "small", baseTick, 0, &out, nil); err == nil {
 		t.Fatalf("runWorldActor did not fail on an invalid authored attempt")
 	}
 	if got := waCanonCount(t, ctx, pool, dlWorldID); got != before {

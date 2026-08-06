@@ -142,6 +142,22 @@ func wtEruptionCount(t *testing.T, ctx context.Context, pool *pgxpool.Pool, worl
 	return n
 }
 
+// wtDeleteEruptionRows deletes world_eruption rows for worldID matching any of eventIDs. world_eruption
+// is deliberately append-only in production (schema comment: "the last-eruption source + audit
+// trail"), but a forced-fire test's real rows must not survive to break a LATER test — pressure_test.go's
+// TestRollTier_FiredMatchesRollLessThanChance hardcodes lastEruption=0 against dlWorldID/small — or a
+// `go test` re-run without an intervening `make reset` (task-9 review, Important #2). Call via
+// t.Cleanup AFTER RunBeat returns (so out.Committed — which includes any eruption event id — is known).
+func wtDeleteEruptionRows(t *testing.T, ctx context.Context, pool *pgxpool.Pool, worldID string, eventIDs []string) {
+	t.Helper()
+	if len(eventIDs) == 0 {
+		return
+	}
+	if _, err := pool.Exec(ctx, `DELETE FROM world_eruption WHERE world_id=$1 AND event_id = ANY($2)`, worldID, eventIDs); err != nil {
+		t.Errorf("wtDeleteEruptionRows: %v", err)
+	}
+}
+
 // wtCanonSummaryExists reports whether a canon_event with this exact summary (apply_event stores
 // p_attempt->>'stated' verbatim as canon_event.summary) exists for worldID — a marker-text check that a
 // specific chain attempt did (or did not) land, independent of out.Committed's exact shape (which the
@@ -181,6 +197,7 @@ func TestRunWorldTurn_ForcedSmallFireContinuesChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	if out.HaltReason != "completed" {
 		t.Fatalf("HaltReason = %q, want completed (a forced SMALL fire must not halt the beat — §5 lets small run on)", out.HaltReason)
 	}
@@ -235,6 +252,7 @@ func TestRunWorldTurn_ForcedMediumFireHaltsChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	if out.HaltReason != "world_eruption" {
 		t.Fatalf("HaltReason = %q, want world_eruption (a forced MEDIUM fire must apply the §5 cut)", out.HaltReason)
 	}
@@ -300,6 +318,7 @@ func TestRunWorldTurn_DueMediumPendingSkipsRoll(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	if out.HaltReason != "world_eruption" {
 		t.Fatalf("HaltReason = %q, want world_eruption (the due medium pending_event applies the same §5 cut)", out.HaltReason)
 	}
@@ -323,6 +342,74 @@ func TestRunWorldTurn_DueMediumPendingSkipsRoll(t *testing.T) {
 	}
 	if got := wtEruptionCount(t, ctx, pool, dlWorldID, "large"); got != beforeLarge {
 		t.Fatalf("world_eruption 'large' count = %d, want unchanged %d — the roll must be skipped when the ledger already fired medium/large", got, beforeLarge)
+	}
+}
+
+// TestRunWorldTurn_LedgerAndRollFireSameTurnDistinctSeq is the task-9 review's Important #1 regression:
+// a SINGLE small-magnitude pending_event due at the SAME tick a forced tier ALSO rolls a fire must NOT
+// collide on (tick,seq). A small ledger fire does NOT skip the pressure roll (only medium/large do — see
+// TestRunWorldTurn_DueMediumPendingSkipsRoll above), so a due pending row firing AND a tier rolling a
+// fire in the SAME turn is an ordinary, reachable combination, not a hypothetical. Pre-fix, runWorldTurn
+// passed runWorldActor the SAME raw `seq` fireDuePending started at, so both the ledger's fired row and
+// the roll's World Actor intrusion committed at the IDENTICAL (world, tickAfter, seq) — a unique
+// violation on uq_ce_accepted_order (world_id, in_world_tick, beat_seq — accepted only), surfaced as a
+// raw DB error out of RunBeat. Post-fix, the roll's commit starts past whatever the ledger consumed, so
+// both land at distinct seqs.
+func TestRunWorldTurn_LedgerAndRollFireSameTurnDistinctSeq(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	// The single attempt (instant, 2s per the seeded duration_class_seconds) crosses to baseTick+2;
+	// schedule a SMALL pending row exactly AT that tick — inside the crossing (tickBefore, tickAfter],
+	// the same shape TestFireDuePending_AtTickAfterFires/TestRunWorldTurn_DueMediumPendingSkipsRoll
+	// already established.
+	const pendingSummary = "a stray dog barks in the alley behind the tavern"
+	pendingAttempt := `{"type":"Communicated","stated":"` + pendingSummary + `","listener_id":"` + dlKadeID + `","content":"just a dog"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, baseTick+2, "small", wtMaraID, pendingAttempt)
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	chain := []Attempt{
+		{Type: "Communicated", Stated: "Kade nods to Mara across the bar", ListenerID: wtMaraID, Content: "evening"},
+	}
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, chain, baseTick, nil)
+	if err != nil {
+		t.Fatalf("RunBeat: %v (a small ledger fire + a same-turn roll fire must commit at DISTINCT (tick,seq), not collide)", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+	if out.HaltReason != "completed" {
+		t.Fatalf("HaltReason = %q, want completed (both fires are small — neither halts)", out.HaltReason)
+	}
+
+	// The ledger's own fired row landed.
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
+		t.Fatalf("pending_event status = %q, want fired", status)
+	}
+	if !wtCanonSummaryExists(t, ctx, pool, dlWorldID, pendingSummary) {
+		t.Fatalf("the ledger-fired pending event's own attempt never reached canon")
+	}
+
+	// The roll's own eruption ALSO landed — a world_eruption row for 'small' referencing a committed id.
+	tier, _, eventID, ok := wtEruptionRowForEvent(t, ctx, pool, dlWorldID, out.Committed)
+	if !ok {
+		t.Fatalf("no world_eruption row references any committed event id %v — the roll's fire never landed", out.Committed)
+	}
+	if tier != "small" {
+		t.Fatalf("world_eruption.tier = %q, want small", tier)
+	}
+	if eventID == "" {
+		t.Fatalf("world_eruption.event_id is empty")
+	}
+
+	// Three DISTINCT committed events: the player's own attempt, the ledger's fired row, and the roll's
+	// eruption — proving no (tick,seq) collision silently dropped or merged anything.
+	if got := len(out.Committed); got != 3 {
+		t.Fatalf("out.Committed = %v, want exactly 3 distinct events (player attempt + ledger fire + roll eruption)", out.Committed)
 	}
 }
 
@@ -354,6 +441,7 @@ func TestRunWorldTurn_LastEruptionTick(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	_, firedTick, _, ok := wtEruptionRowForEvent(t, ctx, pool, dlWorldID, out.Committed)
 	if !ok {
 		t.Fatalf("expected a forced small eruption to have fired and been logged")

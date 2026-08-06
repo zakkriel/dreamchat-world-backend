@@ -121,14 +121,21 @@ func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID 
 // magnitude ACTUALLY fired, ranked small<medium<large ("" if nothing fired this call) — the caller
 // (Task 9's composer) decides the §5 beat-cut from that magnitude; this helper never applies the cut
 // itself.
-func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickBefore, tickAfter int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (firedMag string, err error) {
+//
+// seqUsed reports how many (tick,seq) slots this call actually consumed — curSeq's total advance past
+// the `seq` it started at — so a caller that ALSO commits something else at tickAfter in the same turn
+// (Task 9's composer, when the roll also fires) can start that commit past every slot this call already
+// used, instead of colliding on the SAME (tick,seq) a fired row already wrote (task-9 review, Important
+// #1: a single small-magnitude pending fire does NOT skip the composer's pressure roll, so both firing
+// in the same turn is an ordinary, reachable combination — not a hypothetical).
+func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickBefore, tickAfter int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (firedMag string, seqUsed int, err error) {
 	rows, err := o.DB.Query(ctx,
 		`SELECT pending_id, magnitude, payload FROM pending_event
 		 WHERE world_id=$1 AND status='pending' AND fire_at_tick > $2 AND fire_at_tick <= $3
 		 ORDER BY fire_at_tick`,
 		worldID, tickBefore, tickAfter)
 	if err != nil {
-		return "", fmt.Errorf("fireDuePending: query due rows: %w", err)
+		return "", 0, fmt.Errorf("fireDuePending: query due rows: %w", err)
 	}
 
 	type dueRow struct {
@@ -141,13 +148,13 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		var d dueRow
 		if scanErr := rows.Scan(&d.id, &d.magnitude, &d.payload); scanErr != nil {
 			rows.Close()
-			return "", fmt.Errorf("fireDuePending: scan due row: %w", scanErr)
+			return "", 0, fmt.Errorf("fireDuePending: scan due row: %w", scanErr)
 		}
 		due = append(due, d)
 	}
 	if rowsErr := rows.Err(); rowsErr != nil {
 		rows.Close()
-		return "", fmt.Errorf("fireDuePending: iterate due rows: %w", rowsErr)
+		return "", 0, fmt.Errorf("fireDuePending: iterate due rows: %w", rowsErr)
 	}
 	rows.Close()
 
@@ -155,7 +162,7 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 	for _, d := range due {
 		var pp pendingPayload
 		if unmarshalErr := json.Unmarshal(d.payload, &pp); unmarshalErr != nil {
-			return "", fmt.Errorf("fireDuePending: pending_event %s payload: %w", d.id, unmarshalErr)
+			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s payload: %w", d.id, unmarshalErr)
 		}
 
 		// commitWorldPayload IS Stage 3's routing (Task 8's DRY extraction) — the passthrough/adjudicated
@@ -165,7 +172,7 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		// fires. commitWorldPayload already appended any committed ids to outcome.Committed on success.
 		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, outcome, trace)
 		if commitErr != nil {
-			return "", fmt.Errorf("fireDuePending: pending_event %s: %w", d.id, commitErr)
+			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s: %w", d.id, commitErr)
 		}
 		curSeq += seqAdvance
 
@@ -176,7 +183,7 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 			}
 			log.Printf("fireDuePending: pending_event %s did not commit (%s) — marking cancelled", d.id, reason)
 			if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='cancelled' WHERE pending_id=$1`, d.id); execErr != nil {
-				return "", fmt.Errorf("fireDuePending: pending_event %s cancel status: %w", d.id, execErr)
+				return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s cancel status: %w", d.id, execErr)
 			}
 			continue
 		}
@@ -185,7 +192,7 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		// world's-turn composer owns the beat's tx boundary and retry semantics and will make
 		// commit+flip atomic (cf. commitRulingTx/resolveHeldIDs).
 		if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='fired' WHERE pending_id=$1`, d.id); execErr != nil {
-			return "", fmt.Errorf("fireDuePending: pending_event %s flip status: %w", d.id, execErr)
+			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s flip status: %w", d.id, execErr)
 		}
 
 		if magnitudeRank[d.magnitude] > magnitudeRank[firedMag] {
@@ -193,5 +200,5 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		}
 	}
 
-	return firedMag, nil
+	return firedMag, curSeq - seq, nil
 }
