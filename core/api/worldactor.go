@@ -82,11 +82,10 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 		return "", 0, fmt.Errorf("runWorldActor: commit: %w", commitErr)
 	}
 	if halt != "" || len(eventIDs) == 0 {
-		reason := halt
-		if reason == "" {
-			reason = "no committed ids"
-		}
-		return "", 0, fmt.Errorf("runWorldActor: authored intrusion did not commit (%s)", reason)
+		// commitWorldPayload never returns an empty eventIDs set with an empty halt reason (see its own
+		// doc comment, ledger.go) — halt is always non-empty here, so there is no "" fallback to cover
+		// (whole-branch review, Fix 3: the dead-code fallback that used to live here is gone).
+		return "", 0, fmt.Errorf("runWorldActor: authored intrusion did not commit (%s)", halt)
 	}
 	return eventIDs[0], seqAdvance, nil
 }

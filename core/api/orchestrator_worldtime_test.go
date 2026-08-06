@@ -78,6 +78,20 @@ func TestRunBeat_NonMoveCostsWorldTime(t *testing.T) {
 
 	wtSetTavernTension(t, ctx, pool, "none")
 
+	// Living World / Task 9 review (Important #2) + whole-branch review (Fix 1/Fix 4): this is the ONLY
+	// dlWorldID RunBeat call in this file that actually reaches a committed, clock-advancing Stage-4 (the
+	// other two either halt turn_budget before Stage 4 or run an empty chain) — so it is the one place
+	// the world's-turn composer runs against dlWorldID's DEFAULT (unforced) pressure config. Once Fix 1
+	// reversed the roll's scan order to large→medium→small (so the biggest fired tier wins instead of
+	// small silently masking it), a medium/large roll is no longer masked by small's much higher climb
+	// rate — at a high enough tick (a function of every canon_event already committed by earlier tests
+	// across `go test` invocations without an intervening `make reset`) this call could incidentally roll
+	// a REAL medium/large eruption, halting the beat and breaking the "completed"/300-tick assertions
+	// below. wtDisableWorldActor removes the world's turn from this test entirely (it only means to
+	// exercise the beat's own non-move clock cost, not pressure), so no roll — of any tier, in any scan
+	// order — can ever fire here.
+	wtDisableWorldActor(t, ctx, pool, dlWorldID)
+
 	orc := wtOrchestrator(pool)
 	baseTick := wtBaseTick(t, ctx, pool)
 
@@ -86,17 +100,11 @@ func TestRunBeat_NonMoveCostsWorldTime(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	// Living World / Task 9 review (Important #2): this is the ONLY dlWorldID RunBeat call in this file
-	// that actually reaches a committed, clock-advancing Stage-4 (the other two either halt turn_budget
-	// before Stage 4 or run an empty chain) — so it is the one place the NOW-WIRED world's-turn composer
-	// can, against dlWorldID's DEFAULT (unforced) pressure config, incidentally roll a REAL eruption
-	// depending on exactly which tick wtBaseTick lands on (itself a function of every canon_event already
-	// committed by earlier tests/earlier `go test` invocations without an intervening `make reset`).
-	// world_eruption is deliberately append-only in production, so clean up whatever this call wrote —
-	// mirrors worldturn_test.go's own wtDeleteEruptionRows (same package, defined there for Task 9's
-	// forced-fire tests) — otherwise a leftover row here breaks pressure_test.go's
-	// TestRollTier_FiredMatchesRollLessThanChance (hardcodes lastEruption=0 for dlWorldID/small) on the
-	// very next `go test` invocation.
+	// Belt-and-suspenders: the world actor is disabled above, so this should be a no-op — kept in case
+	// anything ever committed to world_eruption before the disable took effect (mirrors worldturn_test.go's
+	// own wtDeleteEruptionRows, same package, Task 9's forced-fire tests) — world_eruption is append-only
+	// in production, and a leftover row here would break pressure_test.go's
+	// TestRollTier_FiredMatchesRollLessThanChance (hardcodes lastEruption=0 for dlWorldID/small).
 	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
 	if out.HaltReason != "completed" {
 		t.Fatalf("HaltReason = %q, want completed", out.HaltReason)

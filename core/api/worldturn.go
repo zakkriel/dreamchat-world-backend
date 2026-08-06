@@ -9,13 +9,15 @@ import (
 // composes into ONE reusable per-slot unit, called after each committed attempt's clock advance
 // (orchestrator.go's runChain, both the passthrough and adjudicated Stage-4 blocks): it fires due
 // scheduled events (fireDuePending, Task 4/ledger.go — deterministic, pre-caused world truth) FIRST,
-// then — only if nothing medium/large already fired — rolls each pressure tier small→medium→large
+// then — only if nothing medium/large already fired — rolls each pressure tier large→medium→small
 // (rollTier, Task 6/pressure.go) against the derived chance (fn_pressure_chance, Task 5), and on the
-// most-significant tier that fires, calls the World Actor (runWorldActor, Task 8/worldactor.go) to
-// author ONE intrusion sized to that tier and records the fire in the append-only fire-log
-// (world_eruption). The caller (runChain) reads the returned magnitude to apply the §5 cut: small (or
-// nothing) lets the chain run on; medium/large ends the beat right there, discarding the rest of the
-// chain — mechanical, not a judgment call, keyed only to the fired magnitude.
+// FIRST tier that fires in that scan order — which is therefore the BIGGEST magnitude that fired,
+// per the founder-approved design (Unit 6: "returns the biggest magnitude that fired") — calls the
+// World Actor (runWorldActor, Task 8/worldactor.go) to author ONE intrusion sized to that tier and
+// records the fire in the append-only fire-log (world_eruption). The caller (runChain) reads the
+// returned magnitude to apply the §5 cut: small (or nothing) lets the chain run on; medium/large ends
+// the beat right there, discarding the rest of the chain — mechanical, not a judgment call, keyed only
+// to the fired magnitude.
 //
 // This SAME function is the reusable unit the Journey will later call per leg (design doc, Unit 6) — it
 // carries NO progress/threshold/"until" logic of its own; that boundary (Station-G/Journey) is not
@@ -69,9 +71,12 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 		return ledgerMag, ledgerSeq, nil
 	}
 
-	// (b) Roll each tier small→medium→large; the FIRST tier that fires in this fixed scan order wins —
+	// (b) Roll each tier large→medium→small; the FIRST tier that fires in this fixed scan order wins —
 	// a single turn fires AT MOST ONE eruption (ambiguity resolution #2b; this is a fixed-order scan,
-	// not a cross-tier "most significant chance" comparison). Its commit starts PAST every (tick,seq)
+	// not a cross-tier "most significant chance" comparison). Scanning BIGGEST-first means the first
+	// fire IS the biggest magnitude that fired (design Unit 6) — scanning small-first would let small's
+	// much higher chance mask a rarer medium/large fire, silently suppressing the §5 beat-cut that is
+	// the feature's whole point (whole-branch review, Fix 1). Its commit starts PAST every (tick,seq)
 	// slot the ledger already used above, so it can never collide with a pending row fired this turn.
 	//
 	// Task 10 (U7) / ambiguity resolution #2: behavior is UNCHANGED — the first-fired tier in scan order
@@ -143,9 +148,11 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 	return firedTier, ledgerSeq + actorSeq, nil
 }
 
-// livingWorldTierOrder is the fixed rank order the composer rolls: small→medium→large — mirrors
-// ledger.go's magnitudeRank ordering.
-var livingWorldTierOrder = []string{"small", "medium", "large"}
+// livingWorldTierOrder is the fixed order the composer rolls: large→medium→small — BIGGEST first, so
+// the first tier that fires in this scan is always the biggest magnitude that fired (design Unit 6:
+// "returns the biggest magnitude that fired"). Scanning small-first would let small's much higher
+// climb rate mask a rarer medium/large fire (whole-branch review, Fix 1).
+var livingWorldTierOrder = []string{"large", "medium", "small"}
 
 // lastEruptionTick returns the last tick this tier fired for worldID — COALESCE(max(fired_tick), 0)
 // from the append-only world_eruption fire-log — 0 if the tier has never fired. This MUST be the same

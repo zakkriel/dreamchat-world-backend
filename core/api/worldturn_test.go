@@ -95,6 +95,42 @@ func wtForceAllTiersFire(t *testing.T, ctx context.Context, pool *pgxpool.Pool, 
 	}
 }
 
+// wtDisableWorldActor sets worldID's world_actor_setting.enabled = false and registers a t.Cleanup that
+// restores the ORIGINAL value it read back first (not unconditionally true — a caller may have already
+// left the row in some other state), so fn_pressure_chance's own enabled-check (the migration's
+// disabled→0 branch, 103_world_pressure_test.sql assertion (d)) forces every tier's chance to exactly 0
+// for the world's-turn duration of the test — no tier can EVER fire, in ANY scan order.
+//
+// Whole-branch review Fix 4: reversing runWorldTurn's roll scan to large→medium→small (Fix 1) means
+// medium/large are no longer masked by small's much higher climb rate — a beat-focused test running
+// against dlWorldID's DEFAULT (unforced) pressure config at a high enough tick could now incidentally
+// roll a REAL medium/large eruption and halt, where it previously would have incidentally rolled (at
+// most) a harmless small one that let the chain continue. A test that only means to exercise the beat's
+// own clock/turn-budget/commit-count machinery — and is NOT itself testing the world's turn — calls this
+// helper first so the world actor cannot interfere at all, instead of merely cleaning up after an
+// incidental fire (which changes TicksAdvanced/commit counts and breaks the very assertions the test
+// exists to make). Tests that specifically exercise the world's turn (worldturn_test.go, trace_test.go)
+// keep their own wtForceTierFires/wtForceAllTiersFire forced-fire config instead — this helper is for
+// everyone else.
+func wtDisableWorldActor(t *testing.T, ctx context.Context, pool *pgxpool.Pool, worldID string) {
+	t.Helper()
+	var wasEnabled bool
+	if err := pool.QueryRow(ctx,
+		`SELECT enabled FROM world_actor_setting WHERE world_id=$1`, worldID).Scan(&wasEnabled); err != nil {
+		t.Fatalf("wtDisableWorldActor: read current enabled: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE world_actor_setting SET enabled=false WHERE world_id=$1`, worldID); err != nil {
+		t.Fatalf("wtDisableWorldActor: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`UPDATE world_actor_setting SET enabled=$1 WHERE world_id=$2`, wasEnabled, worldID); err != nil {
+			t.Errorf("wtDisableWorldActor restore: %v", err)
+		}
+	})
+}
+
 // wtSpeakerEventCount counts how many of eventIDs were spoken/instigated by speakerID (role_qualifier
 // 'speaker' for Communicated, 'instigator' otherwise — mirrors worldactor_test.go's waEventLocation
 // query shape). Used to distinguish the acting PLAYER's own commits from the World Actor's (the fake

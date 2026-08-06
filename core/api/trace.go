@@ -112,7 +112,8 @@ type TraceWorldTurn struct {
 	// tune) every pool's chance, not just the one that happened to go off.
 	Rolls []TraceRoll `json:"rolls"`
 	// Eruption is the tier + committed event id that actually acted this turn (the first-fired tier in
-	// scan order, small→medium→large — at most one per turn), or nil if nothing fired.
+	// scan order, large→medium→small — so the biggest magnitude that fired, design Unit 6 — at most one
+	// per turn), or nil if nothing fired.
 	Eruption *TraceElement `json:"eruption,omitempty"`
 }
 

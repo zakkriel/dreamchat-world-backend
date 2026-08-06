@@ -446,10 +446,11 @@ func TestTrace_WorldTurn_LedgerFireRecordsFiredAndSkipsRolls(t *testing.T) {
 // loop itself runs. The SAME fixture (same actor, same chain shape) runs twice — once with trace == nil
 // (non-debug: runWorldTurn's `if trace == nil { break }` short-circuit), once with a real trace (debug:
 // the loop keeps scanning all three tiers for capture) — asserting in BOTH runs that EXACTLY ONE
-// world_eruption row was written, its tier is "small" (the first tier in the small→medium→large scan
-// order — medium/large must NOT act even though they are ALSO hot), and exactly one eruption event
-// committed. This pins debug/non-debug equivalence directly and guards against a future
-// "simplification" of the debug/non-debug guard silently letting a later tier act, or double-inserting.
+// world_eruption row was written, its tier is "large" (the first tier in the large→medium→small scan
+// order — medium/small must NOT act even though they are ALSO hot; the biggest fired magnitude always
+// wins, design Unit 6), and exactly one eruption event committed. This pins debug/non-debug equivalence
+// directly and guards against a future "simplification" of the debug/non-debug guard silently letting a
+// smaller tier act instead, or double-inserting.
 func TestTrace_WorldTurn_MultiTierHot_DebugAndNonDebugAgree(t *testing.T) {
 	pool := testPool(t)
 	// t.Cleanup (not defer) — LIFO with wtForceAllTiersFire's own config-restore t.Cleanup, so the
@@ -494,8 +495,8 @@ func TestTrace_WorldTurn_MultiTierHot_DebugAndNonDebugAgree(t *testing.T) {
 		if !ok {
 			t.Fatalf("no world_eruption row references any committed event id %v", out.Committed)
 		}
-		if tier != "small" {
-			t.Fatalf("world_eruption.tier = %q, want small (first in scan order — medium/large must NOT act despite also being hot)", tier)
+		if tier != "large" {
+			t.Fatalf("world_eruption.tier = %q, want large (first in the large→medium→small scan order — medium/small must NOT act despite also being hot)", tier)
 		}
 		if eventID == "" {
 			t.Fatalf("world_eruption.event_id is empty")
@@ -514,8 +515,8 @@ func TestTrace_WorldTurn_MultiTierHot_DebugAndNonDebugAgree(t *testing.T) {
 					t.Fatalf("world_turn.rolls = %+v, want ALL THREE fired=true (wtForceAllTiersFire saturates every tier)", wt.Rolls)
 				}
 			}
-			if wt.Eruption == nil || wt.Eruption.Type != "small" || len(wt.Eruption.IDs) != 1 || wt.Eruption.IDs[0] != eventID {
-				t.Fatalf("world_turn.eruption = %+v, want {Type:small, IDs:[%s]}", wt.Eruption, eventID)
+			if wt.Eruption == nil || wt.Eruption.Type != "large" || len(wt.Eruption.IDs) != 1 || wt.Eruption.IDs[0] != eventID {
+				t.Fatalf("world_turn.eruption = %+v, want {Type:large, IDs:[%s]}", wt.Eruption, eventID)
 			}
 		}
 	}

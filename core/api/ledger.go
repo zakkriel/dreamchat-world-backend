@@ -177,11 +177,10 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		curSeq += seqAdvance
 
 		if halt != "" || len(committedIDs) == 0 {
-			reason := halt
-			if reason == "" {
-				reason = "no committed ids"
-			}
-			log.Printf("fireDuePending: pending_event %s did not commit (%s) — marking cancelled", d.id, reason)
+			// commitWorldPayload never returns an empty committedIDs set with an empty halt reason (see
+			// its own doc comment above) — halt is always non-empty here, so there is no "" fallback to
+			// cover (whole-branch review, Fix 3: the dead-code fallback that used to live here is gone).
+			log.Printf("fireDuePending: pending_event %s did not commit (%s) — marking cancelled", d.id, halt)
 			if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='cancelled' WHERE pending_id=$1`, d.id); execErr != nil {
 				return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s cancel status: %w", d.id, execErr)
 			}

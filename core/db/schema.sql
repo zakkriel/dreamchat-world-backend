@@ -1567,14 +1567,22 @@ CREATE FUNCTION public.fn_pressure_chance(p_world_id uuid, p_tier text, p_now bi
   -- no world_actor_config row: the inner FROM yields zero rows for an
   -- unconfigured (world_id, tier), which would otherwise make this scalar
   -- function return NULL rather than 0 ("no config" == "no eruptions").
+  --
+  -- intensity multiplies INSIDE the LEAST, not outside (whole-branch review,
+  -- Fix 2): the cap is the ceiling on the returned chance — nothing is ever a
+  -- guaranteed eruption. Multiplying an ALREADY-capped value by intensity
+  -- (LEAST(cap, raw) * intensity) would let intensity > 1 push the result
+  -- past cap, up to a guaranteed fire; multiplying BEFORE the LEAST
+  -- (LEAST(cap, raw * intensity)) keeps intensity's effect — it still climbs
+  -- the chance faster — while the cap remains the hard ceiling.
   SELECT COALESCE(
     (SELECT CASE WHEN COALESCE((SELECT enabled FROM world_actor_setting WHERE world_id=p_world_id), true) IS FALSE
                  THEN 0
             ELSE LEAST(c.cap,
                        c.climb_rate * ((p_now - COALESCE(
                          (SELECT max(fired_tick) FROM world_eruption WHERE world_id=p_world_id AND tier=p_tier), 0
-                       ))::numeric / c.climb_chunk_ticks))
-                 * COALESCE((SELECT intensity FROM world_actor_setting WHERE world_id=p_world_id), 1.0)
+                       ))::numeric / c.climb_chunk_ticks)
+                       * COALESCE((SELECT intensity FROM world_actor_setting WHERE world_id=p_world_id), 1.0))
             END
      FROM world_actor_config c WHERE c.world_id=p_world_id AND c.tier=p_tier),
     0
