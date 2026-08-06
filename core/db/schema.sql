@@ -1790,6 +1790,82 @@ $$;
 
 
 --
+-- Name: fn_world_slice(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_world_slice(p_world_id uuid, p_scene uuid) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT jsonb_build_object(
+    'ledger',
+    COALESCE(
+      (SELECT jsonb_agg(jsonb_build_object(
+                 'pending_id',   pe.pending_id,
+                 'fire_at_tick', pe.fire_at_tick,
+                 'magnitude',    pe.magnitude,
+                 'payload',      pe.payload
+               ) ORDER BY pe.fire_at_tick)
+       FROM pending_event pe
+       WHERE pe.world_id = p_world_id AND pe.status = 'pending'),
+      '[]'::jsonb),
+
+    'presence',
+    COALESCE(
+      (SELECT jsonb_agg(jsonb_build_object(
+                 'actor',    a.entity_id,
+                 'location', (a.attrs->>'location_id')::uuid
+               ) ORDER BY a.entity_id)
+       FROM actor_state a
+       WHERE a.world_id = p_world_id),
+      '[]'::jsonb),
+
+    'locations',
+    COALESCE(
+      (SELECT jsonb_agg(jsonb_build_object(
+                 'id',    er.entity_id,
+                 'name',  er.canonical_name,
+                 'attrs', COALESCE(ls.attrs, '{}'::jsonb)
+               ) ORDER BY er.entity_id)
+       FROM entity_registry er
+       LEFT JOIN location_state ls
+         ON ls.world_id = er.world_id AND ls.entity_id = er.entity_id
+       WHERE er.world_id = p_world_id AND er.entity_kind = 'location'),
+      '[]'::jsonb),
+
+    'recent',
+    COALESCE(
+      (SELECT jsonb_agg(r.obj ORDER BY r.in_world_tick DESC, r.beat_seq DESC)
+       FROM (
+         SELECT ce.in_world_tick, ce.beat_seq,
+                jsonb_build_object(
+                  'event_id',      ce.event_id,
+                  'event_type',    ce.event_type,
+                  'summary',       ce.summary,
+                  'in_world_tick', ce.in_world_tick,
+                  'beat_seq',      ce.beat_seq
+                ) AS obj
+         FROM canon_event ce
+         WHERE ce.world_id = p_world_id AND ce.status = 'accepted'
+         ORDER BY ce.in_world_tick DESC, ce.beat_seq DESC
+         LIMIT 20
+       ) r),
+      '[]'::jsonb),
+
+    'scene',
+    (SELECT jsonb_build_object(
+               'id',    er.entity_id,
+               'name',  er.canonical_name,
+               'attrs', COALESCE(ls.attrs, '{}'::jsonb)
+             )
+     FROM entity_registry er
+     LEFT JOIN location_state ls
+       ON ls.world_id = er.world_id AND ls.entity_id = er.entity_id
+     WHERE er.world_id = p_world_id AND er.entity_id = p_scene AND er.entity_kind = 'location')
+  );
+$$;
+
+
+--
 -- Name: forbid_delete(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3020,4 +3096,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260729100007'),
     ('20260730100001'),
     ('20260805100001'),
-    ('20260805100002');
+    ('20260805100002'),
+    ('20260805100003');
