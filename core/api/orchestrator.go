@@ -119,6 +119,25 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 	curTick := startTick
 	curSeq := startSeq
 
+	// Living World / Task 9: scene = the acting actor's current location, read ONCE per beat
+	// (task-9-brief ambiguity resolution #3 explicitly allows this), LAZILY on first use — a chain that
+	// never reaches a committed clock-advancing attempt (an empty "I watch" beat, or an all-QUERY chain)
+	// never issues the extra read. Every committed attempt's world's-turn call below (runWorldTurn) hands
+	// the World Actor this same cached scene.
+	var scene string
+	var sceneLoaded bool
+	ensureScene := func() (string, error) {
+		if !sceneLoaded {
+			s, locErr := o.actorLocation(ctx, worldID, actorID)
+			if locErr != nil {
+				return "", fmt.Errorf("world's turn: actor location: %w", locErr)
+			}
+			scene = s
+			sceneLoaded = true
+		}
+		return scene, nil
+	}
+
 	for _, attempt := range chain {
 		// ── Stage 5: UNRESOLVED sentinel (check first — no commit, just halt) ────
 		if attempt.Type == "UNRESOLVED" {
@@ -187,6 +206,9 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		}
 
 		// ── Stage 3: Route ────────────────────────────────────────────────────────
+		// Living World / Task 9: captured before Stage 4 (below, in each branch) mutates curTick — the
+		// world's-turn call needs the tick BEFORE this attempt advanced it.
+		attemptTickBefore := curTick
 		switch attempt.Type {
 		case "ActorMoved", "Communicated", "ObjectRelocated":
 			// Passthrough: commit directly via apply_event (gate enforces structural floor).
@@ -271,6 +293,26 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				curSeq++
 			}
 
+			// Living World / Task 9: the world's turn — fires due scheduled events, then (if nothing
+			// medium/large already did) rolls the pressure tiers, after EVERY committed clock-advancing
+			// attempt (task-9-brief ambiguity resolution #3). small/"" lets the chain run on; medium/large
+			// applies the §5 cut — the beat ends HERE, discarding the rest of the chain, same shape as the
+			// telegraph/turn_budget halts above.
+			sceneID, sceneErr := ensureScene()
+			if sceneErr != nil {
+				return sceneErr
+			}
+			firedMag, seqUsed, wtErr := o.runWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
+			if wtErr != nil {
+				return fmt.Errorf("world's turn: %w", wtErr)
+			}
+			curSeq += seqUsed
+			if firedMag == "medium" || firedMag == "large" {
+				outcome.HaltReason = "world_eruption"
+				outcome.TicksAdvanced = curTick - startTick
+				return nil
+			}
+
 		default:
 			// Adjudicated: AttributeChanged, OwnershipAccessChanged, EntityCreated,
 			// EntityDestroyed, and now ALL six types via the v2 adjudicated path.
@@ -317,6 +359,22 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				curSeq = 0
 			} else {
 				curSeq += ar.SeqAdvance
+			}
+
+			// Living World / Task 9: the world's turn — symmetric with the passthrough branch above.
+			sceneID, sceneErr := ensureScene()
+			if sceneErr != nil {
+				return sceneErr
+			}
+			firedMag, seqUsed, wtErr := o.runWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
+			if wtErr != nil {
+				return fmt.Errorf("world's turn: %w", wtErr)
+			}
+			curSeq += seqUsed
+			if firedMag == "medium" || firedMag == "large" {
+				outcome.HaltReason = "world_eruption"
+				outcome.TicksAdvanced = curTick - startTick
+				return nil
 			}
 		}
 	}
