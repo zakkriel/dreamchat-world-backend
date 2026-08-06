@@ -36,6 +36,11 @@ type BeatTrace struct {
 	// Queries is one entry per read-only QUERY answered this beat: the question + the perceived fact
 	// sheet it was answered from (copied from the outcome in Finish — asking is not acting).
 	Queries []TraceQuery `json:"queries,omitempty"`
+	// WorldTurn is one entry per call to runWorldTurn (Task 9) this beat — i.e. one per committed
+	// clock-advancing attempt: the clock delta, which scheduled (ledger) events fired, EVERY pressure
+	// tier's roll (including the ones that did not fire — Task 10/U7, "you can't tune what you can't
+	// see"), and the eruption that actually acted, if any.
+	WorldTurn []TraceWorldTurn `json:"world_turn,omitempty"`
 	// HaltReason and Committed are the beat's outcome, copied in by Finish once the run returns — the
 	// "what committed and why it stopped" line of the developer view.
 	HaltReason string   `json:"halt_reason"`
@@ -88,6 +93,47 @@ type TraceRuling struct {
 type TraceQuery struct {
 	Stated    string          `json:"stated"`
 	FactSheet json.RawMessage `json:"fact_sheet,omitempty"`
+}
+
+// TraceWorldTurn is Task 10's (U7) capture of ONE call to runWorldTurn (worldturn.go, Task 9) — the
+// pressure system's "what happened this clock-crossing" line: how much world-time passed, which
+// scheduled (ledger) events fired, every pressure tier's roll, and the eruption that actually acted.
+type TraceWorldTurn struct {
+	// ClockDeltaS is tickAfter - tickBefore — the world-time this crossing advanced (the committed
+	// attempt's own duration_class seconds).
+	ClockDeltaS int64 `json:"clock_delta_s"`
+	// Fired is the scheduled (pending_event) commits fireDuePending made this crossing — the ledger side
+	// of the world's turn, pre-caused truth due in this window. Empty when nothing was due.
+	Fired []string `json:"fired_scheduled,omitempty"`
+	// Rolls is one TraceRoll per pressure tier EVALUATED this turn. When the ledger already fired
+	// medium/large, the pressure roll is skipped entirely (ambiguity resolution #2a — unchanged
+	// behavior) and Rolls is empty: there is nothing honest to report. Otherwise it carries ALL THREE
+	// tiers — small/medium/large, including the ones that did NOT fire — so the founder can see (and
+	// tune) every pool's chance, not just the one that happened to go off.
+	Rolls []TraceRoll `json:"rolls"`
+	// Eruption is the tier + committed event id that actually acted this turn (the first-fired tier in
+	// scan order, small→medium→large — at most one per turn), or nil if nothing fired.
+	Eruption *TraceElement `json:"eruption,omitempty"`
+}
+
+// TraceRoll is one pressure tier's evaluated roll: the derived chance (fn_pressure_chance), the
+// deterministic draw (deterministicUnit), and whether roll < chance fired it. Both numbers ride along
+// (not just the boolean) so the trace shows the actual numbers behind the decision — the tuning surface
+// this task exists for.
+type TraceRoll struct {
+	Tier   string  `json:"tier"`
+	Chance float64 `json:"chance"`
+	Roll   float64 `json:"roll"`
+	Fired  bool    `json:"fired"`
+}
+
+// appendWorldTurn records one runWorldTurn call's capture (already fully assembled by the caller). No-op
+// on a nil receiver (the non-debug path) — mirrors every other append method in this file.
+func (t *BeatTrace) appendWorldTurn(w TraceWorldTurn) {
+	if t == nil {
+		return
+	}
+	t.WorldTurn = append(t.WorldTurn, w)
 }
 
 // NewBeatTrace opens a trace for a beat, capturing the decompose stage (the decoded chain) up front.

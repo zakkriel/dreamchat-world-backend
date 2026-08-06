@@ -279,3 +279,158 @@ func TestTrace_AdjudicatedRuling_ThereforeCaptured(t *testing.T) {
 
 	perceptionSubjectBackfill(t, ctx, pool, 0)
 }
+
+// Living World / Task 10 (U7) — the world's-turn trace block. These two tests drive RunBeat DIRECTLY
+// (not through the HTTP beatHandler) against the real seeded Drowned Lantern world, mirroring
+// worldturn_test.go's own wtOrchestrator/wtForceTierFires/dlWorldID pattern (Task 9's forced-fire
+// config), because the world's turn only fires against real pressure config + a real fire-log — the
+// synthetic setupQueryWorld the rest of trace_test.go uses has neither. A real (non-nil) *BeatTrace is
+// built via NewBeatTrace and threaded straight into RunBeat, then inspected as a Go struct (the same
+// value beathandler.go would later serialize under reasoning_log — Step 4 below confirms the
+// serialization + non-debug absence separately, reusing trace_test.go's existing non-debug assertions).
+
+// TestTrace_WorldTurn_AllThreeTiersCapturedOnForcedFire is the brief's core test: with the small
+// pressure tier forced to fire (medium/large pinned off) and a real trace threaded through RunBeat, the
+// trace's world_turn block records ONE TraceWorldTurn for the single committed attempt whose Rolls
+// slice carries ALL THREE tiers — small/medium/large, including the two that did NOT fire (Fork 6,
+// "you can't tune what you can't see") — whose ClockDeltaS matches the attempt's own instant duration
+// (2s, the seeded duration_class_seconds), and whose Eruption names the tier + event id that actually
+// acted, cross-checked against the real world_eruption fire-log row.
+func TestTrace_WorldTurn_AllThreeTiersCapturedOnForcedFire(t *testing.T) {
+	pool := testPool(t)
+	// t.Cleanup (not defer) — LIFO with wtForceTierFires' own config-restore t.Cleanup, so the restore
+	// runs BEFORE the pool closes (ledger_test.go's/worldturn_test.go's documented ordering pattern).
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	chain := []Attempt{
+		{Type: "Communicated", Stated: "Kade nods to Mara across the bar", ListenerID: wtMaraID, Content: "evening"},
+	}
+	trace := NewBeatTrace(chain)
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, chain, baseTick, trace)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+	if out.HaltReason != "completed" {
+		t.Fatalf("HaltReason = %q, want completed (a forced SMALL fire must not halt the beat — §5 lets small run on)", out.HaltReason)
+	}
+
+	if len(trace.WorldTurn) != 1 {
+		t.Fatalf("trace.WorldTurn = %+v, want exactly 1 entry (one committed clock-advancing attempt)", trace.WorldTurn)
+	}
+	wt := trace.WorldTurn[0]
+
+	if wt.ClockDeltaS != 2 {
+		t.Fatalf("world_turn.clock_delta_s = %d, want 2 (the attempt's own instant duration)", wt.ClockDeltaS)
+	}
+
+	if len(wt.Rolls) != 3 {
+		t.Fatalf("world_turn.rolls = %+v, want exactly 3 entries (small, medium, large — including non-firing)", wt.Rolls)
+	}
+	byTier := map[string]TraceRoll{}
+	for _, r := range wt.Rolls {
+		byTier[r.Tier] = r
+	}
+	for _, tier := range []string{"small", "medium", "large"} {
+		if _, ok := byTier[tier]; !ok {
+			t.Fatalf("world_turn.rolls missing tier %q: %+v", tier, wt.Rolls)
+		}
+	}
+	if !byTier["small"].Fired {
+		t.Fatalf("world_turn.rolls[small].fired = false, want true (climb_rate/cap forced to saturate)")
+	}
+	if byTier["small"].Chance != 1.0 {
+		t.Fatalf("world_turn.rolls[small].chance = %v, want 1.0 (forced saturation)", byTier["small"].Chance)
+	}
+	if byTier["medium"].Fired || byTier["large"].Fired {
+		t.Fatalf("world_turn.rolls = %+v, want medium AND large NOT fired (pinned to climb_rate=0/cap=0)", wt.Rolls)
+	}
+
+	if wt.Eruption == nil {
+		t.Fatalf("world_turn.eruption = nil, want the small tier's committed intrusion")
+	}
+	if wt.Eruption.Type != "small" {
+		t.Fatalf("world_turn.eruption.type = %q, want small", wt.Eruption.Type)
+	}
+	if len(wt.Eruption.IDs) != 1 || wt.Eruption.IDs[0] == "" {
+		t.Fatalf("world_turn.eruption.ids = %v, want exactly one non-empty event id", wt.Eruption.IDs)
+	}
+	tier, _, eventID, ok := wtEruptionRowForEvent(t, ctx, pool, dlWorldID, out.Committed)
+	if !ok {
+		t.Fatalf("no world_eruption row references any committed event id %v — the fire-log write is missing", out.Committed)
+	}
+	if tier != "small" || eventID != wt.Eruption.IDs[0] {
+		t.Fatalf("world_turn.eruption.ids[0] = %q, world_eruption row = (tier=%q, event_id=%q) — mismatch", wt.Eruption.IDs[0], tier, eventID)
+	}
+}
+
+// TestTrace_WorldTurn_LedgerFireRecordsFiredAndSkipsRolls covers the ledger side of the world_turn
+// block: a pending_event due at medium magnitude fires FIRST (ambiguity resolution #2a) and the pressure
+// roll is skipped ENTIRELY (worldturn_test.go's TestRunWorldTurn_DueMediumPendingSkipsRoll already pins
+// that world_eruption gains no new row here) — so the captured TraceWorldTurn must show the ledger's own
+// committed event id under Fired, and NO rolls/eruption (the roll body never ran, so there is nothing
+// honest to report there).
+func TestTrace_WorldTurn_LedgerFireRecordsFiredAndSkipsRolls(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	// Every tier forced to certain-fire — if the roll body ran at all, it would fire too; the absence
+	// of any Rolls/Eruption in the captured trace proves the roll was genuinely skipped, not merely that
+	// pressure happened to be off (mirrors wtForceAllTiersFire's own rationale in worldturn_test.go).
+	wtForceAllTiersFire(t, ctx, pool, dlWorldID)
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	pendingSummary := "a commotion erupts from the cellar hatch"
+	pendingAttempt := `{"type":"Communicated","stated":"` + pendingSummary + `","listener_id":"` + dlKadeID + `","content":"something below just broke loose"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, baseTick+2, "medium", wtMaraID, pendingAttempt)
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	chain := []Attempt{
+		{Type: "Communicated", Stated: "Kade orders a round before the crossing", ListenerID: wtMaraID, Content: "one more round"},
+	}
+	trace := NewBeatTrace(chain)
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, chain, baseTick, trace)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+	if out.HaltReason != "world_eruption" {
+		t.Fatalf("HaltReason = %q, want world_eruption (the due medium pending_event applies the §5 cut)", out.HaltReason)
+	}
+
+	if len(trace.WorldTurn) != 1 {
+		t.Fatalf("trace.WorldTurn = %+v, want exactly 1 entry", trace.WorldTurn)
+	}
+	wt := trace.WorldTurn[0]
+
+	if wt.ClockDeltaS != 2 {
+		t.Fatalf("world_turn.clock_delta_s = %d, want 2 (the attempt's own instant duration)", wt.ClockDeltaS)
+	}
+	if len(wt.Fired) != 1 {
+		t.Fatalf("world_turn.fired_scheduled = %v, want exactly 1 (the ledger-committed pending event)", wt.Fired)
+	}
+	found := false
+	for _, id := range out.Committed {
+		if id == wt.Fired[0] {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("world_turn.fired_scheduled[0] = %q, not among out.Committed %v", wt.Fired[0], out.Committed)
+	}
+	if len(wt.Rolls) != 0 {
+		t.Fatalf("world_turn.rolls = %+v, want EMPTY — the roll body must never run when the ledger already fired medium/large", wt.Rolls)
+	}
+	if wt.Eruption != nil {
+		t.Fatalf("world_turn.eruption = %+v, want nil — no pressure-roll eruption occurred", wt.Eruption)
+	}
+}
