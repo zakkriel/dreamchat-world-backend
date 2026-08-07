@@ -351,6 +351,15 @@ func (o *Orchestrator) endJourney(ctx context.Context, j *Journey, status string
 // (seqUsed), so no two commits in this leg can ever collide on the same slot — the same discipline
 // runWorldTurn's own eruption commit already uses against fireDuePending's ledger fires.
 func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *BeatOutcome, trace *BeatTrace) error {
+	// rung3 Task 5 correction: surface the journey this beat TOUCHES on the outcome the instant the
+	// leg starts — the SAME pointer runJourneyLeg goes on to mutate (CurrentTick, LegsDone, Status via
+	// endJourney), so by the time this function returns, outcome.Journey reflects whatever the leg
+	// left behind: still active on an ordinary journey_leg, or arrived/ended/barred the very beat it
+	// stopped. journeyBlock's own activeJourney lookup can never see that terminal row (its WHERE
+	// clause is status='active'), so the beat stream's journey frame prefers this field when present.
+	if outcome != nil {
+		outcome.Journey = j
+	}
 	tickBefore := j.CurrentTick
 	tickAfter := tickBefore + legSliceSeconds(j)
 
@@ -584,23 +593,13 @@ type journeyBlock struct {
 	Status        string  `json:"status"`         // "active" | "arrived" | "ended"
 }
 
-// journeyBlock reads worldID/viewerID's ACTIVE journey fresh (activeJourney's own discipline — no
-// server memory) and projects it into the scene payload's shape. Returns (nil, nil) when the viewer
-// holds no active journey: "not travelling" is the ordinary case, never an error, and scene/current
-// ships a real `null` for it rather than an empty/placeholder block — this function only ever
-// produces a block whose Status is "active" (activeJourney's own WHERE clause never returns an
-// arrived/ended row); the wider status enum exists for the journey block's OTHER caller, the beat
-// stream's post-resolution `journey` frame (design §4.8, rung3 Task 3), which projects the row it
-// already holds in memory the instant a leg ends it.
-func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID string) (*journeyBlock, error) {
-	j, err := o.activeJourney(ctx, worldID, viewerID)
-	if err != nil {
-		return nil, fmt.Errorf("journeyBlock: activeJourney: %w", err)
-	}
-	if j == nil {
-		return nil, nil
-	}
-
+// projectJourneyBlock renders j into the scene payload's shape — the pure projection half of
+// journeyBlock, split out (rung3 Task 5 correction) so a caller already holding a Journey in memory
+// (BeatOutcome.Journey, set by runJourneyLeg the instant a leg runs) can project it WITHOUT a second
+// activeJourney lookup, whose status='active' WHERE clause would otherwise return nil for the very
+// beat a journey arrives or ends on. journeyBlock (below) is the fresh-lookup caller; the beat
+// stream's post-resolution `journey` frame (beatsstream.go, design §4.8) is the in-memory caller.
+func (o *Orchestrator) projectJourneyBlock(ctx context.Context, worldID, viewerID string, j *Journey) (*journeyBlock, error) {
 	displayName := func(entityID string) (*string, error) {
 		if entityID == "" {
 			return nil, nil
@@ -615,7 +614,7 @@ func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID strin
 
 	goalLabel, err := displayName(j.GoalTarget)
 	if err != nil {
-		return nil, fmt.Errorf("journeyBlock: goal_label: %w", err)
+		return nil, fmt.Errorf("projectJourneyBlock: goal_label: %w", err)
 	}
 	// where_label: the place the traveller is currently passing through (j.StageID — journeyScene's
 	// own "known place underfoot" bookkeeping, set only once a leg lands ON a recognized place), or
@@ -623,7 +622,7 @@ func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID strin
 	// stage_id for a non-travel kind).
 	whereLabel, err := displayName(j.StageID)
 	if err != nil {
-		return nil, fmt.Errorf("journeyBlock: where_label: %w", err)
+		return nil, fmt.Errorf("projectJourneyBlock: where_label: %w", err)
 	}
 
 	return &journeyBlock{
@@ -637,4 +636,22 @@ func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID strin
 		Interruptible: j.Status == "active",
 		Status:        j.Status,
 	}, nil
+}
+
+// journeyBlock reads worldID/viewerID's ACTIVE journey fresh (activeJourney's own discipline — no
+// server memory) and projects it via projectJourneyBlock. Returns (nil, nil) when the viewer holds
+// no active journey: "not travelling" is the ordinary case, never an error, and scene/current ships
+// a real `null` for it rather than an empty/placeholder block — this lookup path only ever produces a
+// block whose Status is "active" (activeJourney's own WHERE clause never returns an arrived/ended
+// row). A caller that already holds the touched journey in memory (BeatOutcome.Journey) should call
+// projectJourneyBlock directly instead — see its own docstring.
+func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID string) (*journeyBlock, error) {
+	j, err := o.activeJourney(ctx, worldID, viewerID)
+	if err != nil {
+		return nil, fmt.Errorf("journeyBlock: activeJourney: %w", err)
+	}
+	if j == nil {
+		return nil, nil
+	}
+	return o.projectJourneyBlock(ctx, worldID, viewerID, j)
 }

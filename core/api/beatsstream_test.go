@@ -780,3 +780,58 @@ func TestBeatsContinue_AdvancesAJourneyOneLeg(t *testing.T) {
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
 }
+
+// ── TestBeatsFrame_ArrivalShowsAsArrivedNotNull ─────────────────────────────────────────────────────
+
+// TestBeatsFrame_ArrivalShowsAsArrivedNotNull is rung3 Task 5's correction: journeyBlock's own
+// activeJourney lookup only ever returns a status='active' row, so the beat in which a journey ARRIVES
+// used to project journey: null at exactly the moment the play page most needed to say "arrived". The
+// fix (BeatOutcome.Journey, orchestrator.go; projectJourneyBlock, journey.go) makes the beat stream's
+// journey frame prefer the journey the beat itself just touched. This drives a real travel journey to
+// arrival through repeated /beats/continue presses and asserts the ARRIVAL beat's journey frame reports
+// status "arrived", never null.
+func TestBeatsFrame_ArrivalShowsAsArrivedNotNull(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID)
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	legsTotal := j.LegsTotal
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+
+	h := NewBeatsStreamHandler(pool, true, continueBridge(t))
+
+	var lastJourney *journeyBlock
+	var lastResult resultBlock
+	for range legsTotal {
+		lastJourney, lastResult = beatsContinueFrames(t, h, dlWorldID, dlKadeID)
+		if lastResult.HaltReason == "journey_arrived" {
+			break
+		}
+	}
+
+	if lastResult.HaltReason != "journey_arrived" {
+		t.Fatalf("final halt_reason = %q, want journey_arrived (the fixture must reach arrival within %d legs)", lastResult.HaltReason, legsTotal)
+	}
+	if lastJourney == nil {
+		t.Fatalf("the arrival beat's journey frame = null, want status \"arrived\" (rung3 Task 5 correction: activeJourney only ever returns 'active' rows)")
+	}
+	if lastJourney.Status != "arrived" {
+		t.Fatalf("the arrival beat's journey.status = %q, want arrived", lastJourney.Status)
+	}
+	if lastJourney.Active {
+		t.Fatalf("the arrival beat's journey.active = true, want false (the trip is over)")
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
+}

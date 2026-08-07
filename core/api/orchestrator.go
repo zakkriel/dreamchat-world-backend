@@ -42,6 +42,16 @@ type BeatOutcome struct {
 	UnresolvedCandidates []string      `json:"unresolved_candidates"`
 	Telegraphs           []string      `json:"telegraphs"`
 	QueryAnswers         []QueryAnswer `json:"query_answers,omitempty"`
+	// Journey is the journey row this beat TOUCHED — set by runJourneyLeg (journey.go) the instant a
+	// leg runs, whatever its status when the leg finished (still "active" on an ordinary journey_leg,
+	// or "arrived"/"ended" the very beat it stopped). rung3 Task 5's correction: activeJourney only
+	// ever returns a 'active' row, so the beat in which a journey ARRIVES would otherwise project
+	// journey: null in the beat stream's journey frame at exactly the moment it should say "arrived"
+	// (journey.go's own journeyBlock docstring). Nil on every beat that never touched a journey. Never
+	// serialized (json:"-") — it carries the raw row (thresholds, coords), not a perception-bound
+	// projection; callers project it through journey.go's projectJourneyBlock before it may cross the
+	// API boundary (B-1/I-3).
+	Journey *Journey `json:"-"`
 }
 
 // QueryAnswer is one QUERY element's read-only answer (Grounded Reasoning / Unit 2): the player's

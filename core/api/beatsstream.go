@@ -300,12 +300,19 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// journeyBlock is read FRESH, post-resolve, exactly like buildScene's own journey field does
-	// (scenehandler.go:188) — the same function, the same discipline (no server memory). A journey
-	// that ENDED this very beat (arrived/ended) therefore projects as null here, same as it does inside
-	// the scene frame above: activeJourney's own WHERE clause only ever returns an 'active' row
-	// (journey.go:591-594's own docstring flags this — see report).
-	journey, err := (&Orchestrator{DB: h.pool}).journeyBlock(ctx, worldID, viewerID)
+	// journey prefers the journey THIS BEAT touched (outcome.Journey, set by runJourneyLeg the
+	// instant a leg runs — journey.go) over a fresh activeJourney lookup: a journey that ARRIVES or
+	// ENDS this very beat is no longer 'active', so activeJourney's status='active' WHERE clause would
+	// return nil and this frame would go blank at exactly the beat that should report the arrival
+	// (rung3 Task 5 correction — journey.go's own journeyBlock docstring flagged this). Every OTHER
+	// beat (no journey touched at all) falls back to journeyBlock()'s fresh lookup, unchanged.
+	journeyOrc := &Orchestrator{DB: h.pool}
+	var journey *journeyBlock
+	if outcome.Journey != nil {
+		journey, err = journeyOrc.projectJourneyBlock(ctx, worldID, viewerID, outcome.Journey)
+	} else {
+		journey, err = journeyOrc.journeyBlock(ctx, worldID, viewerID)
+	}
 	if err != nil {
 		log.Printf("beats stream: journeyBlock: %v", err)
 		_ = frames.emit("error", errorFrame{Message: "the journey could not be assembled"})
