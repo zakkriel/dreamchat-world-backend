@@ -158,9 +158,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var startTick int64
-	if err := h.pool.QueryRow(ctx,
-		`SELECT COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id=$1),0)+1`,
-		worldID).Scan(&startTick); err != nil {
+	if err := h.pool.QueryRow(ctx, `SELECT fn_world_now($1::uuid)+1`, worldID).Scan(&startTick); err != nil {
 		http.Error(w, "start tick", http.StatusInternalServerError)
 		return
 	}

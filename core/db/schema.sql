@@ -1866,6 +1866,20 @@ $$;
 
 
 --
+-- Name: fn_world_now(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_world_now(p_world_id uuid) RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT GREATEST(
+    COALESCE((SELECT max(in_world_tick) FROM canon_event WHERE world_id = p_world_id), 0),
+    COALESCE((SELECT max(current_tick)  FROM journey     WHERE world_id = p_world_id), 0)
+  );
+$$;
+
+
+--
 -- Name: fn_world_slice(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2431,6 +2445,35 @@ CREATE TABLE public.held_outcome (
 
 
 --
+-- Name: journey; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.journey (
+    journey_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    actor_id uuid NOT NULL,
+    kind text NOT NULL,
+    threshold jsonb NOT NULL,
+    span_seconds bigint NOT NULL,
+    legs_total integer NOT NULL,
+    legs_done integer DEFAULT 0 NOT NULL,
+    started_tick bigint NOT NULL,
+    current_tick bigint NOT NULL,
+    frame_id uuid,
+    origin_coord jsonb,
+    goal_coord jsonb,
+    goal_target uuid,
+    stage_id uuid,
+    status text DEFAULT 'active'::text NOT NULL,
+    CONSTRAINT journey_kind_check CHECK ((kind = ANY (ARRAY['travel'::text, 'wait'::text, 'watch'::text]))),
+    CONSTRAINT journey_legs_done_check CHECK ((legs_done >= 0)),
+    CONSTRAINT journey_legs_total_check CHECK ((legs_total > 0)),
+    CONSTRAINT journey_span_seconds_check CHECK ((span_seconds > 0)),
+    CONSTRAINT journey_status_check CHECK ((status = ANY (ARRAY['active'::text, 'arrived'::text, 'ended'::text])))
+);
+
+
+--
 -- Name: location_state; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2698,6 +2741,14 @@ ALTER TABLE ONLY public.held_outcome
 
 
 --
+-- Name: journey journey_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journey
+    ADD CONSTRAINT journey_pkey PRIMARY KEY (journey_id);
+
+
+--
 -- Name: location_state location_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2901,6 +2952,20 @@ CREATE INDEX idx_er_scene ON public.entity_registry USING btree (world_id, curre
 --
 
 CREATE INDEX idx_held_outcome_pending ON public.held_outcome USING btree (world_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: idx_journey_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_journey_active ON public.journey USING btree (world_id) WHERE (status = 'active'::text);
+
+
+--
+-- Name: idx_journey_one_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX idx_journey_one_active ON public.journey USING btree (world_id, actor_id) WHERE (status = 'active'::text);
 
 
 --
@@ -3220,4 +3285,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260805100002'),
     ('20260805100003'),
     ('20260807100001'),
-    ('20260807100002');
+    ('20260807100002'),
+    ('20260807100003');
