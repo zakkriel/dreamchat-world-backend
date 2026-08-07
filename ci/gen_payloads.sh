@@ -78,6 +78,21 @@ done
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^TestGenSceneCurrentPayloads$' -count=1 -v . )
 
+# --- world_actor/1 + place_author/1: SEAT-CONTRACT schemas (the structured-output LEASH a driver's raw
+# response is validated against), not API response envelopes — their additionalProperties:false shape
+# leaves no room for a "schema_version" field, so unlike every fn_*-backed payload above these cannot be
+# identified by one. TestGenWorldActorPayload/TestGenPlaceAuthorPayload (core/api/schema_payloads_test.go)
+# are the Go-side equivalent: gated on SEAT_PAYLOAD_DIR (skipped in the normal `go test ./...` suite),
+# they drive the REAL runWorldActor/authorPlaceForLeg call paths — through the fake driver, the CI
+# stand-in for an undelivered live model — against the seeded Drowned Lantern play world, and write the
+# driver's raw output verbatim as world_actor_1.json/place_author_1.json. ci/schema_contract.py recovers
+# the schema id these two carry from that filename (sid_from_filename) rather than a schema_version
+# field, since a seat's raw output is never wrapped in one.
+( cd "$(dirname "$0")/../core/api" && \
+  SEAT_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^(TestGenWorldActorPayload|TestGenPlaceAuthorPayload)$' -count=1 -v . )
+
 # manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
 # (both Player and Jonas must appear) rather than trust the generator.
 printf '{"viewers":["%s","%s"]}\n' "$PLAYER" "$JONAS" > "$OUT/_manifest.json"

@@ -91,6 +91,23 @@ def check_direction2(sid, schema):
     return errs
 
 
+def sid_from_filename(path):
+    """SEAT-CONTRACT fallback (world_actor/1, place_author/1): a seat-contract schema IS the model's
+    raw structured-output shape (additionalProperties: false, no schema_version property — that
+    envelope belongs to API RESPONSES, never to what an LLM seat is allowed to emit; see
+    core/api/bridge_fakes.go's fakeWorldActorDriver/fakePlaceAuthorDriver). Its real payload therefore
+    carries no schema_version field to key off. ci/gen_payloads.sh names such a payload after the
+    schema's own $id with '/' -> '_' (e.g. "world_actor/1" -> "world_actor_1.json"); this recovers the
+    id from that name alone, WITHOUT touching the payload's bytes or the schema — direction 1 still
+    validates the payload exactly as Driver.Generate returned it. Returns None for every other filename
+    (a trailing "_<digits>" stem is specific enough that no existing fn_*-backed payload name matches
+    it — see the payload-naming survey in gen_payloads.sh).
+    """
+    stem = os.path.splitext(os.path.basename(path))[0]
+    name, sep, ver = stem.rpartition("_")
+    return f"{name}/{ver}" if sep and ver.isdigit() else None
+
+
 def run(schema_dir, payload_dir):
     by_id = load_schemas(schema_dir)
     if not by_id:
@@ -112,7 +129,7 @@ def run(schema_dir, payload_dir):
         errs.append(f"no payloads found in {payload_dir} (did ci/gen_payloads.sh run against a seeded db?)")
     for f in files:
         payload = json.load(open(f))
-        sid = payload.get("schema_version")
+        sid = payload.get("schema_version") or sid_from_filename(f)
         if sid not in by_id:
             errs.append(f"[dir1] {os.path.basename(f)}: unknown schema_version {sid!r}")
             continue
