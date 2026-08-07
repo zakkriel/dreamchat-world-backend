@@ -93,8 +93,12 @@ func (o *Orchestrator) targetCoord(ctx context.Context, worldID, target string) 
 // (span = the real physics duration, fn_move_duration_actor), a `sustain.for` becomes `wait` (span
 // = the stated seconds, threshold = the absolute tick it clears — R13, the span is never
 // reclassified), and a `sustain.until_*` becomes `watch` (span = this world's horizon default,
-// threshold = the predicate carried through verbatim). legs_total comes from fn_journey_legs
-// (Task 2), already clamped to 5..10.
+// threshold = the predicate carried through verbatim). A non-move that carries no sustain at all
+// but whose duration_class alone does not fit the beat ALSO becomes `wait` — a sustained speech
+// resolves on "the clock reaches a tick" exactly like an explicit "for" wait does, so it files
+// under the same noun rather than a fifth case; span = nonMoveDurationSeconds(a.DurationClass), the
+// same lookup the calling gate used to decide the thing did not fit. legs_total comes from
+// fn_journey_legs (Task 2), already clamped to 5..10.
 //
 // It writes the row and COMMITS NOTHING TO CANON: starting a journey is not an event, only arrival
 // is (design §4.4/§4.7) — this function never calls applyEvent/adjudicate.
@@ -163,6 +167,27 @@ func (o *Orchestrator) startJourney(ctx context.Context, worldID, actorID string
 		th, err := json.Marshal(a.Sustain)
 		if err != nil {
 			return nil, fmt.Errorf("startJourney: watch threshold: %w", err)
+		}
+		j.Threshold = th
+
+	case a.Type != "ActorMoved" && a.Sustain == nil:
+		// A non-move whose class alone does not fit the beat, but that never stated a span, is a
+		// vigil under the design's own uniform test: "span fits the beat's budget → resolves
+		// inline; exceeds it → becomes a Journey, whether a long monologue or a hundred-year
+		// vigil." `wait` is the kind whose threshold is "the clock reaches a tick" — a sustained
+		// speech resolves the same way, so it files under that SAME noun, not a fourth kind (no
+		// CHECK-constraint/migration churn for a case that is mechanically identical). Span comes
+		// from nonMoveDurationSeconds — the identical lookup the gate itself used to decide the
+		// thing did not fit — reused rather than re-derived a second way.
+		dur, err := o.nonMoveDurationSeconds(ctx, worldID, a.DurationClass)
+		if err != nil {
+			return nil, fmt.Errorf("startJourney: class duration: %w", err)
+		}
+		j.Kind = "wait"
+		j.SpanSeconds = dur
+		th, err := json.Marshal(journeyTickThreshold{Kind: "tick", At: now + dur})
+		if err != nil {
+			return nil, fmt.Errorf("startJourney: wait threshold: %w", err)
 		}
 		j.Threshold = th
 

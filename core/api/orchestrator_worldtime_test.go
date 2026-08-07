@@ -115,17 +115,31 @@ func TestRunBeat_NonMoveCostsWorldTime(t *testing.T) {
 	}
 }
 
-// TestRunBeat_NonMoveOverBudgetHaltsTurnBudget is the interim over-budget behavior this task adds
-// for non-moves: in a 'tense' scene (30 s budget), a 'long' (300 s) Communicated cannot fit, so the
-// chain halts turn_budget WITHOUT committing (mirrors the move branch's existing "prefix stands"
-// shape — no Journey/accumulation logic is built here, task-3-brief ambiguity resolution #1).
-// TicksAdvanced must be 0: the halt fires before curTick ever advances.
+// TestRunBeat_NonMoveOverBudgetHaltsTurnBudget is Task 6's fallout: a 'long' (300 s) Communicated
+// no longer fits a 'tense' (30 s budget) scene, but over-budget is no longer a dead end (design
+// §4.7) — it starts a journey and runs its first leg. There is no explicit `sustain` here, so
+// startJourney's class-only case fires: kind="wait", span = the SAME 300 s duration_class lookup
+// that decided the thing didn't fit. dlWorldID's fn_journey_legs(300) is 5 (the built-in ≤1h
+// fallback — no per-world override seeded), so the first leg is ceil(300/5) = 60 s; the world's
+// turn is disabled so the leg's own outcome is deterministic (no incidental eruption competing
+// with the assertion this test exists to make — mirrors wtDisableWorldActor's documented use).
+// TicksAdvanced must be 60, not 0: the beat no longer bounces before the clock moves.
 func TestRunBeat_NonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup (not defer) — LIFO with wtDisableWorldActor's own restore and the journey delete
+	// below, so both run BEFORE the pool closes (mirrors TestRunBeat_EmptyBeatAdvancesByInstantFloor's
+	// documented t.Cleanup-ordering pattern).
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	wtSetTavernTension(t, ctx, pool, "tense")
+	wtDisableWorldActor(t, ctx, pool, dlWorldID)
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`, dlWorldID, dlKadeID); err != nil {
+			t.Errorf("cleanup active journey: %v", err)
+		}
+	})
 
 	orc := wtOrchestrator(pool)
 	baseTick := wtBaseTick(t, ctx, pool)
@@ -135,14 +149,22 @@ func TestRunBeat_NonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	if out.HaltReason != "turn_budget" {
-		t.Fatalf("HaltReason = %q, want turn_budget (a 300s non-move cannot fit a tense scene's 30s budget)", out.HaltReason)
+	if out.HaltReason != "journey_leg" {
+		t.Fatalf("HaltReason = %q, want journey_leg (a 300s non-move that doesn't fit a tense scene's 30s budget now starts a journey instead of bouncing)", out.HaltReason)
 	}
-	if out.TicksAdvanced != 0 {
-		t.Fatalf("TicksAdvanced = %d, want 0 (the over-budget non-move does not commit, so the clock never advances)", out.TicksAdvanced)
+	if out.TicksAdvanced != 60 {
+		t.Fatalf("TicksAdvanced = %d, want 60 (the journey's first leg: ceil(300/5 legs))", out.TicksAdvanced)
 	}
 	if len(out.Committed) != 0 {
-		t.Fatalf("Committed = %v, want empty — the over-budget non-move must NOT commit (mirrors the move branch)", out.Committed)
+		t.Fatalf("Committed = %v, want empty — starting a journey and running a leg commits nothing to canon (only arrival does, and this leg didn't reach the threshold)", out.Committed)
+	}
+	var status string
+	if err := pool.QueryRow(ctx,
+		`SELECT status FROM journey WHERE world_id=$1 AND actor_id=$2`, dlWorldID, dlKadeID).Scan(&status); err != nil {
+		t.Fatalf("journey row: %v", err)
+	}
+	if status != "active" {
+		t.Fatalf("journey status = %q, want active — the leg did not meet the threshold, so the journey stays open", status)
 	}
 }
 
@@ -241,12 +263,17 @@ func TestRunBeat_AdjudicatedNonMoveCostsWorldTime(t *testing.T) {
 
 // TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget is the adjudicated-path mirror of
 // TestRunBeat_NonMoveOverBudgetHaltsTurnBudget: starting at tenA ('tense' → 30s budget), the same
-// 'long' (300s) AttributeChanged cannot fit, so the chain halts turn_budget WITHOUT calling adjudicate
-// at all (driver.callCount stays 0 — the budget gate fires strictly before the referee is consulted,
-// mirroring the pre-commit gate on every other branch of this loop) and commits nothing.
+// 'long' (300s) AttributeChanged still cannot fit — but Task 6 means that no longer bounces. The
+// chain hands it to the journey WITHOUT calling adjudicate at all (driver.callCount stays 0 — the
+// budget gate fires strictly before the referee is consulted, mirroring the pre-commit gate on
+// every other branch of this loop) and still commits nothing to canon (only arrival ever would,
+// and a class-only wait never arrives — it only ends). worldID's fn_journey_legs(300) is 5 (no
+// per-world override seeded here either), so the first leg is ceil(300/5) = 60 s; this fixture
+// world carries no pressure config, so the leg is quiet without needing wtDisableWorldActor.
 func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup (not defer) — LIFO with the journey delete below, so it runs BEFORE the pool closes.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	seedTensionGeometry(t, ctx)
@@ -258,6 +285,13 @@ func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 		t.Fatalf("base tick: %v", err)
 	}
 	placeActorAt(t, ctx, playerID, tenA, baseTick) // tenA: stamped 'tense' → 30s budget
+
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`, worldID, playerID); err != nil {
+			t.Errorf("cleanup active journey: %v", err)
+		}
+	})
 
 	driver := &inlineRulingDriver{
 		name:   "adj-worldtime-overbudget",
@@ -276,14 +310,14 @@ func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	if outcome.HaltReason != "turn_budget" {
-		t.Fatalf("halt_reason = %q, want turn_budget (a 300s adjudicated non-move cannot fit a tense scene's 30s budget)", outcome.HaltReason)
+	if outcome.HaltReason != "journey_leg" {
+		t.Fatalf("halt_reason = %q, want journey_leg (a 300s adjudicated non-move that doesn't fit a tense scene's 30s budget now starts a journey instead of bouncing)", outcome.HaltReason)
 	}
 	if len(outcome.Committed) != 0 {
-		t.Fatalf("committed = %v, want empty — the over-budget adjudicated non-move must NOT commit", outcome.Committed)
+		t.Fatalf("committed = %v, want empty — starting a journey and running a leg commits nothing to canon", outcome.Committed)
 	}
-	if outcome.TicksAdvanced != 0 {
-		t.Fatalf("ticks_advanced = %d, want 0 (the halt fires before curTick ever advances)", outcome.TicksAdvanced)
+	if outcome.TicksAdvanced != 60 {
+		t.Fatalf("ticks_advanced = %d, want 60 (the journey's first leg: ceil(300/5 legs))", outcome.TicksAdvanced)
 	}
 	if driver.callCount != 0 {
 		t.Fatalf("resolve driver called %d times, want 0 — the budget gate must fire BEFORE adjudicate() ever consults the referee", driver.callCount)

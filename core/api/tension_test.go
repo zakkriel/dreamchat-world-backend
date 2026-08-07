@@ -144,7 +144,8 @@ func placeActorAt(t *testing.T, ctx context.Context, actorID, locationID string,
 // (∞) runs one long move (D→A, 35 s > any tense beat) and it commits: `none` never budget-blocks (§5/§6).
 func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup (not defer) — LIFO with the journey delete below, so it runs BEFORE the pool closes.
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	seedTensionGeometry(t, ctx)
@@ -176,15 +177,26 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat (cumulative): %v", err)
 	}
-	if outcome.HaltReason != "turn_budget" {
-		t.Fatalf("halt_reason = %q, want %q (third 12 s move overflows the 30 s tense budget)", outcome.HaltReason, "turn_budget")
+	// Task 6 / design §4.7: the third move no longer bounces — over-budget hands it to the journey
+	// and runs its first leg (still without committing the move itself, so the prefix still stands
+	// exactly as before). tenC→tenD is 12 s of real physics (recomputed identically inside
+	// startJourney); worldID's fn_journey_legs(12) is 5 (no per-world override), so the first leg is
+	// ceil(12/5) = 3 s.
+	if outcome.HaltReason != "journey_leg" {
+		t.Fatalf("halt_reason = %q, want %q (third 12 s move overflows the 30 s tense budget, so it becomes a journey instead of bouncing)", outcome.HaltReason, "journey_leg")
 	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`, worldID, playerID); err != nil {
+			t.Errorf("cleanup active journey: %v", err)
+		}
+	})
 	if len(outcome.Committed) != 2 {
-		t.Fatalf("committed = %d (%v), want exactly 2 (12+12=24 ≤ 30; the 36 s move rejects, prefix stands)",
+		t.Fatalf("committed = %d (%v), want exactly 2 (12+12=24 ≤ 30; the third 12 s move becomes a journey instead of committing, prefix stands)",
 			len(outcome.Committed), outcome.Committed)
 	}
-	if outcome.TicksAdvanced != 24 {
-		t.Fatalf("ticks_advanced = %d, want 24 (two 12 s moves committed before the over-budget halt)", outcome.TicksAdvanced)
+	if outcome.TicksAdvanced != 27 {
+		t.Fatalf("ticks_advanced = %d, want 27 (two 12 s moves committed, then the over-budget journey's first 3 s leg)", outcome.TicksAdvanced)
 	}
 	// The prefix stood: the player advanced A→B→C, and the rejected C→D never committed.
 	if loc, err := orc.actorLocation(ctx, worldID, playerID); err != nil {

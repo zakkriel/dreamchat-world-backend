@@ -31,6 +31,7 @@ type Orchestrator struct {
 	CognitionBatch    Driver
 	CognitionIsolated Driver
 	WorldActor        Driver
+	PlaceAuthor       Driver
 }
 
 // BeatOutcome is the result of RunBeat.
@@ -221,12 +222,11 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			// Task 8). A non-move's duration is its decomposer-tagged duration_class → seconds
 			// (fn_duration_class_seconds, per-world retunable, Task 1/Task 2); an EMPTY class (legacy
 			// input, or simply no estimate) floors to "instant" so even stillness ticks. If the duration
-			// exceeds what remains, the chain halts turn_budget and this step does NOT commit — the
-			// prefix stands (§6 example: three 12 s moves in a 30 s beat → 12,24 commit, 36 rejects; the
-			// same shape now applies to a non-move that can't fit — this is the honest INTERIM
-			// over-budget behavior, no Journey/accumulation logic yet). The runaway/overflow guard
-			// (dur > MaxInt64-curTick) is belt-and-suspenders and, under `none` (∞ budget) where the
-			// first clause never fires, still catches the speed-0 sentinel.
+			// exceeds what remains, the chain hands the attempt to the Journey (Task 6, design §4.7) —
+			// it does NOT commit here, but it is not a dead end either: startJourney/runJourneyLeg run
+			// the first leg and the prefix (everything before this attempt) still stands. The runaway/
+			// overflow guard (dur > MaxInt64-curTick) is belt-and-suspenders and, under `none` (∞
+			// budget) where the first clause never fires, still catches the speed-0 sentinel.
 			var dur int64
 			if attempt.Type == "ActorMoved" {
 				d, derr := o.fnMoveDurationActor(ctx, worldID, actorID, attempt.ToTargetID)
@@ -255,9 +255,25 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				}
 				trace.appendMove(attempt, fs, dur, budgetRemaining, !over)
 			}
-			if over {
-				outcome.HaltReason = "turn_budget"
-				outcome.TicksAdvanced = curTick - startTick
+			if over || attempt.Sustain != nil {
+				// RULINGS-2026-07-30 §2 / design §4.7: over-budget is NOT a reject — it is the
+				// Journey. The attempt does not fit this beat, so it becomes a span the world gets
+				// to interrupt (startJourney + one leg, Task 4-6). The impossible move (speed 0 →
+				// MaxInt64, or an overflow) is NOT over-budget in that sense: it cannot be done at
+				// all, and still halts turn_budget — the ONE case the Journey does not swallow.
+				if dur == math.MaxInt64 || dur > math.MaxInt64-curTick {
+					outcome.HaltReason = "turn_budget"
+					outcome.TicksAdvanced = curTick - startTick
+					return nil
+				}
+				j, jErr := o.startJourney(ctx, worldID, actorID, attempt, curTick)
+				if jErr != nil {
+					return fmt.Errorf("start journey: %w", jErr)
+				}
+				if legErr := o.runJourneyLeg(ctx, j, outcome, trace); legErr != nil {
+					return fmt.Errorf("journey leg: %w", legErr)
+				}
+				outcome.TicksAdvanced = j.CurrentTick - startTick
 				return nil
 			}
 
@@ -318,16 +334,31 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			// (every non-move attempt now charges its class duration, whether routed via apply_event or
 			// the referee; Task 3 review fix). Its duration is its decomposer-tagged duration_class →
 			// seconds (fn_duration_class_seconds; an EMPTY class floors to "instant", same as the
-			// passthrough branch). If the duration exceeds what remains, the chain halts turn_budget
-			// WITHOUT calling adjudicate — the prefix stands, mirroring the pre-commit gate every other
-			// branch in this loop already uses. Still no Journey/accumulation logic.
+			// passthrough branch). If the duration exceeds what remains, the chain hands the attempt to
+			// the Journey WITHOUT calling adjudicate — symmetric with the passthrough gate above (Task
+			// 6, design §4.7): not a dead end, the first leg runs immediately.
 			dur, durErr := o.nonMoveDurationSeconds(ctx, worldID, attempt.DurationClass)
 			if durErr != nil {
 				return fmt.Errorf("fn_duration_class_seconds: %w", durErr)
 			}
-			if overBudget(dur, budgetRemaining, curTick) {
-				outcome.HaltReason = "turn_budget"
-				outcome.TicksAdvanced = curTick - startTick
+			if over := overBudget(dur, budgetRemaining, curTick); over || attempt.Sustain != nil {
+				// Same shape as the passthrough gate above. The overflow half of this guard is
+				// belt-and-suspenders (fn_duration_class_seconds never actually returns the move
+				// branch's speed-0 sentinel), kept for symmetry — a non-move over-budget attempt is
+				// never "impossible", only "does not fit here", so it always becomes a journey.
+				if dur > math.MaxInt64-curTick {
+					outcome.HaltReason = "turn_budget"
+					outcome.TicksAdvanced = curTick - startTick
+					return nil
+				}
+				j, jErr := o.startJourney(ctx, worldID, actorID, attempt, curTick)
+				if jErr != nil {
+					return fmt.Errorf("start journey: %w", jErr)
+				}
+				if legErr := o.runJourneyLeg(ctx, j, outcome, trace); legErr != nil {
+					return fmt.Errorf("journey leg: %w", legErr)
+				}
+				outcome.TicksAdvanced = j.CurrentTick - startTick
 				return nil
 			}
 
