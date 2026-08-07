@@ -145,3 +145,26 @@ func TestBuildWorldActorPrompt_CarriesRulesAndSlice(t *testing.T) {
 		t.Fatalf("prompt does not carry the raw world slice verbatim")
 	}
 }
+
+// Deferral B: v1 scope is that the intrusion manifests AT the scene the composer passed. The fake
+// authors an intrusion by a tavern resident; pointing the composer at Dock Street must be refused at
+// runtime, not merely discouraged by the prompt.
+func TestRunWorldActor_RefusesToActOutsideTheScene(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const dockStreetID = "210c0000-0000-0000-0000-0000000000d2"
+
+	orc := wtOrchestrator(pool)
+	tick := wtBaseTick(t, ctx, pool)
+
+	var out BeatOutcome
+	eventID, seqUsed, err := orc.runWorldActor(ctx, dlWorldID, dockStreetID, "small", tick, 0, nil, &out, nil)
+	if err == nil {
+		t.Fatalf("authored intrusion from outside the scene was accepted: eventID=%q seqUsed=%d", eventID, seqUsed)
+	}
+	if len(out.Committed) != 0 {
+		t.Fatalf("outcome.Committed = %v, want empty — a refused intrusion must commit nothing", out.Committed)
+	}
+}

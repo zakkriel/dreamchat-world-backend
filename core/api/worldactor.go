@@ -80,6 +80,31 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 	if fieldErr := validateAttemptFields(0, authored.Attempt); fieldErr != nil {
 		return "", 0, fmt.Errorf("runWorldActor: %w", fieldErr)
 	}
+	// v1 SCOPE, ENFORCED (design doc Unit 5; Living World deferral B): the intrusion manifests
+	// perceivably AT `scene`. Two lawful shapes, and nothing else:
+	//   * an ActorMoved whose target resolves to `scene` — the presence-boundary move, this seat's
+	//     unique power to pull a non-present NPC INTO the scene;
+	//   * any other act by an entity ALREADY standing in `scene`.
+	// Prompt-only until now (world_actor.txt). Failing loud rather than committing keeps a
+	// mis-scoped intrusion out of canon entirely — an event the player cannot be positioned to
+	// perceive is worse than no eruption at all.
+	if authored.Attempt.Type == "ActorMoved" {
+		dest, destErr := o.fnTargetScene(ctx, worldID, authored.Attempt.ToTargetID)
+		if destErr != nil {
+			return "", 0, fmt.Errorf("runWorldActor: resolve move target scene: %w", destErr)
+		}
+		if dest != scene {
+			return "", 0, fmt.Errorf("runWorldActor: authored move lands in %s, not the scene %s", dest, scene)
+		}
+	} else {
+		here, locErr := o.actorLocation(ctx, worldID, authored.ActorID)
+		if locErr != nil {
+			return "", 0, fmt.Errorf("runWorldActor: actor %s location: %w", authored.ActorID, locErr)
+		}
+		if here != scene {
+			return "", 0, fmt.Errorf("runWorldActor: authored actor %s is in %s, not the scene %s", authored.ActorID, here, scene)
+		}
+	}
 
 	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, postCommit, outcome, trace)
 	if commitErr != nil {
