@@ -1,0 +1,13 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "place_author/1",
+  "title": "place_author/1 — a NEW place's IDENTITY only: what it is, never where it sits or how big in numbers. No position, no size measurement, no number of any kind — the engine draws the footprint from extent_class (fn_extent_class_metres + fn_area_around); the seat cannot emit geometry even if it tries.",
+  "type": "object",
+  "required": ["descriptor", "kind", "extent_class"],
+  "properties": {
+    "descriptor": {"type": "string", "minLength": 1},
+    "kind": {"type": "string", "minLength": 1},
+    "extent_class": {"type": "string", "enum": ["intimate", "small", "medium", "large", "vast"]}
+  },
+  "additionalProperties": false
+}

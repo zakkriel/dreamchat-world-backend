@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync/atomic"
+	"time"
 )
 
 // fakeStructuredDriver models CONSTRAINED DECODING for CI: it can ONLY return schema-valid chains
@@ -157,5 +159,51 @@ func (f *fakeWorldActorDriver) Generate(_ context.Context, req GenRequest) (stri
 		`{"actor_id":%s,"attempt":{"type":"Communicated","stated":"a commotion breaks out at the bar",`+
 			`"listener_id":%s,"content":"Oi — mind yourself!"}}`,
 		jsonStr(fakeWorldActorMaraID), jsonStr(fakeWorldActorJonasID),
+	), nil
+}
+
+// fakePlaceAuthorDriver: a deterministic stand-in for the place_author seat (Journey rung 2, Task 8).
+// Authors the SAME identity SHAPE every call — kind/extent_class fixed — but the descriptor carries a
+// per-process-run suffix (fakePlaceAuthorRunSeed, captured ONCE at package init, combined with a
+// package-level atomic call counter): places are minted through the real EntityCreated path, whose
+// reuse-before-create floor (fn_apply_entity_created, §5.4) matches on descriptor — a fixed, repeated
+// descriptor would make every SECOND call in a test run (and every call in a SECOND `go test`
+// invocation, since a package-level counter alone resets to zero each process start — the acceptance
+// battery runs the Go suite twice with no reset between, i.e. two separate processes against the SAME
+// un-reset database) silently REUSE an EARLIER call's place instead of minting its own, which is not
+// what "a stand-in for a live seat authoring a NEW place" should simulate. The run seed is the CI
+// stand-in's own analogue of a live model never authoring the identical phrase twice; it is not itself
+// asserted on by any test (only fakePlaceAuthorDescriptorPrefix is). Matching place_author.v1.schema.json
+// exactly: descriptor + kind + extent_class ONLY, no coordinate, no radius, no number describing
+// geometry — the schema is the leash keeping geometry out of the model's hands even in a CI fake.
+// Wired into every OTHER package test's Orchestrator too (the PlaceAuthor field is left nil there —
+// nothing outside placeauthor_test.go's own place-creation path ever calls PlaceAuthor.Generate).
+// Errors when req.Schema == nil (the structured-output floor every other fake enforces).
+// FAKE: CI stand-in for an undelivered live model. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
+type fakePlaceAuthorDriver struct{ name string }
+
+// fakePlaceAuthorDescriptorPrefix is the stable, assertable prefix every fakePlaceAuthorDriver
+// descriptor starts with — tests match on this rather than a full fixed string, since the run
+// seed/counter suffix is deliberately non-constant (see the type's own docstring).
+const fakePlaceAuthorDescriptorPrefix = "a huddle of driftwood shacks along the tideline"
+
+var (
+	fakePlaceAuthorCounter atomic.Int64
+	fakePlaceAuthorRunSeed = time.Now().UnixNano()
+)
+
+func NewFakePlaceAuthorDriver() Driver { return &fakePlaceAuthorDriver{name: "fake-place-author"} }
+
+func (f *fakePlaceAuthorDriver) Name() string                { return f.name }
+func (f *fakePlaceAuthorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+
+func (f *fakePlaceAuthorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: place-author driver used without a schema", f.name)
+	}
+	n := fakePlaceAuthorCounter.Add(1)
+	return fmt.Sprintf(
+		`{"descriptor":%s,"kind":"waystation","extent_class":"small"}`,
+		jsonStr(fmt.Sprintf("%s #%d-%d", fakePlaceAuthorDescriptorPrefix, fakePlaceAuthorRunSeed, n)),
 	), nil
 }

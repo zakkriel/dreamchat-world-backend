@@ -80,6 +80,11 @@ var (
 	SeatCognitionIsolated = Seat{Name: "cognition_isolated", Requires: []Capability{CapStructuredOutput}}
 	// world_actor: world transformation (SPEC-?); REQUIRES structured output.
 	SeatWorldActor = Seat{Name: "world_actor", Requires: []Capability{CapStructuredOutput}}
+	// place_author: authors a NEW place's identity (descriptor/kind/extent_class) when the Journey's
+	// world's turn needs a stage nothing known contains (design §4.6, R2). REQUIRES structured output —
+	// the schema leash is what keeps geometry (a coordinate, a radius, any number) out of the model's
+	// hands; the engine alone draws the footprint (fn_extent_class_metres + fn_area_around).
+	SeatPlaceAuthor = Seat{Name: "place_author", Requires: []Capability{CapStructuredOutput}}
 )
 
 // BindSeat validates the driver's REPORTED capabilities satisfy the seat floor; fail CLOSED.

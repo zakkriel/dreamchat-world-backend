@@ -46,7 +46,7 @@ func main() {
 	// uses deterministic drivers for keyless local dev. Bind fails closed if a seat's driver underpowers
 	// its capability floor. CI never starts this server; tests inject their own bridge.
 	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory,
-		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor)
+		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -89,6 +89,7 @@ func defaultSeatConfig() SeatConfig {
 			"cognition_batch":    {Provider: "fake-structured", Model: "dev"},
 			"cognition_isolated": {Provider: "fake-structured", Model: "dev"},
 			"world_actor":        {Provider: "fake-structured", Model: "dev"},
+			"place_author":       {Provider: "fake-structured", Model: "dev"},
 		}
 	}
 	model := os.Getenv("DREAMCHAT_MODEL")
@@ -102,6 +103,7 @@ func defaultSeatConfig() SeatConfig {
 		"cognition_batch":    {Provider: "anthropic", Model: model},
 		"cognition_isolated": {Provider: "anthropic", Model: model},
 		"world_actor":        {Provider: "anthropic", Model: model},
+		"place_author":       {Provider: "anthropic", Model: model},
 	}
 
 	// Per-seat resolve override: DREAMCHAT_RESOLVE_PROVIDER selects an alternate provider for

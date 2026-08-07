@@ -319,35 +319,44 @@ func (o *Orchestrator) endJourney(ctx context.Context, j *Journey, status string
 }
 
 // runJourneyLeg runs ONE leg of j, in order: compute the slice (legSliceSeconds), advance the
-// journey's clock in memory, run the world's turn — runWorldTurn, UNCHANGED, the seam its own
-// docstring promised — for (tickBefore, tickAfter] in the actor's CURRENT scene (actorLocation;
-// stage resolution is Task 8, not this leg), persist current_tick/legs_done, then decide in
-// priority order (design §4.3, R5):
+// journey's clock in memory, resolve the leg's SCENE (journeyScene — R2's "are you somewhere
+// known?", asked BEFORE the world's turn runs: runWorldTurn's own `scene` argument is only ever
+// touched if something fires, worldturn.go:143, and by then it is too late to change it), run the
+// world's turn — runWorldTurn, UNCHANGED, the seam its own docstring promised — for (tickBefore,
+// tickAfter] at that scene, persist current_tick/legs_done, then decide in priority order (design
+// §4.3, R2, R4, R5):
 //
-//  1. A medium/large eruption fired this leg → the journey ENDS here, "journey_interrupted" (R5: a
+//  1. The world's turn fired AND the traveller was standing nowhere a known place contains → R2:
+//     "does something happen? are you somewhere known? if not, create it" — authorPlaceForLeg mints
+//     the place and its ways (R4). If R4's gap-fill finds an EXISTING shut/locked connection instead,
+//     the road is barred: the journey ENDS, "journey_barred" — surfaced honestly, never routed around.
+//  2. A medium/large eruption fired this leg → the journey ENDS here, "journey_interrupted" (R5: a
 //     hard cut-in ends the journey outright — nothing suspends, nothing auto-resumes; the player is
 //     standing where it happened with a full turn and can simply restate).
-//  2. The threshold is met → for travel, the arrival move commits through the SAME apply path
+//  3. The threshold is met → for travel, the arrival move commits through the SAME apply path
 //     (commitWorldPayload, nil postCommit — an ordinary commit, not a bypass, so the perception
 //     fan-out happens for free) to goal_target; the journey ends 'arrived', "journey_arrived".
-//  3. The last leg is spent without the threshold met — only reachable for a watch whose horizon
+//  4. The last leg is spent without the threshold met — only reachable for a watch whose horizon
 //     ran out (travel/wait's own threshold always closes exactly on the leg that spends
 //     span_seconds, by legSliceSeconds's own "last leg closes the span exactly" guarantee) → the
 //     journey ends 'ended', "journey_unresolved" — nothing waits forever.
-//  4. Otherwise the journey stays active, "journey_leg" — the player may continue.
+//  5. Otherwise the journey stays active, "journey_leg" — the player may continue.
+//
+// A QUIET leg (nothing fires) never reaches step 1's creation code at all — R2's "nothing is built
+// while you walk" falls straight out of the `firedMag != ""` gate, not a separate check.
 //
 // seq is threaded from 0 for the leg — it is its own turn, not a continuation of some outer beat's
-// seq. The arrival commit (case 2) starts PAST whatever (tick,seq) slots the world's turn itself
-// already consumed at tickAfter (seqUsed), so the two commits can never collide on the same slot —
-// the same discipline runWorldTurn's own eruption commit already uses against fireDuePending's
-// ledger fires.
+// seq. Any commit made here (the arrival move, or authorPlaceForLeg's own place/portal/move commits)
+// starts PAST whatever (tick,seq) slots the world's turn itself already consumed at tickAfter
+// (seqUsed), so no two commits in this leg can ever collide on the same slot — the same discipline
+// runWorldTurn's own eruption commit already uses against fireDuePending's ledger fires.
 func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *BeatOutcome, trace *BeatTrace) error {
 	tickBefore := j.CurrentTick
 	tickAfter := tickBefore + legSliceSeconds(j)
 
-	scene, err := o.actorLocation(ctx, j.WorldID, j.ActorID)
+	scene, point, known, err := o.journeyScene(ctx, j, tickAfter)
 	if err != nil {
-		return fmt.Errorf("runJourneyLeg: actor location: %w", err)
+		return fmt.Errorf("runJourneyLeg: scene: %w", err)
 	}
 
 	firedMag, seqUsed, err := o.runWorldTurn(ctx, j.WorldID, scene, tickBefore, tickAfter, 0, outcome, trace)
@@ -361,6 +370,22 @@ func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *B
 		`UPDATE journey SET current_tick=$1, legs_done=$2 WHERE journey_id=$3::uuid`,
 		j.CurrentTick, j.LegsDone, j.ID); err != nil {
 		return fmt.Errorf("runJourneyLeg: persist: %w", err)
+	}
+
+	if firedMag != "" && !known && j.Kind == "travel" {
+		barred, placeErr := o.authorPlaceForLeg(ctx, j, scene, point, tickAfter, seqUsed, outcome, trace)
+		if placeErr != nil {
+			return fmt.Errorf("runJourneyLeg: place creation: %w", placeErr)
+		}
+		if barred {
+			if err := o.endJourney(ctx, j, "ended"); err != nil {
+				return fmt.Errorf("runJourneyLeg: end (barred): %w", err)
+			}
+			if outcome != nil {
+				outcome.HaltReason = "journey_barred"
+			}
+			return nil
+		}
 	}
 
 	if eruptionCutsBeat(firedMag) {
@@ -411,4 +436,132 @@ func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *B
 		outcome.HaltReason = "journey_leg"
 	}
 	return nil
+}
+
+// journeyProgress is how far along j's span tickAfter falls, clamped to [0,1] so a leg that
+// overshoots (the final leg, by legSliceSeconds's own "whole remainder" rule) never interpolates
+// past the goal.
+func journeyProgress(j *Journey, tickAfter int64) float64 {
+	if j.SpanSeconds <= 0 {
+		return 1
+	}
+	p := float64(tickAfter-j.StartedTick) / float64(j.SpanSeconds)
+	if p < 0 {
+		return 0
+	}
+	if p > 1 {
+		return 1
+	}
+	return p
+}
+
+// interpolateCoord linearly interpolates between origin and goal (both {"x":…,"y":…} jsonb, ALREADY
+// resolved into the SAME frame by frameCoord below) by progress. This is the Journey's own "point
+// along the road" — the accepted imprecision fn_target_position already documents (§3: an actual
+// arrival lands at a place's authored entry, never an inferred point) applies again here: progress is
+// measured in TIME, not walked distance, so nothing drifts leg to leg.
+func interpolateCoord(origin, goal json.RawMessage, progress float64) (json.RawMessage, error) {
+	var o, g struct {
+		X float64 `json:"x"`
+		Y float64 `json:"y"`
+	}
+	if err := json.Unmarshal(origin, &o); err != nil {
+		return nil, fmt.Errorf("interpolateCoord: origin: %w", err)
+	}
+	if err := json.Unmarshal(goal, &g); err != nil {
+		return nil, fmt.Errorf("interpolateCoord: goal: %w", err)
+	}
+	return json.Marshal(map[string]float64{
+		"x": o.X + (g.X-o.X)*progress,
+		"y": o.Y + (g.Y-o.Y)*progress,
+	})
+}
+
+// frameCoord resolves target's position EXPRESSED IN j.FrameID's OWN frame — the one fn_place_at
+// compares against. This is deliberately NOT startJourney's own OriginCoord/GoalCoord (targetCoord /
+// fn_target_position's `coord` OUT param): that resolves each entity's coordinate in ITS OWN
+// containing scene's LOCAL frame (Kade's {6,1} inside the tavern; a location target's own unset
+// entry_point defaulting to {0,0} inside ITSELF) — two DIFFERENT frames, never comparable by straight
+// interpolation. What fn_place_at needs instead is: wherever target actually stands (fn_target_position's
+// own `scene` OUT param — itself, for a location; its containing location, for an actor/artifact),
+// read THAT SCENE's own attrs.coordinates — a location's coordinates are always expressed in ITS
+// parent's frame (seed_drowned_lantern.sql's own convention), which per the v1 constraint (design
+// §4.5: "origin and goal share a parent frame") IS j.FrameID for both the travelling actor's scene and
+// the journey's goal.
+func (o *Orchestrator) frameCoord(ctx context.Context, worldID, target string) (json.RawMessage, error) {
+	var scene string
+	if err := o.DB.QueryRow(ctx,
+		`SELECT scene FROM fn_target_position($1::uuid,$2::uuid)`, worldID, target).Scan(&scene); err != nil {
+		return nil, fmt.Errorf("frameCoord: fn_target_position: %w", err)
+	}
+	var coord []byte
+	if err := o.DB.QueryRow(ctx,
+		`SELECT COALESCE(attrs->'coordinates','{"x":0,"y":0}'::jsonb) FROM location_state WHERE world_id=$1::uuid AND entity_id=$2::uuid`,
+		worldID, scene).Scan(&coord); err != nil {
+		return nil, fmt.Errorf("frameCoord: coordinates: %w", err)
+	}
+	return json.RawMessage(coord), nil
+}
+
+// journeyScene resolves the scene THIS leg hands to runWorldTurn, and reports whether that scene is
+// a KNOWN place — the R2 gate "are you somewhere known?", asked BEFORE runWorldTurn runs (its own
+// `scene` argument is only ever read if something fires, worldturn.go:143 — by the time firedMag
+// comes back it is too late to swap the scene out from under an already-authored intrusion). A
+// wait/watch journey (no frame/goal — the travel-only columns) never moves, so it is ALWAYS exactly
+// where the actor already canonically stands: `known` is always true, and place creation never
+// triggers for it.
+//
+// For travel, the point is the TIME-interpolated coordinate (interpolateCoord) between frameCoord(the
+// actor) and frameCoord(the goal) — both resolved fresh, in j.FrameID's own frame, every leg.
+// fn_place_at(world, frame, point) is a pure READ — never a creation — so calling it every leg, quiet
+// or not, never violates "nothing is built while you walk" (design §4.3 node F runs unconditionally;
+// only the K/create node is gated on firing). When it finds a known place, that place becomes both the
+// scene AND the journey's new stage_id bookkeeping (loop state, not canon — no ActorMoved is committed
+// onto a merely-recognized known place; only arrival and a freshly CREATED place commit a real move,
+// design §4.6 step 5's "moves onto it"). When it finds nothing (open road), the scene FALLS BACK to
+// the last known stage (j.StageID) or, on the very first such leg, the actor's own current canonical
+// location — always a real, existing entity, so runWorldTurn's own fn_world_slice/runWorldActor calls
+// never see an invalid scene even though nothing has been minted for "here" yet.
+func (o *Orchestrator) journeyScene(ctx context.Context, j *Journey, tickAfter int64) (scene string, point json.RawMessage, known bool, err error) {
+	if j.Kind != "travel" || j.FrameID == "" || j.GoalTarget == "" {
+		loc, err := o.actorLocation(ctx, j.WorldID, j.ActorID)
+		return loc, nil, true, err
+	}
+
+	origin, err := o.frameCoord(ctx, j.WorldID, j.ActorID)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("journeyScene: origin: %w", err)
+	}
+	goal, err := o.frameCoord(ctx, j.WorldID, j.GoalTarget)
+	if err != nil {
+		return "", nil, false, fmt.Errorf("journeyScene: goal: %w", err)
+	}
+	point, err = interpolateCoord(origin, goal, journeyProgress(j, tickAfter))
+	if err != nil {
+		return "", nil, false, fmt.Errorf("journeyScene: interpolate: %w", err)
+	}
+
+	var stage string
+	if err := o.DB.QueryRow(ctx,
+		`SELECT COALESCE(fn_place_at($1::uuid,$2::uuid,$3::jsonb)::text,'')`,
+		j.WorldID, j.FrameID, string(point)).Scan(&stage); err != nil {
+		return "", nil, false, fmt.Errorf("journeyScene: fn_place_at: %w", err)
+	}
+
+	if stage != "" {
+		if stage != j.StageID {
+			j.StageID = stage
+			if _, err := o.DB.Exec(ctx,
+				`UPDATE journey SET stage_id=$1::uuid WHERE journey_id=$2::uuid`, stage, j.ID); err != nil {
+				return "", nil, false, fmt.Errorf("journeyScene: persist stage: %w", err)
+			}
+		}
+		return stage, point, true, nil
+	}
+
+	if j.StageID != "" {
+		return j.StageID, point, false, nil
+	}
+	loc, err := o.actorLocation(ctx, j.WorldID, j.ActorID)
+	return loc, point, false, err
 }

@@ -155,6 +155,7 @@ func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		CognitionBatch:    h.bridge.Driver(SeatCognitionBatch.Name),
 		CognitionIsolated: h.bridge.Driver(SeatCognitionIsolated.Name),
 		WorldActor:        h.bridge.Driver(SeatWorldActor.Name),
+		PlaceAuthor:       h.bridge.Driver(SeatPlaceAuthor.Name),
 	}
 
 	var startTick int64
