@@ -246,6 +246,75 @@ func (s *sseReader) nextRaw() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
+// ── collapsing a driven /beats stream back into the pre-Task-5 JSON envelope ───────────────────────
+//
+// Every exit-gate test written against the deleted singular /beat endpoint decoded ONE buffered JSON
+// blob (schema_version/narration/messages/result). rung3 Task 5's clean cutover deletes that endpoint
+// with no alias — the pipeline it drove (decompose → RunBeat → narrate) is unchanged and still needs
+// the SAME coverage, so every one of those tests is repointed at /beats and its response collapsed
+// back into the identical shape here, rather than rewriting dozens of assertions against frames.
+
+// collapseBeatFrames re-assembles a driven /beats (or /beats/continue) SSE response into the
+// pre-Task-5 beat_result/3 JSON envelope: schema_version, narration (the legacy joined narrator-view
+// string, reconstructed by narrateMessages's own rule — speech quoted under its label, everything
+// else verbatim), messages, and result{committed, halt_reason, ticks_advanced, unresolved_candidates,
+// telegraphs}. raw is the exact bytes of a 200 SSE response (rec.Body.Bytes()); collapseBeatFrames
+// must only ever be called once the caller has confirmed status 200 — an early failure (400/422/502)
+// never sends frames at all, and callers check that status themselves before collapsing. An `error`
+// frame fails loudly: a mid-stream error means the repointed fixture itself misbehaved, never a
+// legitimate outcome for these deterministic-driver tests.
+func collapseBeatFrames(raw []byte) ([]byte, error) {
+	sr := newSSEReader(bytes.NewReader(raw))
+	var messages []beatMessage
+	var narrationParts []string
+	result := resultBlock{Committed: []string{}, UnresolvedCandidates: []string{}, Telegraphs: []string{}}
+	for {
+		frameRaw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("collapseBeatFrames: reading frame: %w", err)
+		}
+		var kindProbe struct {
+			Kind string `json:"kind"`
+		}
+		if err := json.Unmarshal(frameRaw, &kindProbe); err != nil {
+			return nil, fmt.Errorf("collapseBeatFrames: kind probe: %w", err)
+		}
+		switch kindProbe.Kind {
+		case "narration":
+			var f narrationFrame
+			if err := json.Unmarshal(frameRaw, &f); err != nil {
+				return nil, fmt.Errorf("collapseBeatFrames: narration frame: %w", err)
+			}
+			messages = append(messages, f.Message)
+			if f.Message.Kind == "speech" && f.Message.SpeakerLabel != "" {
+				narrationParts = append(narrationParts, f.Message.SpeakerLabel+`: "`+f.Message.Text+`"`)
+			} else {
+				narrationParts = append(narrationParts, f.Message.Text)
+			}
+		case "result":
+			var f resultFrame
+			if err := json.Unmarshal(frameRaw, &f); err != nil {
+				return nil, fmt.Errorf("collapseBeatFrames: result frame: %w", err)
+			}
+			result = f.Result
+		case "error":
+			var f errorFrame
+			_ = json.Unmarshal(frameRaw, &f)
+			return nil, fmt.Errorf("collapseBeatFrames: error frame: %s", f.Message)
+		}
+	}
+	envelope := map[string]any{
+		"schema_version": "beat_result/3",
+		"narration":      strings.Join(narrationParts, "\n\n"),
+		"messages":       messages,
+		"result":         result,
+	}
+	return json.Marshal(envelope)
+}
+
 // ── a driver that blocks its first Generate call until the test releases it ────────────────────────
 
 // gatedDriver wraps inner and, on its FIRST Generate call only, closes `started` (so the test can
@@ -563,4 +632,151 @@ func TestGenBeatFramePayloads(t *testing.T) {
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
+// ── TestOldBeatEndpointIsGone ────────────────────────────────────────────────────────────────────
+
+// TestOldBeatEndpointIsGone pins rung3 Task 5's clean cutover: POST /worlds/{w}/beat (singular) 404s.
+// beathandler.go's route (beatRoute), its Match, and its ServeHTTP entry point are gone outright — no
+// alias, no deprecation shim (founder-approved 2026-08-07; the only caller was the founder's own
+// throwaway test page). This drives the real router type (main.go) wired with every handler that could
+// plausibly claim a /worlds/{w}/beat... path — scene/current, /beats, and /beats/continue all anchor on
+// different suffixes, so none of them match the deleted singular pattern and the router falls through
+// to its own 404, exactly as a live server would.
+func TestOldBeatEndpointIsGone(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	bridge := mustBridge(t, NewFakeStructuredDriver("fake-structured:gone", nil), NewFakeTextDriver("fake-text:gone"))
+	rt := &router{handlers: []matcher{
+		NewSceneHandler(pool, true).(matcher),
+		NewBeatsStreamHandler(pool, true, bridge).(matcher),
+	}}
+
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beat?viewer="+playerID,
+		strings.NewReader(`{"text":"anything"}`))
+	rec := httptest.NewRecorder()
+	rt.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("POST /worlds/{w}/beat status = %d, want 404 (the singular endpoint is gone, rung3 Task 5)", rec.Code)
+	}
+}
+
+// ── TestBeatsContinue_AdvancesAJourneyOneLeg ────────────────────────────────────────────────────────
+
+// continueBridge binds fakes to every seat beatsStreamHandler's Orchestrator construction can reach
+// (matching main.go's own full seat list) — a continue press never calls decompose, but the journey
+// leg it runs still exercises world-first cognition and, if a leg lands somewhere unknown, PlaceAuthor.
+func continueBridge(t *testing.T) *Bridge {
+	t.Helper()
+	bridge, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatDecompose.Name:         NewFakeStructuredDriver("fake-structured:continue", nil),
+		SeatNarrate.Name:           NewFakeTextDriver("fake-text:continue"),
+		SeatResolve.Name:           NewFakeResolveDriver(),
+		SeatCognitionBatch.Name:    NewFakeCognitionDriver(),
+		SeatCognitionIsolated.Name: NewFakeCognitionDriver(),
+		SeatWorldActor.Name:        NewFakeWorldActorDriver(),
+		SeatPlaceAuthor.Name:       NewFakePlaceAuthorDriver(),
+	}, SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor)
+	if err != nil {
+		t.Fatalf("continueBridge: %v", err)
+	}
+	return bridge
+}
+
+// beatsContinueFrames drives one POST /worlds/{w}/beats/continue (no body) through h and returns the
+// journey and result frames it emitted (nil journey = the frame carried a real JSON null).
+func beatsContinueFrames(t *testing.T, h http.Handler, worldID, viewerID string) (*journeyBlock, resultBlock) {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats/continue?viewer="+viewerID, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("continue status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
+	var journeyGot *journeyBlock
+	var resultGot resultBlock
+	var sawInterpretation bool
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		frame := assertValidBeatFrame(t, raw)
+		switch frame["kind"] {
+		case "interpretation":
+			sawInterpretation = true
+			chain, _ := frame["chain"].([]any)
+			if len(chain) != 0 {
+				t.Fatalf("interpretation chain = %v, want empty (continue is an empty chain — orchestrator.go's RunBeat docstring)", chain)
+			}
+		case "journey":
+			var f journeyFrame
+			if err := json.Unmarshal(raw, &f); err != nil {
+				t.Fatalf("decode journey frame: %v", err)
+			}
+			journeyGot = f.Journey
+		case "result":
+			var f resultFrame
+			if err := json.Unmarshal(raw, &f); err != nil {
+				t.Fatalf("decode result frame: %v", err)
+			}
+			resultGot = f.Result
+		}
+	}
+	if !sawInterpretation {
+		t.Fatalf("no interpretation frame emitted")
+	}
+	return journeyGot, resultGot
+}
+
+// TestBeatsContinue_AdvancesAJourneyOneLeg pins rung3 Task 5's continue route: POST
+// /worlds/{w}/beats/continue carries no body and advances an active journey by EXACTLY one leg — never
+// a fast-forward (C-6). Mechanically it is RunBeat with an empty chain, which rung 2 already defined as
+// the continue press; this proves the ROUTE wires that through end to end, with no decompose call, and
+// that the journey frame reports the progress.
+func TestBeatsContinue_AdvancesAJourneyOneLeg(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // no stray eruption may cut the leg short mid-assertion.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	if j.LegsTotal < 2 {
+		t.Fatalf("fixture sanity: LegsTotal = %d, want >= 2 (one continue press must land mid-trip, not on arrival)", j.LegsTotal)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+
+	h := NewBeatsStreamHandler(pool, true, continueBridge(t))
+	journeyGot, resultGot := beatsContinueFrames(t, h, dlWorldID, dlKadeID)
+
+	if resultGot.HaltReason != "journey_leg" {
+		t.Fatalf("halt_reason = %q, want journey_leg (one continue press advances one leg of %d, never arriving early in this fixture)", resultGot.HaltReason, j.LegsTotal)
+	}
+	if journeyGot == nil {
+		t.Fatalf("journey frame = null, want the journey mid-trip")
+	}
+	if journeyGot.LegsDone != 1 {
+		t.Fatalf("journey.legs_done = %d, want exactly 1 (one continue press = one leg, never a fast-forward — C-6)", journeyGot.LegsDone)
+	}
+	if journeyGot.Status != "active" {
+		t.Fatalf("journey.status = %q, want active (the trip is not over after one leg)", journeyGot.Status)
+	}
+	if journeyGot.Progress <= 0 {
+		t.Fatalf("journey.progress = %v, want > 0 after one leg", journeyGot.Progress)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
 }

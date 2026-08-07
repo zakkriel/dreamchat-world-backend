@@ -98,27 +98,31 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
 		}),
 		NewFakeTextDriver("fake-text:test"))
-	h := NewBeatHandler(pool, true, bridge) // debug → honor ?viewer=
+	h := NewBeatsStreamHandler(pool, true, bridge) // debug → honor ?viewer=
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+playerID, strings.NewReader(`{"text":"tell mara about the note"}`))
+		"/worlds/"+worldID+"/beats?viewer="+playerID, strings.NewReader(`{"text":"tell mara about the note"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	rawBody := rec.Body.String()
+	if strings.Contains(rawBody, `"status":"accepted"`) {
+		t.Fatalf("response leaked a raw canon row (B-1): %s", rawBody)
+	}
+	collapsed, err := collapseBeatFrames(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("collapse beat frames: %v\n%s", err, rawBody)
+	}
+	body := string(collapsed)
 	if !strings.Contains(body, "narration") {
 		t.Fatalf("response missing narration: %s", body)
 	}
 	if !strings.Contains(body, `"halt_reason":"completed"`) {
 		t.Fatalf("beat did not commit end-to-end (halt_reason != completed): %s", body)
 	}
-	if strings.Contains(body, `"status":"accepted"`) {
-		t.Fatalf("response leaked a raw canon row (B-1): %s", body)
-	}
-
 	// Backfill perception_subject for runtime-generated perceptions (mirrors seed_mara_0A backfill)
 	// so SQL test 14's every-perception-has-a-subject invariant holds after this test runs.
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
@@ -130,13 +134,13 @@ func TestBeat_HappyPath_CommitsAndNarrates(t *testing.T) {
 func TestBeat_OversizeBodyRejected(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
-	h := NewBeatHandler(pool, true, mustBridge(t, NewFakeStructuredDriver("fake-structured:test", map[string]string{}), NewFakeTextDriver("fake-text:test")))
+	h := NewBeatsStreamHandler(pool, true, mustBridge(t, NewFakeStructuredDriver("fake-structured:test", map[string]string{}), NewFakeTextDriver("fake-text:test")))
 
 	// >64KB body: a text field padded well past the cap. MaxBytesReader trips during decode → 400.
 	// (Decode fails before decompose is ever called, so the driver bodies are irrelevant here.)
 	huge := `{"text":"` + strings.Repeat("a", 70<<10) + `"}`
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+playerID, strings.NewReader(huge))
+		"/worlds/"+worldID+"/beats?viewer="+playerID, strings.NewReader(huge))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -208,17 +212,21 @@ type beatMsgResp struct {
 func runNarrateFlowBeat(t *testing.T, pool *pgxpool.Pool, nd *scriptedNarrateDriver) beatMsgResp {
 	t.Helper()
 	bridge := mustBridge(t, NewFakeStructuredDriver("fake-structured:test", nil), nd) // empty decompose table → [] chain, beat completes
-	h := NewBeatHandler(pool, true, bridge)
+	h := NewBeatsStreamHandler(pool, true, bridge)
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+playerID, strings.NewReader(`{"text":"I look around"}`))
+		"/worlds/"+worldID+"/beats?viewer="+playerID, strings.NewReader(`{"text":"I look around"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
+	collapsed, err := collapseBeatFrames(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("collapse beat frames: %v\n%s", err, rec.Body.String())
+	}
 	var resp beatMsgResp
-	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
-		t.Fatalf("decode response: %v\n%s", err, rec.Body.String())
+	if err := json.Unmarshal(collapsed, &resp); err != nil {
+		t.Fatalf("decode response: %v\n%s", err, collapsed)
 	}
 	if resp.SchemaVersion != "beat_result/3" {
 		t.Fatalf("schema_version = %q, want beat_result/3", resp.SchemaVersion)
@@ -447,8 +455,8 @@ func TestPayload_PerceivedCandidates_OtherLocationExcluded(t *testing.T) {
 func TestBeat_OutOfVocabularyRejectedByBelt(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
-	h := NewBeatHandler(pool, true, mustBridge(t, rogueStructuredDriver{}, NewFakeTextDriver("fake-text:test")))
-	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beat?viewer="+playerID,
+	h := NewBeatsStreamHandler(pool, true, mustBridge(t, rogueStructuredDriver{}, NewFakeTextDriver("fake-text:test")))
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+playerID,
 		strings.NewReader(`{"text":"anything"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

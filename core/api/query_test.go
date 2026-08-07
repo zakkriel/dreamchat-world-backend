@@ -131,7 +131,7 @@ func queryHandler(t *testing.T, pool *pgxpool.Pool, decomposeText, chainJSON str
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	return NewBeatHandler(pool, true, bridge), narr, resolve // debug=true so ?viewer= is honored
+	return NewBeatsStreamHandler(pool, true, bridge), narr, resolve // debug=true so ?viewer= is honored
 }
 
 // TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate is the brief's (a)+(b): a pure QUERY beat

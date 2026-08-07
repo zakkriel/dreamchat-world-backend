@@ -3,10 +3,6 @@ package main
 import (
 	"context"
 	_ "embed"
-	"encoding/json"
-	"log"
-	"net/http"
-	"regexp"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -16,8 +12,6 @@ import (
 //
 //go:embed schema/beat_chain.v1.schema.json
 var beatChainSchema []byte
-
-var beatRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beat$`)
 
 // Candidate is a known entity that the player can reference by ID in a beat chain (v2).
 type Candidate struct {
@@ -78,210 +72,18 @@ func buildDecomposePrompt(payload PerceptionPayload, playerText string) string {
 	return sb.String()
 }
 
-// beatHandler serves POST /worlds/{w}/beat. It orchestrates the per-seat bridge around the
-// deterministic SQL engine: decompose (perception-bound input §14, STRUCTURED against beat_chain =
-// the leash, SPEC-015/D-1) → DecodeAndValidateChainV2 (defense-in-depth belt) → Orchestrator.RunBeat
-// (the ONLY canonization point, origin='freeform') → narrate (perception-bound, ADR-020). No canon
-// row crosses the boundary (B-1): the response is narration + a committed-event summary.
+// beatHandler is no longer an HTTP entry point (rung3 Task 5 deleted POST /worlds/{w}/beat, the
+// singular route, with no alias — founder-approved clean cutover). It survives as the shared
+// pipeline-helper struct beatsStreamHandler (beatsstream.go) and buildScene (scenehandler.go)
+// construct as `&beatHandler{pool: pool}` to reach its two surviving methods: `payload` (the
+// perception-bound PerceptionPayload/Candidates assembly) and `speechTexts` (the verbatim-speech
+// belt's evidence). dbg/bridge stay on the struct only because a handful of existing tests still
+// build a `beatHandler{..., dbg: true}` literal to call `payload` directly; neither field is read by
+// anything anymore.
 type beatHandler struct {
 	pool   *pgxpool.Pool
 	dbg    bool
 	bridge *Bridge
-}
-
-// NewBeatHandler injects the bridge so CI uses fakes and the operator gate/production uses the live
-// per-seat drivers — both behind the same interface (D-13).
-func NewBeatHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge) http.Handler {
-	return &beatHandler{pool: pool, dbg: debug, bridge: bridge}
-}
-
-func (h *beatHandler) Match(r *http.Request) bool {
-	return r.Method == http.MethodPost && beatRoute.MatchString(r.URL.Path)
-}
-
-func (h *beatHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	m := beatRoute.FindStringSubmatch(r.URL.Path)
-	if m == nil || r.Method != http.MethodPost {
-		http.NotFound(w, r)
-		return
-	}
-	worldID := m[1]
-	ctx := context.Background()
-
-	viewerID, err := ResolveViewer(ctx, h.pool, worldID, r.URL.Query().Get("viewer"), h.dbg)
-	if err != nil {
-		http.Error(w, "viewer resolution failed", http.StatusInternalServerError)
-		return
-	}
-
-	// §7 injection bound: the player's raw text can ride into the combined-ruling prompt
-	// (RULINGS-2026-07-24 §7), so an unbounded body is an unbounded prompt. Cap it at 64KB before
-	// decoding; MaxBytesReader makes an over-cap read fail and the decode error below returns 400.
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var in struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-
-	// 1. perception payload BEFORE — the decompose seat is perception-bound (§14).
-	pre, err := h.payload(ctx, worldID, viewerID)
-	if err != nil {
-		http.Error(w, "payload", http.StatusInternalServerError)
-		return
-	}
-
-	// 2. decompose: STRUCTURED generation against the v2 closed vocabulary (the leash). The seat's
-	//    capability floor guarantees a constrained driver; DecodeAndValidateChainV2 is the belt.
-	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-		GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, in.Text), Schema: json.RawMessage(beatChainV2SchemaJSON)})
-	if err != nil {
-		log.Printf("decompose error: %v", err)
-		http.Error(w, "decompose failed", http.StatusBadGateway)
-		return
-	}
-	chain, err := DecodeAndValidateChainV2(raw)
-	if err != nil {
-		http.Error(w, "outside the closed vocabulary", http.StatusUnprocessableEntity) // 422
-		return
-	}
-
-	// 3. Orchestrator.RunBeat is the ONLY canonization point (D-1). origin='freeform' = model-proposed, gated.
-	orc := &Orchestrator{
-		DB:                h.pool,
-		Resolve:           h.bridge.Driver(SeatResolve.Name),
-		CognitionBatch:    h.bridge.Driver(SeatCognitionBatch.Name),
-		CognitionIsolated: h.bridge.Driver(SeatCognitionIsolated.Name),
-		WorldActor:        h.bridge.Driver(SeatWorldActor.Name),
-		PlaceAuthor:       h.bridge.Driver(SeatPlaceAuthor.Name),
-	}
-
-	var startTick int64
-	if err := h.pool.QueryRow(ctx, `SELECT fn_world_now($1::uuid)+1`, worldID).Scan(&startTick); err != nil {
-		http.Error(w, "start tick", http.StatusInternalServerError)
-		return
-	}
-
-	// Held check BEFORE decompose routing (RULINGS-2026-07-24 §3): read the world's pending holds
-	// fresh from the table — no server memory, no session machine, the world carries the state. Any
-	// pending hold ⇒ this input is a REACTION (§2 — first action + all held acts → one combined
-	// ruling; remainder a normal chain). None ⇒ a normal beat.
-	held, err := pendingHeldOutcomes(ctx, h.pool, worldID)
-	if err != nil {
-		log.Printf("pendingHeldOutcomes error: %v", err)
-		http.Error(w, "held lookup failed", http.StatusInternalServerError)
-		return
-	}
-
-	// Unit 3 — the reasoning trace. Build a BeatTrace ONLY in debug (else nil); it threads through the
-	// whole per-beat call tree (nil-safe end-to-end), so a non-debug beat pays ~zero and its response is
-	// byte-identical. It is TRUTH-REVEALING (truth-side referee reasoning), so it is emitted below ONLY
-	// when debug — a real player (never in debug) must never receive it (RULINGS-2026-07-23 §9).
-	var trace *BeatTrace
-	if h.dbg {
-		trace = NewBeatTrace(chain)
-	}
-
-	var outcome BeatOutcome
-	if len(held) > 0 {
-		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, in.Text, trace)
-	} else {
-		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick, trace)
-	}
-	if err != nil {
-		log.Printf("beat error: %v", err)
-		http.Error(w, "beat failed", http.StatusInternalServerError)
-		return
-	}
-	trace.Finish(outcome) // nil-safe: copies the halt reason, committed ids, and query answers onto the trace
-
-	// 4. perception payload AFTER — the narrate seat is perception-bound (ADR-020, no omniscient pass).
-	post, err := h.payload(ctx, worldID, viewerID)
-	if err != nil {
-		http.Error(w, "payload", http.StatusInternalServerError)
-		return
-	}
-	// Delta-first narration (Defect B): the perceptions the viewer already held BEFORE the beat are the
-	// baseline; anything in `post` not among them is WHAT JUST HAPPENED, the rest is RECENT BACKGROUND.
-	preIDs := make(map[string]bool, len(pre.LineIDs))
-	for _, id := range pre.LineIDs {
-		preIDs[id] = true
-	}
-
-	// Founder envelope: the narrate seat now emits an ORDERED list of typed segments (narrator prose +
-	// attributed NPC speech/actions), not one blob. presentIDs = the PRESENT roster the model sees (the
-	// ghost-speaker belt); labelFor = the VIEWER's display name per present id (reused from the payload
-	// candidates — fn_display_name results, never a canonical fallback beyond it). speechTexts = the
-	// verbatim-speech belt's evidence (this beat's Communicated perception contents, by speaker).
-	presentIDs, labelFor := narrateRoster(post, viewerID)
-	speechTexts, err := h.speechTexts(ctx, worldID, viewerID, startTick)
-	if err != nil {
-		log.Printf("narrate: speechTexts lookup failed (belt runs with no evidence): %v", err)
-		speechTexts = map[string][]string{} // fail toward repair, never crash the beat
-	}
-
-	// Structured narration with ONE repair (schema/belt failure → re-ask with the errors attached, the
-	// resolve-seat pattern), then a PLAIN prose fallback (no schema) wrapped as a single narrator segment
-	// — the beat is never failed on formatting.
-	nd := h.bridge.Driver(SeatNarrate.Name)
-	var segments []NarrationSegment
-	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
-		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
-		if attempt > 0 && lastErr != nil {
-			prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
-		}
-		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
-		if genErr != nil {
-			log.Printf("narrate: structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
-			lastErr = genErr
-			continue
-		}
-		segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts)
-		if decErr != nil {
-			log.Printf("narrate: segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
-			lastErr = decErr
-			continue
-		}
-		segments = segs
-		break
-	}
-	if segments == nil {
-		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)})
-		if genErr != nil {
-			log.Printf("narrate: plain fallback Generate failed: %v", genErr)
-			http.Error(w, "narrate failed", http.StatusBadGateway)
-			return
-		}
-		segments = []NarrationSegment{{Kind: "narration", Text: raw}}
-	}
-
-	messages, narration := narrateMessages(segments, labelFor)
-
-	w.Header().Set("Content-Type", "application/json")
-	respBody := map[string]any{
-		"schema_version": "beat_result/3",
-		"narration":      narration, // legacy narrator-view fallback text — kept for old clients
-		"messages":       messages,
-		"result": map[string]any{
-			"committed":             outcome.Committed,
-			"halt_reason":           outcome.HaltReason,
-			"ticks_advanced":        outcome.TicksAdvanced,
-			"unresolved_candidates": outcome.UnresolvedCandidates,
-			"telegraphs":            outcome.Telegraphs,
-		},
-	}
-	// THE WALL (truth-revealing → debug-only): the reasoning_log key is present ONLY when a trace was
-	// built (i.e. h.dbg). When NOT debug, trace is nil and the key is ABSENT ENTIRELY from the response —
-	// not null, absent — so a real player's response is byte-identical to before Unit 3 (design §Unit 3).
-	if trace != nil {
-		respBody["reasoning_log"] = trace
-	}
-	resp, _ := json.Marshal(respBody)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(resp)
 }
 
 // beatMessage is one element of the founder-envelope `messages` list: an attributed, typed segment. The

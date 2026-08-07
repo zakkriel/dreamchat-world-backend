@@ -10,32 +10,37 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// beatsRoute is POST /worlds/{w}/beats (plural) — the streaming sibling of beatRoute
-// (beathandler.go:20, POST /worlds/{w}/beat, singular). The plan's clean cutover deletes the
-// singular endpoint in Task 5; this task leaves it alone and working.
+// beatsRoute is POST /worlds/{w}/beats (plural). beatsContinueRoute is POST /worlds/{w}/beats/continue
+// — same frame protocol, no body: "continue" IS an empty chain (RunBeat's own docstring,
+// orchestrator.go) — it advances the moment by exactly one beat and never fast-forwards (C-6). Both
+// are the ONLY beat write paths left after rung3 Task 5 deleted the singular /beat endpoint
+// (founder-approved clean cutover, no alias, no deprecation shim).
 var beatsRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beats$`)
+var beatsContinueRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beats/continue$`)
 
-// beatsStreamHandler serves POST /worlds/{w}/beats — the SAME beat as beatHandler
-// (beathandler.go:81), delivered as a stream of validated frames instead of one buffered JSON
-// response (design §4.8, plan rung3 Task 3). It reuses the existing pipeline WHOLESALE: viewer
-// resolution, the perception payload, decompose, DecodeAndValidateChainV2, RunBeat/RunReactionBeat,
-// the narrate loop with its one repair and plain-prose fallback (all beathandler.go:102-286), plus
-// buildScene (scenehandler.go) and journeyBlock (journey.go) for the scene/journey frames — the new
-// endpoint is the same beat, differently delivered, never a second implementation of it.
+// beatsStreamHandler serves both routes above, delivering the beat as a stream of validated frames
+// instead of one buffered JSON response (design §4.8, plan rung3 Task 3). It reuses beatHandler's
+// SURVIVING pipeline pieces wholesale — payload, speechTexts, narrateRoster, narrateMessages,
+// buildDecomposePrompt (beathandler.go; its own HTTP entry point is gone, Task 5) — plus
+// Orchestrator.RunBeat/RunReactionBeat, buildScene (scenehandler.go), and
+// projectJourneyBlock/journeyBlock (journey.go) for the scene/journey frames. /beats/continue skips
+// decompose entirely: an empty chain against an active journey IS the continue press (rung 2 commit
+// 9ec9d7e) — the same beat, one fewer stage.
 type beatsStreamHandler struct {
 	pool   *pgxpool.Pool
 	dbg    bool
 	bridge *Bridge
 }
 
-// NewBeatsStreamHandler injects the bridge exactly like NewBeatHandler (D-13) — CI uses fakes, the
-// operator gate/production uses the live per-seat drivers, both behind the same interface.
+// NewBeatsStreamHandler injects the bridge exactly like the old NewBeatHandler did (D-13) — CI uses
+// fakes, the operator gate/production uses the live per-seat drivers, both behind the same interface.
 func NewBeatsStreamHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge) http.Handler {
 	return &beatsStreamHandler{pool: pool, dbg: debug, bridge: bridge}
 }
 
 func (h *beatsStreamHandler) Match(r *http.Request) bool {
-	return r.Method == http.MethodPost && beatsRoute.MatchString(r.URL.Path)
+	return r.Method == http.MethodPost &&
+		(beatsRoute.MatchString(r.URL.Path) || beatsContinueRoute.MatchString(r.URL.Path))
 }
 
 // interpretationFrame carries the decoded intent chain — "how the input was understood", for the
@@ -88,17 +93,23 @@ type errorFrame struct {
 	Message string `json:"message"`
 }
 
-// ServeHTTP runs the SAME beat pipeline beatHandler.ServeHTTP does (beathandler.go:102-285), stage for
-// stage, and streams it as frames instead of buffering one JSON response.
+// ServeHTTP runs the SAME beat pipeline the deleted beatHandler.ServeHTTP once did, stage for stage,
+// and streams it as frames instead of buffering one JSON response.
 //
 // Everything BEFORE the chain decodes uses ordinary HTTP status codes (400/422/500/502), exactly like
-// the singular endpoint — no SSE headers are sent and no frame is written, so a client that never gets
-// a valid beat still gets an honest status code, not a 200 wrapping an error frame. The INSTANT the
-// chain decodes, the interpretation frame is emitted: the response is now streaming, status 200 is
-// already on the wire, and every failure from here on is a defined state (plan Task 3) — an `error`
-// frame carrying a player-safe message, never a 5xx, because the status line has already gone out.
+// the old singular endpoint did — no SSE headers are sent and no frame is written, so a client that
+// never gets a valid beat still gets an honest status code, not a 200 wrapping an error frame. The
+// INSTANT the chain decodes, the interpretation frame is emitted: the response is now streaming,
+// status 200 is already on the wire, and every failure from here on is a defined state (plan Task 3)
+// — an `error` frame carrying a player-safe message, never a 5xx, because the status line has already
+// gone out.
 func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m := beatsRoute.FindStringSubmatch(r.URL.Path)
+	continuePress := false
+	if m == nil {
+		m = beatsContinueRoute.FindStringSubmatch(r.URL.Path)
+		continuePress = true
+	}
 	if m == nil || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
@@ -112,20 +123,9 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// §7 injection bound — identical cap to beathandler.go's ServeHTTP (RULINGS-2026-07-24 §7).
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-	var in struct {
-		Text string `json:"text"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-		http.Error(w, "bad body", http.StatusBadRequest)
-		return
-	}
-
 	// bh is a minimal *beatHandler carrying only pool — the same construction buildScene uses
 	// (scenehandler.go:115) to reach beatHandler.payload/speechTexts, the only entry points to the
-	// perception-bound Candidates/Lines assembly and the verbatim-speech evidence. beathandler.go
-	// stays untouched; this borrows its exported-within-package methods, not its file.
+	// perception-bound Candidates/Lines assembly and the verbatim-speech evidence.
 	bh := &beatHandler{pool: h.pool}
 
 	pre, err := bh.payload(ctx, worldID, viewerID)
@@ -134,17 +134,38 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-		GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, in.Text), Schema: json.RawMessage(beatChainV2SchemaJSON)})
-	if err != nil {
-		log.Printf("beats stream: decompose error: %v", err)
-		http.Error(w, "decompose failed", http.StatusBadGateway)
-		return
-	}
-	chain, err := DecodeAndValidateChainV2(raw)
-	if err != nil {
-		http.Error(w, "outside the closed vocabulary", http.StatusUnprocessableEntity)
-		return
+	// The chain: decoded from the request body, or — on /beats/continue — the empty chain outright.
+	// "continue" carries no body and decodes nothing (rung3 Task 5): an empty chain against an active
+	// journey IS the continue press (RunBeat's own docstring, orchestrator.go), so there is no
+	// decompose call, no driver round trip, and no §7 injection surface on this path.
+	var chain []Attempt
+	var playerText string
+	if continuePress {
+		chain = []Attempt{}
+	} else {
+		// §7 injection bound — identical cap to the deleted beatHandler.ServeHTTP (RULINGS-2026-07-24 §7).
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		var in struct {
+			Text string `json:"text"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+			http.Error(w, "bad body", http.StatusBadRequest)
+			return
+		}
+		playerText = in.Text
+
+		raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
+			GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, in.Text), Schema: json.RawMessage(beatChainV2SchemaJSON)})
+		if err != nil {
+			log.Printf("beats stream: decompose error: %v", err)
+			http.Error(w, "decompose failed", http.StatusBadGateway)
+			return
+		}
+		chain, err = DecodeAndValidateChainV2(raw)
+		if err != nil {
+			http.Error(w, "outside the closed vocabulary", http.StatusUnprocessableEntity)
+			return
+		}
 	}
 
 	frames, ok := newFrameWriter(w)
@@ -194,7 +215,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	var outcome BeatOutcome
 	if len(held) > 0 {
-		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, in.Text, trace)
+		outcome, err = orc.RunReactionBeat(ctx, worldID, viewerID, chain, held, startTick, playerText, trace)
 	} else {
 		outcome, err = orc.RunBeat(ctx, worldID, viewerID, chain, startTick, trace)
 	}

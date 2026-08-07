@@ -2,8 +2,9 @@ package main
 
 // Station E exit gate — Task 10, Step 1.
 //
-// TestStationE_FakeE2E drives the WHOLE Station E loop through the REAL HTTP beatHandler
-// (NewBeatHandler + NewBridgeWithDrivers, all six seats bound to scripted drivers), deterministic
+// TestStationE_FakeE2E drives the WHOLE Station E loop through the REAL streaming beatsStreamHandler
+// (NewBeatsStreamHandler + NewBridgeWithDrivers, all six seats bound to scripted drivers; postBeat
+// collapses the driven /beats response back into the pre-rung3-Task-5 beat_result/3 shape), deterministic
 // and zero-network. It proves the telegraph beat → reaction beat round trip end to end:
 //
 //   Beat 1 (a normal beat that the WORLD ends): the player leans on Mara. The mechanical §5 split
@@ -119,14 +120,27 @@ type stationEBeatResp struct {
 	} `json:"result"`
 }
 
-// postBeat POSTs one player text through the real handler as viewer K and returns status + body.
+// postBeat POSTs one player text through the real handler as viewer K and returns status + body. The
+// handler is the streaming beatsStreamHandler (rung3 Task 5 deleted the singular /beat endpoint); a
+// 200 response is collapsed back into the pre-Task-5 beat_result/3 JSON shape (collapseBeatFrames,
+// beatsstream_test.go) so every existing caller keeps decoding the SAME fields unchanged. A collapse
+// failure is folded into the returned body as a JSON-invalid marker string rather than a panic — the
+// caller's own `if code != http.StatusOK` / `json.Unmarshal(body, ...)` checks surface it just as
+// loudly as a genuine parse failure would.
 func postBeat(h http.Handler, worldID, viewerID, text string) (int, string) {
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+viewerID,
+		"/worlds/"+worldID+"/beats?viewer="+viewerID,
 		strings.NewReader(`{"text":`+jsonStr(text)+`}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	return rec.Code, rec.Body.String()
+	if rec.Code != http.StatusOK {
+		return rec.Code, rec.Body.String()
+	}
+	collapsed, err := collapseBeatFrames(rec.Body.Bytes())
+	if err != nil {
+		return rec.Code, `COLLAPSE ERROR: ` + err.Error() + "\nraw: " + rec.Body.String()
+	}
+	return rec.Code, string(collapsed)
 }
 
 // stationECombinedRuling is the scripted resolve seat's combined ruling/2 for beat 2: TWO events
@@ -218,7 +232,7 @@ func TestStationE_FakeE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bridge 1: %v", err)
 	}
-	h1 := NewBeatHandler(pool, true, bridge1) // debug=true so ?viewer= is honored
+	h1 := NewBeatsStreamHandler(pool, true, bridge1) // debug=true so ?viewer= is honored
 
 	code, body := postBeat(h1, id.World, id.K, beat1Text)
 	if code != http.StatusOK {
@@ -343,7 +357,7 @@ func TestStationE_FakeE2E(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bridge 2: %v", err)
 	}
-	h2 := NewBeatHandler(pool, true, bridge2)
+	h2 := NewBeatsStreamHandler(pool, true, bridge2)
 
 	code, body = postBeat(h2, id.World, id.K, beat2Text)
 	if code != http.StatusOK {

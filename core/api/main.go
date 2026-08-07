@@ -61,12 +61,12 @@ func main() {
 		NewTimelineHandler(pool, debug).(matcher),
 		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
 		NewSceneHandler(pool, debug).(matcher),
-		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_event (D-1).
-		NewBeatHandler(pool, debug, bridge).(matcher),
-		// POST /worlds/{w}/beats — the SAME beat, streamed as validated frames (design §4.8, rung3 Task 3).
-		// Deliberately NOT a replacement for /beat above: Task 5 deletes the singular endpoint; until then
-		// both exist side by side (beatRoute/beatsRoute are mutually exclusive by anchoring, so match
-		// order between them does not matter).
+		// POST /worlds/{w}/beats and POST /worlds/{w}/beats/continue — the only write path; everything
+		// it commits goes through apply_event (D-1). The singular POST /worlds/{w}/beat endpoint is
+		// GONE (rung3 Task 5, founder-approved clean cutover — no alias, no deprecation shim; the only
+		// caller was the founder's own throwaway test page). beatsStreamHandler serves both routes,
+		// delivering the beat as a stream of validated frames (design §4.8, rung3 Task 3); continue
+		// skips decompose entirely — an empty chain against an active journey IS the continue press.
 		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
 	}}
 

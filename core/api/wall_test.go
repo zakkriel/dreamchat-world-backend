@@ -220,10 +220,10 @@ func wallBridge(t *testing.T, id wallIDs, decomposeChain string) (*Bridge, map[s
 func runWallBeat(t *testing.T, ctx context.Context, pool *pgxpool.Pool, id wallIDs, beatText, chain string) map[string]*capturingSeatDriver {
 	t.Helper()
 	bridge, seats := wallBridge(t, id, chain)
-	h := NewBeatHandler(pool, true /*debug → ?viewer honored*/, bridge)
+	h := NewBeatsStreamHandler(pool, true /*debug → ?viewer honored*/, bridge)
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+id.World+"/beat?viewer="+id.K,
+		"/worlds/"+id.World+"/beats?viewer="+id.K,
 		strings.NewReader(`{"text":"`+beatText+`"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)

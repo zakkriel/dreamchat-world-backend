@@ -3,8 +3,9 @@ package main
 // Station F exit gate — Task 10, Step 1.
 //
 // TestStationF_FakeE2E drives Station F's real deliverables — the UNIFIED move (§2/§3), the §5.3
-// portal accessibility gate, the §6 tension budget, and §4 encumbrance — through the REAL HTTP
-// beatHandler (NewBeatHandler + NewBridgeWithDrivers, all seats scripted), deterministic and
+// portal accessibility gate, the §6 tension budget, and §4 encumbrance — through the REAL streaming
+// beatsStreamHandler (NewBeatsStreamHandler + NewBridgeWithDrivers, all seats scripted; postFBeat/postBeat
+// collapse the driven /beats response back into the pre-rung3-Task-5 beat_result/3 shape), deterministic and
 // zero-network. It is the founder's walk of the Drowned Lantern, proven in CI:
 //
 //   move A — "approach the bar":   an IN-SCENE ActorMoved (to_target_id = the bar, an artifact in the
@@ -198,7 +199,7 @@ func stationFHandler(t *testing.T, pool *pgxpool.Pool, decomposeText, chainJSON 
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	return NewBeatHandler(pool, true, bridge) // debug=true so ?viewer= is honored
+	return NewBeatsStreamHandler(pool, true, bridge) // debug=true so ?viewer= is honored
 }
 
 // postFBeat POSTs one player text through the real handler as viewer Kade and parses the response.

@@ -5,87 +5,95 @@ package main
 // The trace is a PURE CAPTURE of what the beat pipeline already computed (no new LLM): the decoded
 // chain, per-attempt physics (the fact sheet + the move gate), the world-first decisions, the
 // adjudicated ruling's reasoning→therefore→outcome, and the halt. It is TRUTH-REVEALING (it can carry a
-// secret's truth-side reasoning), so it is emitted under `reasoning_log` ONLY when the handler is in
-// debug mode; a non-debug response carries NO `reasoning_log` key at all (the security-relevant
-// invariant — a real player never gets debug, RULINGS-2026-07-23 §9, design Unit 3).
+// secret's truth-side reasoning) — RULINGS-2026-07-23 §9, design Unit 3.
 //
-// These tests drive the WHOLE path through the REAL HTTP beatHandler (the station_f/query exit-gate
-// pattern), toggling the handler's debug flag, and assert on the shipped JSON. Each test mints a fresh,
-// random world (setupQueryWorld) so counts see only its rows.
+// rung3 Task 5 deleted the singular POST /worlds/{w}/beat endpoint that once shipped BeatTrace under a
+// debug-only `reasoning_log` JSON key (founder-approved clean cutover, no alias). The streaming
+// replacement (/beats, /beats/continue) never surfaces the trace on the wire at all — Task 3's frame
+// protocol (interpretation/narration/scene/journey/result/error) has no trace frame, debug or not, so
+// there is no HTTP surface left to drive these tests through. The trace MECHANISM itself is unchanged
+// (BeatTrace/NewBeatTrace/Finish are pure Go, independent of any handler), so the two tests that pin
+// its CONTENT — move physics captured, an adjudicated ruling's reasoning→therefore→outcome captured —
+// are repointed to drive Orchestrator.RunBeat DIRECTLY with a real trace and inspect the Go struct,
+// exactly the pattern this file's own WorldTurn tests below already use for the same reason (a real
+// pressure roll needs the real seeded Drowned Lantern world, not the synthetic setupQueryWorld HTTP
+// harness). traceOutcomeDirect is that harness's non-HTTP twin.
+//
+// TWO tests are deleted outright rather than repointed — TestTrace_NonDebugBeat_NoReasoningLogKey and
+// TestTrace_NonDebugBeat_ResponseShapeUnchanged. Both asserted on the DELETED JSON envelope itself (a
+// `reasoning_log` key's presence/absence, and the beat_result/3 envelope's exact top-level key set) —
+// "exercising the old path as a path" (plan rung3 Task 5), not the beat pipeline. Neither concept
+// survives the cutover to repoint AT: the streaming protocol never emits a trace-shaped key under any
+// debug setting, so there is no conditional debug/non-debug behavior left to test, and there is no
+// single JSON envelope to enumerate keys of. The trace's debug-only gating is still enforced — nothing
+// in RunBeat/RunReactionBeat/the beat stream ever puts trace data on a real player's wire — but that
+// invariant is now structural (no frame carries it, full stop) rather than something an HTTP test can
+// meaningfully probe.
 
 import (
 	"context"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// reasoningLog mirrors the BeatTrace JSON the handler emits under `reasoning_log` — the developer view.
-type reasoningLog struct {
-	Decompose []struct {
-		Type   string   `json:"type"`
-		Stated string   `json:"stated"`
-		IDs    []string `json:"ids"`
-	} `json:"decompose"`
-	WorldFirst []struct {
-		ActorID  string `json:"actor_id"`
-		Decision string `json:"decision"`
-		Stated   string `json:"stated"`
-	} `json:"world_first"`
-	Attempts []struct {
-		Type          string          `json:"type"`
-		Stated        string          `json:"stated"`
-		FactSheet     json.RawMessage `json:"fact_sheet"`
-		MoveDurationS int64           `json:"move_duration_s"`
-	} `json:"attempts"`
-	Rulings []struct {
-		ActorIDs  []string `json:"actor_ids"`
-		Reasoning string   `json:"reasoning"`
-		Therefore string   `json:"therefore"`
-		Outcome   string   `json:"outcome"`
-	} `json:"rulings"`
-	HaltReason string   `json:"halt_reason"`
-	Committed  []string `json:"committed"`
-}
-
-type traceBeatResp struct {
-	Narration string          `json:"narration"`
-	Messages  json.RawMessage `json:"messages"`
-	Result    struct {
-		Committed     []string `json:"committed"`
-		HaltReason    string   `json:"halt_reason"`
-		TicksAdvanced int64    `json:"ticks_advanced"`
-	} `json:"result"`
-	ReasoningLog *reasoningLog `json:"reasoning_log"`
-}
-
-// traceHandler builds the real HTTP handler with a scripted decompose table + a fixed-ruling resolve
-// driver (a sentinel when the beat should never reach the referee) + a deterministic text narrator, so a
-// test can toggle debug and read back the shipped reasoning_log. Cognition/world-actor stay quiet fakes.
-func traceHandler(t *testing.T, pool *pgxpool.Pool, debug bool, decomposeText, chainJSON, resolveRuling string) (http.Handler, *capturingResolveDriver) {
+// traceOutcomeDirect drives the SAME pipeline stages the deleted beatHandler.ServeHTTP once did for a
+// single normal beat — decompose (scripted) → DecodeAndValidateChainV2 → Orchestrator.RunBeat with a
+// real trace — without HTTP. debug=false threads a nil trace (RunBeat/Finish are nil-safe end to end,
+// the same non-debug discipline the deleted handler followed). narrate is deliberately never reached:
+// every trace assertion below is computed inside RunBeat, before narration, so leaving it out is a
+// tighter test, not a smaller one.
+func traceOutcomeDirect(t *testing.T, pool *pgxpool.Pool, debug bool, worldID, actorID, decomposeText, chainJSON, resolveRuling string) (BeatOutcome, *BeatTrace, *capturingResolveDriver) {
 	t.Helper()
-	dec := NewFakeStructuredDriver("fake-structured:trace", map[string]string{decomposeText: chainJSON})
-	resolve := &capturingResolveDriver{name: "capture-resolve:trace", ruling: resolveRuling}
-	bridge, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatDecompose.Name:         dec,
-		SeatNarrate.Name:           NewFakeTextDriver("fake-text:trace"),
-		SeatResolve.Name:           resolve,
-		SeatCognitionBatch.Name:    NewFakeCognitionDriver(),
-		SeatCognitionIsolated.Name: NewFakeCognitionDriver(),
-		SeatWorldActor.Name:        NewFakeWorldActorDriver(),
-	}, SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor)
-	if err != nil {
-		t.Fatalf("bridge: %v", err)
+	ctx := context.Background()
+
+	dec := NewFakeStructuredDriver("fake-structured:trace-direct", map[string]string{decomposeText: chainJSON})
+	resolve := &capturingResolveDriver{name: "capture-resolve:trace-direct", ruling: resolveRuling}
+	orc := &Orchestrator{
+		DB:                pool,
+		Resolve:           resolve,
+		CognitionBatch:    NewFakeCognitionDriver(),
+		CognitionIsolated: NewFakeCognitionDriver(),
+		WorldActor:        NewFakeWorldActorDriver(),
 	}
-	return NewBeatHandler(pool, debug, bridge), resolve
+
+	bh := &beatHandler{pool: pool}
+	pre, err := bh.payload(ctx, worldID, actorID)
+	if err != nil {
+		t.Fatalf("payload: %v", err)
+	}
+	raw, err := dec.Generate(ctx, GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, decomposeText), Schema: json.RawMessage(beatChainV2SchemaJSON)})
+	if err != nil {
+		t.Fatalf("decompose: %v", err)
+	}
+	chain, err := DecodeAndValidateChainV2(raw)
+	if err != nil {
+		t.Fatalf("decode chain: %v", err)
+	}
+
+	var trace *BeatTrace
+	if debug {
+		trace = NewBeatTrace(chain)
+	}
+
+	var startTick int64
+	if err := pool.QueryRow(ctx, `SELECT fn_world_now($1::uuid)+1`, worldID).Scan(&startTick); err != nil {
+		t.Fatalf("start tick: %v", err)
+	}
+
+	outcome, err := orc.RunBeat(ctx, worldID, actorID, chain, startTick, trace)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	trace.Finish(outcome) // nil-safe
+	return outcome, trace, resolve
 }
 
-// TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt is the brief's (a): a DEBUG move beat ships a
-// `reasoning_log` object carrying the committed move's distance/duration (from the fact sheet) and the
-// halt reason. K→bar is 8 m / 6 s (setupQueryWorld's geometry).
+// TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt is the brief's (a): a DEBUG move beat's trace
+// carries the committed move's distance/duration (from the fact sheet) and the halt reason. K→bar is
+// 8 m / 6 s (setupQueryWorld's geometry).
 func TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -94,46 +102,36 @@ func TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt(t *testing.T) {
 
 	const move = "I walk over to the bar"
 	chain := `[{"type":"ActorMoved","stated":"` + move + `","to_target_id":"` + id.Bar + `"}]`
-	h, resolve := traceHandler(t, pool, true, move, chain, `SHOULD NOT BE CALLED`)
-
-	code, body := postBeat(h, id.World, id.K, move)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200\nbody: %s", code, body)
-	}
-	var r traceBeatResp
-	if err := json.Unmarshal([]byte(body), &r); err != nil {
-		t.Fatalf("parse: %v\nbody: %s", err, body)
-	}
+	outcome, trace, resolve := traceOutcomeDirect(t, pool, true, id.World, id.K, move, chain, `SHOULD NOT BE CALLED`)
 
 	// A passthrough move never reaches the referee.
 	if resolve.calls != 0 {
 		t.Fatalf("resolve calls = %d, want 0 (a passthrough move never reaches the referee)", resolve.calls)
 	}
 	// The move committed and completed.
-	if r.Result.HaltReason != "completed" || len(r.Result.Committed) != 1 {
-		t.Fatalf("result halt=%q committed=%v, want completed/1", r.Result.HaltReason, r.Result.Committed)
+	if outcome.HaltReason != "completed" || len(outcome.Committed) != 1 {
+		t.Fatalf("outcome halt=%q committed=%v, want completed/1", outcome.HaltReason, outcome.Committed)
 	}
 
-	// (a) the reasoning_log is present under debug.
-	if r.ReasoningLog == nil {
-		t.Fatalf("debug beat shipped NO reasoning_log\nbody: %s", body)
+	// (a) the trace is built under debug.
+	if trace == nil {
+		t.Fatalf("debug beat built no trace")
 	}
-	rl := r.ReasoningLog
 
 	// The halt reason rides the trace.
-	if rl.HaltReason != "completed" {
-		t.Fatalf("reasoning_log.halt_reason = %q, want completed", rl.HaltReason)
+	if trace.HaltReason != "completed" {
+		t.Fatalf("trace.HaltReason = %q, want completed", trace.HaltReason)
 	}
 	// The decoded chain is captured (the move, bound to the bar id).
-	if len(rl.Decompose) != 1 || rl.Decompose[0].Type != "ActorMoved" {
-		t.Fatalf("reasoning_log.decompose = %+v, want one ActorMoved", rl.Decompose)
+	if len(trace.Decompose) != 1 || trace.Decompose[0].Type != "ActorMoved" {
+		t.Fatalf("trace.Decompose = %+v, want one ActorMoved", trace.Decompose)
 	}
 	// The per-attempt physics: the move's computed duration (6 s) + the fact sheet's distance/duration.
-	if len(rl.Attempts) != 1 || rl.Attempts[0].Type != "ActorMoved" {
-		t.Fatalf("reasoning_log.attempts = %+v, want one ActorMoved attempt", rl.Attempts)
+	if len(trace.Attempts) != 1 || trace.Attempts[0].Type != "ActorMoved" {
+		t.Fatalf("trace.Attempts = %+v, want one ActorMoved attempt", trace.Attempts)
 	}
-	if rl.Attempts[0].MoveDurationS != 6 {
-		t.Fatalf("reasoning_log.attempts[0].move_duration_s = %d, want 6 (CEIL(8/1.4))", rl.Attempts[0].MoveDurationS)
+	if trace.Attempts[0].MoveDurationS != 6 {
+		t.Fatalf("trace.Attempts[0].MoveDurationS = %d, want 6 (CEIL(8/1.4))", trace.Attempts[0].MoveDurationS)
 	}
 	var fs struct {
 		Targets []struct {
@@ -141,8 +139,8 @@ func TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt(t *testing.T) {
 			MoveDurationS json.Number `json:"move_duration_s"`
 		} `json:"targets"`
 	}
-	if err := json.Unmarshal(rl.Attempts[0].FactSheet, &fs); err != nil {
-		t.Fatalf("reasoning_log.attempts[0].fact_sheet not the fn_fact_sheet shape: %v\n%s", err, rl.Attempts[0].FactSheet)
+	if err := json.Unmarshal(trace.Attempts[0].FactSheet, &fs); err != nil {
+		t.Fatalf("trace.Attempts[0].FactSheet not the fn_fact_sheet shape: %v\n%s", err, trace.Attempts[0].FactSheet)
 	}
 	if len(fs.Targets) != 1 {
 		t.Fatalf("fact sheet targets = %+v, want the bar only", fs.Targets)
@@ -152,78 +150,6 @@ func TestTrace_DebugBeat_ReasoningLogHasMovePhysicsAndHalt(t *testing.T) {
 	}
 	if fs.Targets[0].MoveDurationS.String() != "6" {
 		t.Fatalf("fact sheet move_duration_s = %q, want 6 s", fs.Targets[0].MoveDurationS.String())
-	}
-
-	perceptionSubjectBackfill(t, ctx, pool, 0)
-}
-
-// TestTrace_NonDebugBeat_NoReasoningLogKey is the brief's (b) — the SECURITY-relevant assertion: a
-// NON-debug beat's response has NO `reasoning_log` key AT ALL (not null — absent). The trace is
-// truth-revealing, so a real player (never in debug) must never receive it.
-func TestTrace_NonDebugBeat_NoReasoningLogKey(t *testing.T) {
-	pool := testPool(t)
-	defer pool.Close()
-	ctx := context.Background()
-	id := setupQueryWorld(t, ctx, pool)
-
-	const move = "I walk over to the bar"
-	chain := `[{"type":"ActorMoved","stated":"` + move + `","to_target_id":"` + id.Bar + `"}]`
-	// debug=false. ResolveViewer ignores ?viewer= without debug and resolves the actor named 'Player'
-	// (= K in setupQueryWorld), so the same move runs.
-	h, _ := traceHandler(t, pool, false, move, chain, `SHOULD NOT BE CALLED`)
-
-	code, body := postBeat(h, id.World, id.K, move)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200\nbody: %s", code, body)
-	}
-
-	// THE WALL: the raw response text must not carry the key at all.
-	if strings.Contains(body, "reasoning_log") {
-		t.Fatalf("non-debug response leaked a reasoning_log key (truth-revealing → debug-only):\n%s", body)
-	}
-	// Structural proof of absence (not merely null): the key is not present in the top-level object.
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &top); err != nil {
-		t.Fatalf("parse: %v\nbody: %s", err, body)
-	}
-	if _, present := top["reasoning_log"]; present {
-		t.Fatalf("non-debug response has a reasoning_log key (must be ABSENT):\n%s", body)
-	}
-
-	perceptionSubjectBackfill(t, ctx, pool, 0)
-}
-
-// TestTrace_NonDebugBeat_ResponseShapeUnchanged is the brief's (d): the nil trace changes NOTHING. A
-// non-debug beat's response carries exactly the pre-existing key set {schema_version, narration,
-// messages, result} — the trace threading added no field and altered no other.
-func TestTrace_NonDebugBeat_ResponseShapeUnchanged(t *testing.T) {
-	pool := testPool(t)
-	defer pool.Close()
-	ctx := context.Background()
-	id := setupQueryWorld(t, ctx, pool)
-
-	const move = "I walk over to the bar"
-	chain := `[{"type":"ActorMoved","stated":"` + move + `","to_target_id":"` + id.Bar + `"}]`
-	h, _ := traceHandler(t, pool, false, move, chain, `SHOULD NOT BE CALLED`)
-
-	code, body := postBeat(h, id.World, id.K, move)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200\nbody: %s", code, body)
-	}
-	var top map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(body), &top); err != nil {
-		t.Fatalf("parse: %v\nbody: %s", err, body)
-	}
-	want := map[string]bool{"schema_version": true, "narration": true, "messages": true, "result": true}
-	for k := range top {
-		if !want[k] {
-			t.Fatalf("non-debug response gained an unexpected key %q (nil trace must change nothing):\n%s", k, body)
-		}
-	}
-	for k := range want {
-		if _, ok := top[k]; !ok {
-			t.Fatalf("non-debug response dropped the pre-existing key %q:\n%s", k, body)
-		}
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, 0)
@@ -245,36 +171,30 @@ func TestTrace_AdjudicatedRuling_ThereforeCaptured(t *testing.T) {
 
 	const grip = "I grip the bar to steady myself"
 	chain := `[{"type":"AttributeChanged","stated":"` + grip + `","target_id":"` + id.Bar + `"}]`
-	h, resolve := traceHandler(t, pool, true, grip, chain, ruling)
-
-	code, body := postBeat(h, id.World, id.K, grip)
-	if code != http.StatusOK {
-		t.Fatalf("status = %d, want 200\nbody: %s", code, body)
-	}
-	var r traceBeatResp
-	if err := json.Unmarshal([]byte(body), &r); err != nil {
-		t.Fatalf("parse: %v\nbody: %s", err, body)
-	}
+	outcome, trace, resolve := traceOutcomeDirect(t, pool, true, id.World, id.K, grip, chain, ruling)
 
 	// The attempt actually reached the referee (proving the ruling in the trace is a real capture).
 	if resolve.calls != 1 {
 		t.Fatalf("resolve calls = %d, want 1 (an AttributeChanged is adjudicated)", resolve.calls)
 	}
-	if r.ReasoningLog == nil {
-		t.Fatalf("debug beat shipped NO reasoning_log\nbody: %s", body)
+	if outcome.HaltReason != "completed" {
+		t.Fatalf("outcome.HaltReason = %q, want completed", outcome.HaltReason)
 	}
-	if len(r.ReasoningLog.Rulings) != 1 {
-		t.Fatalf("reasoning_log.rulings = %+v, want exactly one adjudicated ruling", r.ReasoningLog.Rulings)
+	if trace == nil {
+		t.Fatalf("debug beat built no trace")
 	}
-	got := r.ReasoningLog.Rulings[0]
+	if len(trace.Rulings) != 1 {
+		t.Fatalf("trace.Rulings = %+v, want exactly one adjudicated ruling", trace.Rulings)
+	}
+	got := trace.Rulings[0]
 	if got.Therefore != "succeeds" {
-		t.Fatalf("reasoning_log.rulings[0].therefore = %q, want succeeds", got.Therefore)
+		t.Fatalf("trace.Rulings[0].Therefore = %q, want succeeds", got.Therefore)
 	}
 	if !strings.Contains(got.Reasoning, "grip tests the bar") {
-		t.Fatalf("reasoning_log.rulings[0].reasoning = %q, want the scripted ruling's reasoning", got.Reasoning)
+		t.Fatalf("trace.Rulings[0].Reasoning = %q, want the scripted ruling's reasoning", got.Reasoning)
 	}
 	if got.Outcome != "resolved" {
-		t.Fatalf("reasoning_log.rulings[0].outcome = %q, want resolved", got.Outcome)
+		t.Fatalf("trace.Rulings[0].Outcome = %q, want resolved", got.Outcome)
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, 0)

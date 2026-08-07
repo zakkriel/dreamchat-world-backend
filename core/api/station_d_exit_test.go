@@ -105,10 +105,10 @@ func TestStationD_FakeE2E(t *testing.T) {
 	}
 
 	// debug=true so ?viewer= override is honored.
-	h := NewBeatHandler(pool, true, bridge)
+	h := NewBeatsStreamHandler(pool, true, bridge)
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+playerID,
+		"/worlds/"+worldID+"/beats?viewer="+playerID,
 		strings.NewReader(`{"text":"`+leanOnMaraText+`"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -117,7 +117,11 @@ func TestStationD_FakeE2E(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("status = %d, want 200\nbody: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	collapsed, err := collapseBeatFrames(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("collapse beat frames: %v\nraw: %s", err, rec.Body.String())
+	}
+	body := string(collapsed)
 
 	// --- Assert halt_reason = "completed" ---
 	if !strings.Contains(body, `"halt_reason":"completed"`) {
@@ -264,10 +268,10 @@ func TestStationD_LiveSmoke(t *testing.T) {
 		t.Fatalf("bridge (live): %v", err)
 	}
 
-	h := NewBeatHandler(pool, true, bridge)
+	h := NewBeatsStreamHandler(pool, true, bridge)
 
 	req := httptest.NewRequest(http.MethodPost,
-		"/worlds/"+worldID+"/beat?viewer="+playerID,
+		"/worlds/"+worldID+"/beats?viewer="+playerID,
 		strings.NewReader(`{"text":"`+leanOnMaraText+`"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
@@ -276,7 +280,11 @@ func TestStationD_LiveSmoke(t *testing.T) {
 	if rec.Code != 200 {
 		t.Fatalf("live smoke: status = %d, want 200\nbody: %s", rec.Code, rec.Body.String())
 	}
-	body := rec.Body.String()
+	collapsed, err := collapseBeatFrames(rec.Body.Bytes())
+	if err != nil {
+		t.Fatalf("live smoke: collapse beat frames: %v\nraw: %s", err, rec.Body.String())
+	}
+	body := string(collapsed)
 
 	// STRUCTURAL assertions only — never assert model prose content.
 	var resp struct {
