@@ -129,6 +129,12 @@ unchecked reaches a player.
 **R11 — Build ladder.** Rung 0 gates → 1 ground → 2 journey → 3 connection → 4 play page. One plan, one
 worktree, one PR per rung; never start the next while the last one's gate is red.
 
+**R12 — The box goes; an area is the real thing.** Founder, on being shown that places already carry a
+`{w,h}` extent: *"do we need the box? I think that was a cheap solution from the coding agent.. I believe
+an area is the more real and even 'drawable if needed'."* Ruled: one shape language — an ordered outline
+of points — replacing `attrs.extent` outright rather than living beside it. Verified before ruling that
+nothing in SQL reads the box and its only consumer is the mint bounds check (§4.5).
+
 ## 4. Derived design (mine, from the rulings)
 
 Everything in this section is inference from §3 plus the existing code. It is the part to attack in review.
@@ -221,21 +227,34 @@ no knowledge path to.
 
 ### 4.5 Ground: extent and containment (rung 1)
 
-- **`attrs.extent` already exists** and must be extended, never duplicated: the seed gives the root
-  Harbor Quarter `attrs.extent = {"w":2000,"h":2000}` (`seed_drowned_lantern.sql:283`) — a box in that
-  place's own frame, centred on its `attrs.coordinates`. A second area convention beside it is
-  prohibited, so containment reads *this* field.
-- **Extent stays optional and gains a polygon form.** `{"w":…,"h":…}` keeps its current meaning; a place
-  may instead carry `{"points":[{"x":…,"y":…},…]}` (≥3) for a non-box footprint such as a road corridor.
-  A place with no extent is a point and contains nothing — so every room that ships today is unaffected
-  and no existing spatial function changes behaviour.
-- `fn_place_at(world, point)` → the **smallest-extent** place containing the point; NULL = open road.
-  Nesting falls out: inside the quarter and inside the tavern → the tavern. Postgres tests
-  point-in-polygon natively (`polygon @> point`), and a box converts to a polygon in the same call; no
-  extension, no PostGIS.
+- **The `{w,h}` box is retired, not extended** (founder ruling, 2026-08-07: *"do we need the box? I think
+  that was a cheap solution… an area is the more real and even 'drawable if needed'"*). Evidence it was
+  never an area model: no SQL function reads `attrs.extent` — `fn_distance`, `fn_move_duration_actor`,
+  `fn_target_position` and the portal gate all work off `attrs.coordinates` plus the parent edge — and
+  the seed says so outright (`seed_drowned_lantern.sql:270`: *"extent is descriptive"*). Its single real
+  consumer is `validateArtifactMint` (`core/api/mint.go:218-226`), which checks a newly minted
+  coordinate falls inside `[0,w]×[0,h]` of the parent carried inline on the mint envelope. That is a
+  bounds guard, and it is a guard an outline performs strictly better.
+- **One shape language: `attrs.area`, an ordered list of `{x,y}` points (≥3)** in the same frame as the
+  place's own `attrs.coordinates`. It replaces `attrs.extent` outright — no dual form, no compatibility
+  shim, no deprecated field (clean-cutover rule). A rectangle is four corner points, which also removes
+  the box's hidden assumption that the frame's origin is one of its corners.
+- **Area is optional.** A place with no area is a point and contains nothing — which is every room that
+  ships today, so no existing spatial behaviour changes.
+- `fn_place_at(world, frame, point)` → the **smallest-area child of `frame`** containing the point;
+  NULL = open road. It takes a frame because a place's coordinates are expressed in its *parent's*
+  frame (`seed_drowned_lantern.sql:264-266`), so comparing a region against a room inside it in one
+  call would be a frame error. A journey travels within one frame, and that frame is what it passes.
+  Postgres tests point-in-polygon natively (`polygon @> point`); no extension, no PostGIS.
+  Deeper nesting — resolving *through* frames — needs coordinate transforms and stays with SPEC-018.
+- **`validateArtifactMint` moves to point-in-outline.** Same rule ("a minted coordinate lies within its
+  parent"), same DB-free constraint (the parent's area rides inline on the mint envelope), better shape.
+  Ray-casting containment in Go, no dependency.
 - `extent_class_metres(world, class)` — a per-world config table mapping a size class to a footprint
-  radius, drawn as a regular polygon around the point. Same shape and rationale as
+  radius, from which the engine draws a regular polygon around the point. Same shape and rationale as
   `duration_class_seconds`: **the author picks the class, the engine owns what it means in metres.**
+- **Migration is a rewrite, not a backfill:** the seed and roughly ten Go/pgTAP fixtures carrying
+  `{"w":2000,"h":2000}` become four-corner areas. Mechanical, and it keeps one convention in the tree.
 - **v1 constraint:** origin and goal share a parent frame. Nested coordinate frames stay deferred
   (SPEC-018 owns them) and are not reopened here.
 
