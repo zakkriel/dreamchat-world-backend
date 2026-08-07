@@ -337,6 +337,26 @@ git add core/api/ledger.go core/api/worldturn.go core/api/worldactor.go
 git commit -m "fix(livingworld): ledger flip + fire-log write ride their commit's tx (deferral A)"
 ```
 
+
+**Plan corrections found during execution (commits `660a81d`, `e1d0d17`) — recorded so the plan matches
+what the code actually required:**
+
+1. **Three `o.adjudicate(` call sites in `orchestrator.go`, not two.** Step 5 named `runChain` and
+   `RunReactionBeat`; the third is `applyNPCDecisions` (an NPC's own adjudicated decision). All three
+   pass `nil` — an NPC decision has no world bookkeeping row, and nothing may be wired into that hook.
+2. **Pre-existing tests call `adjudicate` and `runWorldActor` directly**, so a Go arity change cannot
+   coexist with a literal "zero edits to any pre-existing test". Ten call sites:
+   `orchestrator_nary_test.go:97`; `orchestrator_ruled_test.go:142,234,299,377,462,530`;
+   `resolve_factsheet_test.go:79`; `worldactor_test.go:69,115`. Each received exactly one literal `nil`.
+   The rule this plan actually means: **no assertion, expectation, fixture, or test semantics may
+   change.** A compiler-forced arity edit is not a test edit.
+3. **Step 7's `git add` list produced a non-compiling tree** — `worldactor.go:82` still called the
+   8-argument `commitWorldPayload`. Commit 1 must also include `core/api/worldactor.go` (passing `nil`,
+   no signature change yet) and the four arity-only test files, so both commits build green.
+4. **`runWorldTurn`'s docstring repeated the deleted TODO's claim** ("ATOMICITY IS DEFERRED … not yet in
+   the same tx"). Step 9 only named the TODO at the insert site; deleting just that leaves a docstring
+   that lies. Both that docstring and `worldactor.go`'s fire-log line were rewritten.
+
 ---
 
 ### Task 2: The World Actor acts where it says it acts (deferral B)
