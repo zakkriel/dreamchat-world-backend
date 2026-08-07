@@ -421,19 +421,21 @@ func TestBeats_EmitsFramesInOrder(t *testing.T) {
 		kinds = append(kinds, frame["kind"].(string))
 	}
 
-	if len(kinds) < 4 || kinds[0] != "interpretation" {
-		t.Fatalf("frame kinds = %v, want interpretation first, then narration*, then scene/journey/result", kinds)
+	if len(kinds) < 5 || kinds[0] != "interpretation" {
+		t.Fatalf("frame kinds = %v, want interpretation first, then narration*, then scene/journey/result/trace", kinds)
 	}
-	tail := kinds[len(kinds)-3:]
-	if tail[0] != "scene" || tail[1] != "journey" || tail[2] != "result" {
-		t.Fatalf("frame kinds tail = %v, want [scene journey result]; full sequence = %v", tail, kinds)
+	// tail is [scene, journey, result, trace]: this handler runs with dbg=true (needed for ?viewer=
+	// to be honored), so the debug-only trace frame (piece 1) is always the true last frame here.
+	tail := kinds[len(kinds)-4:]
+	if tail[0] != "scene" || tail[1] != "journey" || tail[2] != "result" || tail[3] != "trace" {
+		t.Fatalf("frame kinds tail = %v, want [scene journey result trace]; full sequence = %v", tail, kinds)
 	}
-	for _, k := range kinds[1 : len(kinds)-3] {
+	for _, k := range kinds[1 : len(kinds)-4] {
 		if k != "narration" {
 			t.Fatalf("frame kind %q between interpretation and scene, want only narration; full sequence = %v", k, kinds)
 		}
 	}
-	if len(kinds) == 4 {
+	if len(kinds) == 5 {
 		t.Fatalf("no narration frame at all in a beat that committed and narrated: %v", kinds)
 	}
 
@@ -567,6 +569,131 @@ func TestBeats_NarrateFailureEmitsAnErrorFrame(t *testing.T) {
 	}
 	if strings.Contains(msg, "simulated narrate seat outage") || strings.Contains(msg, "goroutine") || strings.Contains(msg, "10.0.4.19") {
 		t.Fatalf("error frame leaked engine internals (never a stack trace, never engine internals): %q", msg)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
+// ── TestBeats_DebugEmitsTraceFrame / TestBeats_NonDebugEmitsNoTraceFrame ────────────────────────────
+
+// TestBeats_DebugEmitsTraceFrame is the debug half of the reasoning-trace regression this task
+// repairs: the deleted singular /beat endpoint once shipped the full BeatTrace under a debug-only
+// `reasoning_log` key (beathandler.go, pre rung3 Task 5) — the streaming replacement never surfaced
+// it at all, which trace_test.go's own header flags as a real regression (the founder's only window
+// into WHY the world did what it did). This drives a real committed beat with h.dbg=true and asserts
+// the trace frame is the LAST frame on the wire, appears exactly once, and its nested reasoning_log
+// carries the decoded chain (decompose) and the beat's halt reason — proof it is the real BeatTrace,
+// not an empty stand-in.
+func TestBeats_DebugEmitsTraceFrame(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	baseTick := seatPlayerAndMara(t, ctx, pool)
+
+	bridge := mustBridge(t,
+		NewFakeStructuredDriver("fake-structured:test", map[string]string{
+			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
+		}),
+		NewFakeTextDriver("fake-text:test"))
+	h := NewBeatsStreamHandler(pool, true, bridge)
+
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+playerID,
+		strings.NewReader(`{"text":"tell mara about the note"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
+	var last map[string]any
+	traceFrames := 0
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		frame := assertValidBeatFrame(t, raw)
+		last = frame
+		if frame["kind"] != "trace" {
+			continue
+		}
+		traceFrames++
+		log, _ := frame["reasoning_log"].(map[string]any)
+		if log == nil {
+			t.Fatalf("trace frame carries no reasoning_log object: %+v", frame)
+		}
+		decompose, _ := log["decompose"].([]any)
+		if len(decompose) == 0 {
+			t.Fatalf("reasoning_log.decompose is empty, want the decoded chain (a real BeatTrace, not a stand-in): %+v", log)
+		}
+		if _, ok := log["halt_reason"]; !ok {
+			t.Fatalf("reasoning_log carries no halt_reason: %+v", log)
+		}
+	}
+	if traceFrames != 1 {
+		t.Fatalf("trace frame count = %d, want exactly 1", traceFrames)
+	}
+	if last == nil || last["kind"] != "trace" {
+		t.Fatalf("last frame kind = %v, want trace (emitted last, plan Task 4 brief)", last["kind"])
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
+// TestBeats_NonDebugEmitsNoTraceFrame is the wall this endpoint must pass: a real player must never
+// receive referee reasoning. It drives the IDENTICAL beat as TestBeats_DebugEmitsTraceFrame with
+// h.dbg=false and asserts the "trace" frame KIND never appears at all — not an empty one, not a null
+// one — mirroring the deleted TestTrace_NonDebugBeat_NoReasoningLogKey's intent against the new
+// protocol. No `?viewer=` override (debug-only, viewer.go) — ResolveViewer falls back to the world's
+// 'Player' entity, which playerID already is (seatPlayerAndMara's own fixture).
+func TestBeats_NonDebugEmitsNoTraceFrame(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	baseTick := seatPlayerAndMara(t, ctx, pool)
+
+	bridge := mustBridge(t,
+		NewFakeStructuredDriver("fake-structured:test", map[string]string{
+			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
+		}),
+		NewFakeTextDriver("fake-text:test"))
+	h := NewBeatsStreamHandler(pool, false, bridge) // non-debug: the wall this frame must never cross
+
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats",
+		strings.NewReader(`{"text":"tell mara about the note"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
+	sawResult := false
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		frame := assertValidBeatFrame(t, raw)
+		if frame["kind"] == "trace" {
+			t.Fatalf("a non-debug stream emitted a trace frame — reasoning_log must be ABSENT, not empty, not null: %+v", frame)
+		}
+		if _, has := frame["reasoning_log"]; has {
+			t.Fatalf("a non-debug frame carries a reasoning_log key at all: %+v", frame)
+		}
+		if frame["kind"] == "result" {
+			sawResult = true
+		}
+	}
+	if !sawResult {
+		t.Fatalf("no result frame seen — the beat pipeline itself must run unchanged in non-debug mode")
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)

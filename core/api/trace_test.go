@@ -8,27 +8,28 @@ package main
 // secret's truth-side reasoning) — RULINGS-2026-07-23 §9, design Unit 3.
 //
 // rung3 Task 5 deleted the singular POST /worlds/{w}/beat endpoint that once shipped BeatTrace under a
-// debug-only `reasoning_log` JSON key (founder-approved clean cutover, no alias). The streaming
-// replacement (/beats, /beats/continue) never surfaces the trace on the wire at all — Task 3's frame
-// protocol (interpretation/narration/scene/journey/result/error) has no trace frame, debug or not, so
-// there is no HTTP surface left to drive these tests through. The trace MECHANISM itself is unchanged
-// (BeatTrace/NewBeatTrace/Finish are pure Go, independent of any handler), so the two tests that pin
-// its CONTENT — move physics captured, an adjudicated ruling's reasoning→therefore→outcome captured —
-// are repointed to drive Orchestrator.RunBeat DIRECTLY with a real trace and inspect the Go struct,
-// exactly the pattern this file's own WorldTurn tests below already use for the same reason (a real
-// pressure roll needs the real seeded Drowned Lantern world, not the synthetic setupQueryWorld HTTP
-// harness). traceOutcomeDirect is that harness's non-HTTP twin.
+// debug-only `reasoning_log` JSON key (founder-approved clean cutover, no alias). AT THE TIME this
+// comment was first written, the streaming replacement (/beats, /beats/continue) surfaced no trace on
+// the wire at all — Task 3's frame protocol had no trace frame, debug or not — so there was no HTTP
+// surface left to drive the two deleted tests through. rung3 Task 4 (commit adding the "trace" frame,
+// beatsstream.go) restored that surface: a debug beat now emits a `trace` frame LAST carrying the full
+// BeatTrace under `reasoning_log` — the exact key name the deleted endpoint used — and a non-debug beat
+// emits no frame of that kind at all. TestBeats_DebugEmitsTraceFrame and
+// TestBeats_NonDebugEmitsNoTraceFrame (beatsstream_test.go) are that surface's new home: they repoint
+// the deleted TestTrace_NonDebugBeat_NoReasoningLogKey's and TestTrace_NonDebugBeat_ResponseShapeUnchanged's
+// INTENT (a real player's stream must carry no reasoning key, present or null) at the frame protocol,
+// rather than the deleted JSON envelope's exact key set — so the wall those two tests once stood for
+// is enforced again, under new names, at the HTTP boundary.
 //
-// TWO tests are deleted outright rather than repointed — TestTrace_NonDebugBeat_NoReasoningLogKey and
-// TestTrace_NonDebugBeat_ResponseShapeUnchanged. Both asserted on the DELETED JSON envelope itself (a
-// `reasoning_log` key's presence/absence, and the beat_result/3 envelope's exact top-level key set) —
-// "exercising the old path as a path" (plan rung3 Task 5), not the beat pipeline. Neither concept
-// survives the cutover to repoint AT: the streaming protocol never emits a trace-shaped key under any
-// debug setting, so there is no conditional debug/non-debug behavior left to test, and there is no
-// single JSON envelope to enumerate keys of. The trace's debug-only gating is still enforced — nothing
-// in RunBeat/RunReactionBeat/the beat stream ever puts trace data on a real player's wire — but that
-// invariant is now structural (no frame carries it, full stop) rather than something an HTTP test can
-// meaningfully probe.
+// The trace MECHANISM itself is unchanged (BeatTrace/NewBeatTrace/Finish are pure Go, independent of
+// any handler), so the two tests below that pin its CONTENT — move physics captured, an adjudicated
+// ruling's reasoning→therefore→outcome captured — stay repointed to drive Orchestrator.RunBeat
+// DIRECTLY with a real trace and inspect the Go struct, exactly the pattern this file's own WorldTurn
+// tests below already use for the same reason (a real pressure roll needs the real seeded Drowned
+// Lantern world, not the synthetic setupQueryWorld HTTP harness). traceOutcomeDirect is that harness's
+// non-HTTP twin — narrower and cheaper than driving the same assertions through /beats' full frame
+// protocol, and does not need to: the HTTP-level presence/absence of the trace frame is now
+// beatsstream_test.go's job, not this file's.
 
 import (
 	"context"

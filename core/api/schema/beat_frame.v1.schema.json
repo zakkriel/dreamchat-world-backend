@@ -9,7 +9,8 @@
     { "$ref": "#/$defs/scene_frame" },
     { "$ref": "#/$defs/journey_frame" },
     { "$ref": "#/$defs/result_frame" },
-    { "$ref": "#/$defs/error_frame" }
+    { "$ref": "#/$defs/error_frame" },
+    { "$ref": "#/$defs/trace_frame" }
   ],
   "$defs": {
     "interpretation_frame": {
@@ -96,6 +97,109 @@
         "schema_version": { "const": "beat_frame/1" },
         "kind": { "const": "error" },
         "message": { "type": "string", "minLength": 1 }
+      }
+    },
+    "trace_frame": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "kind", "reasoning_log"],
+      "properties": {
+        "schema_version": { "const": "beat_frame/1" },
+        "kind": { "const": "trace" },
+        "reasoning_log": { "$ref": "#/$defs/beat_trace" }
+      }
+    },
+
+    "beat_trace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["decompose", "halt_reason", "committed"],
+      "properties": {
+        "decompose":   { "type": "array", "items": { "$ref": "#/$defs/trace_element" } },
+        "world_first": { "type": "array", "items": { "$ref": "#/$defs/trace_decision" } },
+        "attempts":    { "type": "array", "items": { "$ref": "#/$defs/trace_attempt" } },
+        "rulings":     { "type": "array", "items": { "$ref": "#/$defs/trace_ruling" } },
+        "queries":     { "type": "array", "items": { "$ref": "#/$defs/trace_query" } },
+        "world_turn":  { "type": "array", "items": { "$ref": "#/$defs/trace_world_turn" } },
+        "halt_reason": { "type": "string" },
+        "committed":   { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "trace_element": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type":   { "type": "string" },
+        "stated": { "type": "string" },
+        "ids":    { "type": "array", "items": { "type": "string", "format": "uuid" } }
+      }
+    },
+    "trace_decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["actor_id", "decision"],
+      "properties": {
+        "actor_id": { "type": "string", "format": "uuid" },
+        "decision": { "enum": ["none", "commit", "telegraph"] },
+        "stated":   { "type": "string" }
+      }
+    },
+    "trace_attempt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type":                     { "type": "string" },
+        "stated":                   { "type": "string" },
+        "fact_sheet":               {},
+        "move_duration_s":          { "type": "integer" },
+        "budget_remaining_before":  { "type": "integer" },
+        "budget_remaining_after":   { "type": "integer" },
+        "fit":                      { "type": "boolean" }
+      }
+    },
+    "trace_ruling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["reasoning", "therefore"],
+      "properties": {
+        "actor_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "fact_sheet": {},
+        "reasoning": { "type": "string" },
+        "therefore": { "type": "string" },
+        "outcome":   { "type": "string" }
+      }
+    },
+    "trace_query": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["stated"],
+      "properties": {
+        "stated":     { "type": "string" },
+        "fact_sheet": {}
+      }
+    },
+    "trace_world_turn": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clock_delta_s", "rolls"],
+      "properties": {
+        "clock_delta_s":   { "type": "integer" },
+        "fired_scheduled": { "type": "array", "items": { "type": "string" } },
+        "rolls":           { "type": ["array", "null"], "items": { "$ref": "#/$defs/trace_roll" } },
+        "eruption":        { "$ref": "#/$defs/trace_element" }
+      }
+    },
+    "trace_roll": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tier", "chance", "roll", "fired"],
+      "properties": {
+        "tier":   { "type": "string" },
+        "chance": { "type": "number" },
+        "roll":   { "type": "number" },
+        "fired":  { "type": "boolean" }
       }
     },
 

@@ -93,6 +93,18 @@ type errorFrame struct {
 	Message string `json:"message"`
 }
 
+// traceFrame carries the full BeatTrace (trace.go) — the developer's behind-the-curtain reasoning log
+// (the decoded chain, per-attempt physics, world-first decisions, adjudicated rulings, the halt) —
+// nested under "reasoning_log", the SAME JSON key the deleted singular /beat endpoint once used
+// (beathandler.go, pre rung3 Task 5). TRUTH-REVEALING → DEBUG-ONLY (trace.go's own security
+// invariant, RULINGS-2026-07-23 §9): this frame is emitted LAST, and ONLY when the handler runs in
+// debug mode. A non-debug stream carries no frame of this KIND at all — not an empty one, not a null
+// one — so ServeHTTP below gates the emit call itself on h.dbg rather than threading a maybe-nil
+// Trace through an always-emitted frame.
+type traceFrame struct {
+	Trace *BeatTrace `json:"reasoning_log"`
+}
+
 // ServeHTTP runs the SAME beat pipeline the deleted beatHandler.ServeHTTP once did, stage for stage,
 // and streams it as frames instead of buffering one JSON response.
 //
@@ -333,5 +345,17 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := frames.emit("result", resultFrame{Result: result}); err != nil {
 		log.Printf("beats stream: result frame: %v", err)
 		return
+	}
+
+	// The trace frame is LAST, and gated on h.dbg here rather than on trace itself: trace is only
+	// ever non-nil when h.dbg (line ~223 above), so the two conditions already agree, but gating on
+	// h.dbg directly keeps the debug-only discipline visible at the one call site that puts
+	// truth-revealing reasoning on the wire (trace.go's security invariant) rather than resting on
+	// trace's nilness as an implicit proxy.
+	if h.dbg {
+		if err := frames.emit("trace", traceFrame{Trace: trace}); err != nil {
+			log.Printf("beats stream: trace frame: %v", err)
+			return
+		}
 	}
 }
