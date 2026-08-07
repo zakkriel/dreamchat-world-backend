@@ -59,6 +59,8 @@ func main() {
 		NewIndexHandler(pool, debug, "locations", "location").(matcher),
 		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
 		NewTimelineHandler(pool, debug).(matcher),
+		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
+		NewSceneHandler(pool, debug).(matcher),
 		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_event (D-1).
 		NewBeatHandler(pool, debug, bridge).(matcher),
 	}}

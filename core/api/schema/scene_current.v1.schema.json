@@ -1,0 +1,49 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "scene_current/1",
+  "title": "scene_current/1 — where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "place", "participants", "now", "journey", "current"],
+  "properties": {
+    "schema_version": { "const": "scene_current/1" },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "description", "tone"],
+      "properties": {
+        "id":          { "type": "string", "format": "uuid" },
+        "label":       { "type": "string" },
+        "description": { "type": ["string", "null"] },
+        "tone":        { "type": ["string", "null"] }
+      }
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "label", "kind"],
+        "properties": {
+          "id":    { "type": "string", "format": "uuid" },
+          "label": { "type": "string" },
+          "kind":  { "const": "actor" }
+        }
+      }
+    },
+    "now": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tick", "display_label"],
+      "properties": {
+        "tick":          { "type": "integer" },
+        "display_label": { "type": ["string", "null"] }
+      }
+    },
+    "journey": { "type": "null" },
+    "current": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  }
+}

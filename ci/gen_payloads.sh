@@ -16,6 +16,7 @@ OUT="${1:-ci/.payloads}"
 PSQL() { docker compose exec -T db psql -U postgres -d dreamchat -Atc "$1" </dev/null; }
 
 rm -rf "$OUT"; mkdir -p "$OUT"
+OUT="$(cd "$OUT" && pwd)"  # absolute — the scene/current generator below cds into core/api to run
 
 # The payload contract targets the compendium FIXTURE world — the one that has a 'Player' actor.
 # Anchor WORLD on 'Player' (never LIMIT-1-any-world): the dedicated Drowned Lantern play world
@@ -65,6 +66,17 @@ done
 for vp in $VIEWERS; do
   save "timeline_${vp%%:*}" "SELECT fn_timeline('$WORLD','${vp#*:}')"
 done
+
+# --- scene/current: assembled in Go (buildScene, core/api/scenehandler.go), not a SQL function —
+# there is no fn_* this generator can call directly the way it calls fn_actor_page/fn_timeline
+# above. TestGenSceneCurrentPayloads (core/api/scenehandler_test.go) is the Go-side equivalent: gated
+# on SCENE_PAYLOAD_DIR (skipped in the normal `go test ./...` suite), it drives the REAL ServeHTTP via
+# httptest — the identical call net/http itself makes — against this same seeded db, for both
+# viewers, and writes the real response bodies as payloads.
+( cd "$(dirname "$0")/../core/api" && \
+  SCENE_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^TestGenSceneCurrentPayloads$' -count=1 -v . )
 
 # manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
 # (both Player and Jonas must appear) rather than trust the generator.
