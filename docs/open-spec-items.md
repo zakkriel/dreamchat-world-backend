@@ -432,3 +432,29 @@ Feeds **fan-out → full vs act-only**.
   when built.
 - **Firing trigger:** when `Communicated` fan-out / comprehension-gated reception lands beyond the
   reachability-only thin slice.
+
+---
+
+## FE-discovered contract gap (chunk-6 frontend review, 2026-08-07)
+
+## SPEC-028 — World management API (list / choose / create a world)
+SPEC-022 requires world id to be **runtime state, multi-world from the start**, but nothing can answer
+*which* worlds exist: the router registers exactly eight handlers — three page, three index, one
+timeline, one beat (`core/api/main.go:54-64`) — and viewer identity resolves server-side to the world's
+single actor named `'Player'` (`core/api/viewer.go:16-27`, "Auth/session out of scope this chunk").
+So the FE can make the world id *flow* (URL-supplied, no compile-time constant) but cannot let anyone
+**select** a world, and a world picker would require inventing an endpoint (forbidden —
+`implementation_playbook_superpowers.md:90`). Minimum shape: **`GET /worlds`** returning the worlds the
+caller may see (`id`, display label, and the SPEC-019 theme tokens), perception-bound like every other
+payload — an unreachable world is **absent, not redacted** (B-1, I-3) — plus `schema_version` (D-4);
+**world-scoped viewer resolution** to replace the single-`'Player'` default (pairs with the B1/auth
+stub, `MASTER_INDEX.md:124`); and a **ruling** on whether `POST /worlds` exists or world creation is
+declared seed/tooling-only for now (`MASTER_INDEX.md:125` lists B2 — World creation — as a planned
+stub). A world list is a directory, not canon: no world *state* on this surface.
+- **Source:** frontend review pass, `dreamchat-frontend` @ `main`; full context in
+  `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §1.
+- **Owner:** Chunk 6 (pairs with SPEC-019/020/021/022). **Cross-repo:** BE (this repo) + FE.
+- **Expected outcome:** a `GET /worlds` directory payload + a world-scoped viewer seam + a recorded
+  ruling on world creation. No engine/DDL change; no perception-boundary change.
+- **Firing trigger:** fired — the FE shell is being built now and ships a URL-supplied world id with a
+  dev default as the documented stub until this lands.
