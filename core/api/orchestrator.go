@@ -331,7 +331,7 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				return nil
 			}
 
-			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "", trace)
+			ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, curTick, curSeq, "", nil, trace)
 			if adjErr != nil {
 				return adjErr
 			}
@@ -549,7 +549,7 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		answer = playerAnswer
 	}
 
-	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0, answer, trace)
+	ar, err := o.adjudicate(ctx, worldID, set, heldIDs, startTick, 0, answer, nil, trace)
 	if err != nil {
 		return outcome, err
 	}
@@ -797,7 +797,7 @@ func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, de
 				// Adjudicated types (OwnershipAccessChanged|EntityDestroyed|AttributeChanged, …):
 				// the SAME resolve pipeline the player uses — a "trusted NPC" fast path is a named
 				// consistency hole (FINAL-world-npc-cognition "No bypass").
-				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq, "", trace)
+				ar, err := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: dec.ActorID, Attempt: dec.Reaction.Attempt}}, nil, tick, localSeq, "", nil, trace)
 				if err != nil {
 					return localSeq - startSeq, fmt.Errorf("npc adjudicate: %w", err)
 				}
@@ -1090,10 +1090,17 @@ func (o *Orchestrator) existingMovementTypes(ctx context.Context, worldID string
 	return out, rows.Err()
 }
 
-// applyEvent calls apply_event and returns the result as a map.
+// applyEvent calls apply_event on the pool and returns the result as a map.
 func (o *Orchestrator) applyEvent(ctx context.Context, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
+	return applyEventOnQuerier(ctx, o.DB, worldID, actorID, attemptJSON, tick, seq)
+}
+
+// applyEventOnQuerier is the shared implementation used by both the pool and tx paths — the twin of
+// applyRuledEventOnQuerier, so a world-sourced passthrough commit can share a transaction with the
+// bookkeeping row that records it.
+func applyEventOnQuerier(ctx context.Context, q dbQuerier, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
 	var resultJSON []byte
-	err := o.DB.QueryRow(ctx,
+	err := q.QueryRow(ctx,
 		`SELECT apply_event($1::uuid, $2::uuid, $3::jsonb, $4, $5, 'freeform', false)`,
 		worldID, actorID, string(attemptJSON), tick, seq).Scan(&resultJSON)
 	if err != nil {
@@ -1178,7 +1185,7 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 //
 // playerAnswer is empty on every call except RunReactionBeat's empty-chain branch
 // (RULINGS-2026-07-24 §7) — see buildResolvePrompt for the rendering rule.
-func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string, trace *BeatTrace) (adjResult, error) {
+func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string, postCommit postCommitFn, trace *BeatTrace) (adjResult, error) {
 	// Flatten the raw attempts for participant-ID collection and slice gathering.
 	attempts := make([]Attempt, 0, len(set))
 	for _, aa := range set {
@@ -1353,7 +1360,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	if err != nil {
 		return adjResult{}, fmt.Errorf("begin ruling tx: %w", err)
 	}
-	committed, seqAdvance, commitErr := o.commitRulingTx(ctx, tx, worldID, ruling, resolveHeldIDs, tick, curSeq)
+	committed, seqAdvance, commitErr := o.commitRulingTx(ctx, tx, worldID, ruling, resolveHeldIDs, tick, curSeq, postCommit)
 	if commitErr != nil {
 		_ = tx.Rollback(ctx)
 		return adjResult{}, commitErr
@@ -1377,7 +1384,11 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 // resolveHeldIDs are the pending holds a reaction ruling resolves (empty for a normal ruling); the
 // held-resolution UPDATE runs inside this same tx so it commits atomically with the ruling, and is
 // skipped entirely when empty so a hold-free ruling issues no stray statement.
-func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, resolveHeldIDs []string, tick int64, curSeq int) ([]string, int, error) {
+//
+// postCommit is the caller's own bookkeeping for this commit (ledger.go's postCommitFn — a world-sourced
+// commit's pending-row flip or fire-log row). It runs last, inside this same tx, on the SAME terms as
+// resolveHeldIDs: an error rolls the whole ruling back. Nil on every non-world caller.
+func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, resolveHeldIDs []string, tick int64, curSeq int, postCommit postCommitFn) ([]string, int, error) {
 	localSeq := curSeq
 	var committed []string
 
@@ -1435,6 +1446,12 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 			`UPDATE held_outcome SET status = 'resolved' WHERE held_id = ANY($1)`,
 			resolveHeldIDs); err != nil {
 			return nil, 0, fmt.Errorf("resolve held_outcome: %w", err)
+		}
+	}
+
+	if postCommit != nil {
+		if hookErr := postCommit(ctx, tx, committed); hookErr != nil {
+			return nil, 0, fmt.Errorf("post-commit hook: %w", hookErr)
 		}
 	}
 

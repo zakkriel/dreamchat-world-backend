@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // pendingPayload is the {"actor_id":..., "attempt":{...}} shape a pending_event.payload carries — the
@@ -19,6 +21,13 @@ type pendingPayload struct {
 // magnitudeRank (the small<medium<large ranking fireDuePending uses at line ~197 to track the LARGEST
 // magnitude fired across a crossing) is defined once in worldturn.go, derived from livingWorldTiers —
 // the single source of truth for the tier hierarchy.
+
+// postCommitFn is bookkeeping that MUST land in the same transaction as the canon commit it describes:
+// the ledger's pending-row flip, the world's fire-log row. It runs inside the commit's tx with the
+// committed event ids in hand; returning an error rolls the whole commit back. This is the same
+// discipline commitRulingTx already applies to held_outcome resolution (resolveHeldIDs) — generalised so
+// the two world-sourced callers share ONE mechanism instead of each bolting on a second statement.
+type postCommitFn func(ctx context.Context, tx pgx.Tx, eventIDs []string) error
 
 // commitWorldPayload commits ONE world-sourced payload — an acting entity's Attempt, not yet canon —
 // through the SAME routing runChain's Stage 3 uses for a live attempt: the three passthrough types
@@ -42,35 +51,54 @@ type pendingPayload struct {
 // this is an ordinary, expected outcome the caller decides how to handle (fireDuePending cancels the
 // row; runWorldActor fails loud — an authored intrusion that doesn't land is not silently swallowed).
 // err is reserved for a genuine infrastructure failure (a DB error, a malformed adjudicate call).
-func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID string, attempt Attempt, tick int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventIDs []string, seqAdvance int, halt string, err error) {
+func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID string, attempt Attempt, tick int64, seq int, postCommit postCommitFn, outcome *BeatOutcome, trace *BeatTrace) (eventIDs []string, seqAdvance int, halt string, err error) {
 	switch attempt.Type {
 	case "ActorMoved", "Communicated", "ObjectRelocated":
-		// Passthrough — the same routing runChain's Stage 3 uses for these three types.
+		// Passthrough — the same routing runChain's Stage 3 uses for these three types, now inside a tx
+		// so postCommit's bookkeeping row lands with the commit or not at all.
 		attemptJSON, marshalErr := json.Marshal(attempt)
 		if marshalErr != nil {
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: marshal attempt: %w", marshalErr)
 		}
-		result, applyErr := o.applyEvent(ctx, worldID, actorID, attemptJSON, tick, seq)
+		tx, beginErr := o.DB.Begin(ctx)
+		if beginErr != nil {
+			return nil, 1, "", fmt.Errorf("commitWorldPayload: begin tx: %w", beginErr)
+		}
+		result, applyErr := applyEventOnQuerier(ctx, tx, worldID, actorID, attemptJSON, tick, seq)
 		if applyErr != nil {
+			_ = tx.Rollback(ctx)
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: apply_event: %w", applyErr)
 		}
-		// Mirror runChain's own passthrough check (orchestrator.go Stage 3): halt_reason is the
-		// authoritative signal from apply_event's structural floor, not just an empty event_id.
+		// Mirror runChain's own passthrough check: halt_reason is the authoritative signal from
+		// apply_event's structural floor, not just an empty event_id.
 		if hr, _ := result["halt_reason"].(string); hr == "gate_reject" {
+			_ = tx.Rollback(ctx)
 			return nil, 1, "gate_reject", nil
 		}
 		evID, _ := result["event_id"].(string)
 		if evID == "" {
+			_ = tx.Rollback(ctx)
 			return nil, 1, "no_event_id", nil
 		}
+		if postCommit != nil {
+			if hookErr := postCommit(ctx, tx, []string{evID}); hookErr != nil {
+				_ = tx.Rollback(ctx)
+				return nil, 1, "", fmt.Errorf("commitWorldPayload: post-commit: %w", hookErr)
+			}
+		}
+		if commitErr := tx.Commit(ctx); commitErr != nil {
+			return nil, 1, "", fmt.Errorf("commitWorldPayload: commit tx: %w", commitErr)
+		}
+		// Reported only AFTER the tx committed — a rolled-back commit is not a commit.
 		if outcome != nil {
 			outcome.Committed = append(outcome.Committed, evID)
 		}
 		return []string{evID}, 1, "", nil
 
 	default:
-		// Adjudicated — a single-actor set, mirroring runChain's Stage 3 default branch.
-		ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, tick, seq, "", trace)
+		// Adjudicated — a single-actor set, mirroring runChain's Stage 3 default branch. adjudicate owns
+		// the ruling's tx, so postCommit rides into it (commitRulingTx runs it beside resolveHeldIDs).
+		ar, adjErr := o.adjudicate(ctx, worldID, []ActorAttempt{{ActorID: actorID, Attempt: attempt}}, nil, tick, seq, "", postCommit, trace)
 		if adjErr != nil {
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: adjudicate: %w", adjErr)
 		}
@@ -170,7 +198,7 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		// (worldactor.go). committedIDs + halt together decide whether this row actually landed in canon,
 		// exactly as before: halt != "" OR committedIDs empty ⇒ nothing committed ⇒ this row cancels, not
 		// fires. commitWorldPayload already appended any committed ids to outcome.Committed on success.
-		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, outcome, trace)
+		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, nil, outcome, trace)
 		if commitErr != nil {
 			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s: %w", d.id, commitErr)
 		}

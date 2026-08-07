@@ -79,7 +79,7 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 		return "", 0, fmt.Errorf("runWorldActor: %w", fieldErr)
 	}
 
-	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, outcome, trace)
+	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, nil, outcome, trace)
 	if commitErr != nil {
 		return "", 0, fmt.Errorf("runWorldActor: commit: %w", commitErr)
 	}

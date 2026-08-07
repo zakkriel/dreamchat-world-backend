@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -334,5 +336,51 @@ func TestFireDuePending_AtTickAfterFires(t *testing.T) {
 	}
 	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
 		t.Fatalf("pending_event status = %q, want fired", status)
+	}
+}
+
+// Deferral A: a world-sourced commit and its bookkeeping row are ONE transaction. Proven from the
+// bookkeeping side: when the post-commit hook fails, the canon commit must roll back with it — no
+// half-pair can survive. Before the fix there was no hook at all and the two writes were separate
+// statements, so nothing could roll the commit back.
+func TestCommitWorldPayload_PostCommitFailureRollsBackTheCommit(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	orc := wtOrchestrator(pool)
+	tick := wtBaseTick(t, ctx, pool)
+
+	stated := fmt.Sprintf("post-commit rollback probe @%d", tick)
+	attempt := Attempt{
+		Type:       "Communicated",
+		Stated:     stated,
+		ListenerID: wtMaraID, // co-located with Kade in the tavern, so the structural floor passes
+		Content:    "probe",
+	}
+	boom := func(ctx context.Context, tx pgx.Tx, eventIDs []string) error {
+		if len(eventIDs) == 0 {
+			return fmt.Errorf("hook received no event ids")
+		}
+		return fmt.Errorf("hook failed on purpose")
+	}
+
+	var out BeatOutcome
+	ids, _, halt, err := orc.commitWorldPayload(ctx, dlWorldID, dlKadeID, attempt, tick, 0, boom, &out, nil)
+	if err == nil {
+		t.Fatalf("post-commit failure did not surface: ids=%v halt=%q", ids, halt)
+	}
+
+	var n int
+	if qErr := pool.QueryRow(ctx,
+		`SELECT count(*) FROM canon_event WHERE world_id=$1 AND summary=$2`,
+		dlWorldID, stated).Scan(&n); qErr != nil {
+		t.Fatalf("count canon_event: %v", qErr)
+	}
+	if n != 0 {
+		t.Fatalf("canon_event rows for the probe = %d, want 0 — the commit did not roll back with the hook", n)
+	}
+	if len(out.Committed) != 0 {
+		t.Fatalf("outcome.Committed = %v, want empty — a rolled-back commit must never be reported", out.Committed)
 	}
 }

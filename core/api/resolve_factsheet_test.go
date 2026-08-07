@@ -78,7 +78,7 @@ func TestAdjudicate_FeedsTruthSideFactSheet(t *testing.T) {
 
 	if _, err := orc.adjudicate(ctx, world, []ActorAttempt{
 		{ActorID: kade, Attempt: Attempt{Type: "AttributeChanged", Stated: "I lean in close to Mara", TargetID: mara}},
-	}, nil, 80000, 0, "", nil); err != nil {
+	}, nil, 80000, 0, "", nil, nil); err != nil {
 		t.Fatalf("adjudicate: %v", err)
 	}
 	if len(resolve.prompts) == 0 {
