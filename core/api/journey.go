@@ -154,12 +154,12 @@ func (o *Orchestrator) startJourney(ctx context.Context, worldID, actorID string
 
 	case a.Sustain != nil && (a.Sustain.Kind == "until_at" || a.Sustain.Kind == "until_attr"):
 		// The Sustain shape carries no span of its own for a watch — R13's "stated span" only ever
-		// applies to `for`. The horizon is this world's per-world default: reusing
-		// fn_duration_class_seconds's own "extremely_long" tier (retunable, built-in-fallback —
-		// same shape as every other per-world default this program touches) rather than inventing a
-		// second per-world config table for a single number Task 2 did not ask for.
-		horizon, err := o.durationClassSeconds(ctx, worldID, "extremely_long")
-		if err != nil {
+		// applies to `for`. The horizon is this world's per-world default: fn_watch_horizon_seconds
+		// (retunable, built-in-fallback — same shape as every other per-world default this program
+		// touches), its own dial rather than a borrowed duration_class tier: a watch horizon is not
+		// a speech length, and conflating the two would mislead the next reader.
+		var horizon int64
+		if err := o.DB.QueryRow(ctx, `SELECT fn_watch_horizon_seconds($1)`, worldID).Scan(&horizon); err != nil {
 			return nil, fmt.Errorf("startJourney: watch horizon: %w", err)
 		}
 		j.Kind = "watch"

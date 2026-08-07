@@ -1886,6 +1886,20 @@ $$;
 
 
 --
+-- Name: fn_watch_horizon_seconds(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_watch_horizon_seconds(p_world_id uuid) RETURNS bigint
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT COALESCE(
+    (SELECT horizon_seconds FROM watch_horizon WHERE world_id = p_world_id),
+    86400  -- built-in fallback (retune per-world via the table)
+  );
+$$;
+
+
+--
 -- Name: fn_world_now(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2263,6 +2277,8 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
          (p_world_id, 'large', 1000), (p_world_id, 'vast', 5000) ON CONFLICT DO NOTHING;
   INSERT INTO journey_legs_band (world_id, max_span_seconds, legs)
   VALUES (p_world_id, 3600, 5), (p_world_id, 86400, 7), (p_world_id, 31536000, 10) ON CONFLICT DO NOTHING;
+  INSERT INTO watch_horizon (world_id, horizon_seconds)
+  VALUES (p_world_id, 86400) ON CONFLICT DO NOTHING;
 $$;
 
 
@@ -2640,6 +2656,17 @@ CREATE TABLE public.trait_provenance (
 
 
 --
+-- Name: watch_horizon; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.watch_horizon (
+    world_id uuid NOT NULL,
+    horizon_seconds bigint NOT NULL,
+    CONSTRAINT watch_horizon_horizon_seconds_check CHECK ((horizon_seconds > 0))
+);
+
+
+--
 -- Name: world_actor_config; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -2893,6 +2920,14 @@ ALTER TABLE ONLY public.trait_pool
 
 ALTER TABLE ONLY public.trait_provenance
     ADD CONSTRAINT trait_provenance_pkey PRIMARY KEY (actor_id, trait_key, event_id);
+
+
+--
+-- Name: watch_horizon watch_horizon_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.watch_horizon
+    ADD CONSTRAINT watch_horizon_pkey PRIMARY KEY (world_id);
 
 
 --
@@ -3330,4 +3365,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260807100001'),
     ('20260807100002'),
     ('20260807100003'),
-    ('20260807100004');
+    ('20260807100004'),
+    ('20260807100005');
