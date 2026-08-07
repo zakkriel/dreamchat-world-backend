@@ -573,6 +573,20 @@ git add core/api/orchestrator.go core/api/orchestrator_worldtime_test.go
 git commit -m "fix(livingworld): the instant-floor crossing runs its world's turn (deferral C)"
 ```
 
+**Plan corrections found during execution (commit `e40cef4`):**
+
+1. **`pending_event.pending_id` is a PK with NO database default** (`core/db/schema.sql:1117-1118`), so
+   the literal `INSERT` in step 1 fails with a not-null violation. Supply it explicitly with
+   `gen_random_uuid()` — the pattern `ledger_test.go` already uses.
+2. **One existing test did need `wtDisableWorldActor`, exactly as step 5 anticipated.**
+   `TestRunBeat_EmptyBeatAdvancesByInstantFloor` runs an empty chain against `dlWorldID`, which now
+   takes a world's turn (that IS the fix); at that world's tick floor the small tier sits at its 0.70
+   cap, so it erupts ~70% of runs and the stray `world_eruption` row intermittently broke
+   `pressure_test.go`'s `TestRollTier_FiredMatchesRollLessThanChance` (which hardcodes
+   `lastEruption=0`). Adding the helper fixed it with no assertion touched. That test also had to move
+   from `defer pool.Close()` to a `t.Cleanup` registered *before* the helper — `defer` runs before
+   `t.Cleanup`, so the pool was closing under the helper's own restore.
+
 ---
 
 ### Task 4: Rung gate
