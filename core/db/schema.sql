@@ -1804,6 +1804,16 @@ $$;
 CREATE FUNCTION public.fn_world_slice(p_world_id uuid, p_scene uuid) RETURNS jsonb
     LANGUAGE sql STABLE
     AS $$
+  WITH loc AS (
+    -- The world's location rows ({id,name,attrs}) computed ONCE; both `locations`
+    -- (all of them) and `scene` (the p_scene one) select from this, instead of
+    -- running the same entity_registry⋈location_state join twice.
+    SELECT er.entity_id AS id, er.canonical_name AS name, COALESCE(ls.attrs, '{}'::jsonb) AS attrs
+    FROM entity_registry er
+    LEFT JOIN location_state ls
+      ON ls.world_id = er.world_id AND ls.entity_id = er.entity_id
+    WHERE er.world_id = p_world_id AND er.entity_kind = 'location'
+  )
   SELECT jsonb_build_object(
     'ledger',
     COALESCE(
@@ -1830,14 +1840,11 @@ CREATE FUNCTION public.fn_world_slice(p_world_id uuid, p_scene uuid) RETURNS jso
     'locations',
     COALESCE(
       (SELECT jsonb_agg(jsonb_build_object(
-                 'id',    er.entity_id,
-                 'name',  er.canonical_name,
-                 'attrs', COALESCE(ls.attrs, '{}'::jsonb)
-               ) ORDER BY er.entity_id)
-       FROM entity_registry er
-       LEFT JOIN location_state ls
-         ON ls.world_id = er.world_id AND ls.entity_id = er.entity_id
-       WHERE er.world_id = p_world_id AND er.entity_kind = 'location'),
+                 'id',    loc.id,
+                 'name',  loc.name,
+                 'attrs', loc.attrs
+               ) ORDER BY loc.id)
+       FROM loc),
       '[]'::jsonb),
 
     'recent',
@@ -1861,14 +1868,11 @@ CREATE FUNCTION public.fn_world_slice(p_world_id uuid, p_scene uuid) RETURNS jso
 
     'scene',
     (SELECT jsonb_build_object(
-               'id',    er.entity_id,
-               'name',  er.canonical_name,
-               'attrs', COALESCE(ls.attrs, '{}'::jsonb)
+               'id',    loc.id,
+               'name',  loc.name,
+               'attrs', loc.attrs
              )
-     FROM entity_registry er
-     LEFT JOIN location_state ls
-       ON ls.world_id = er.world_id AND ls.entity_id = er.entity_id
-     WHERE er.world_id = p_world_id AND er.entity_id = p_scene AND er.entity_kind = 'location')
+     FROM loc WHERE loc.id = p_scene)
   );
 $$;
 
