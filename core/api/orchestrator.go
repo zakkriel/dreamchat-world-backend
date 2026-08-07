@@ -391,6 +391,19 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 		} else {
 			curTick += floor
 		}
+
+		// Living World deferral C: the floor is a REAL clock crossing, so it gets its world's turn like
+		// every other one — otherwise a pending event due inside (startTick, curTick] is silently
+		// skipped and the tier rolls never happen. cutBeat is deliberately ignored: the chain is already
+		// exhausted, so there is nothing left to discard, and the beat still completed. Any eruption
+		// here commits and narrates normally.
+		sceneID, sceneErr := ensureScene()
+		if sceneErr != nil {
+			return sceneErr
+		}
+		if _, _, wtErr := o.advanceWorldTurn(ctx, worldID, sceneID, startTick, curTick, curSeq, outcome, trace); wtErr != nil {
+			return wtErr
+		}
 	}
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick

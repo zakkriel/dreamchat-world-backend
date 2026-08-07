@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -149,10 +150,21 @@ func TestRunBeat_NonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 // attempt at all (an empty "I watch" beat — nothing in the chain, so the loop body never runs) still
 // costs the instant floor (2 s, the seeded fallback), not 0 — stillness ticks too. This only applies
 // on the completed path (asserted here); a halted beat keeps its own halt semantics untouched.
+//
+// Deferral C (Task 3): the floor crossing now runs its own world's turn, which would otherwise roll
+// the pressure tiers for dlWorldID on every run of this test. This test is about the TICK COUNT, not
+// about rolls, so pressure is disabled the same way TestRunBeat_FloorWindowStillRunsTheWorldsTurn
+// disables it — an undisabled roll here could fire and leave a world_eruption row that breaks
+// pressure_test.go's TestRollTier_FiredMatchesRollLessThanChance (hardcodes lastEruption=0).
 func TestRunBeat_EmptyBeatAdvancesByInstantFloor(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup (not defer) — LIFO with wtDisableWorldActor's own restore Cleanup below, so the
+	// restore runs BEFORE the pool closes (mirrors TestRunBeat_NonMoveCostsWorldTime's documented
+	// t.Cleanup-ordering pattern).
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
+
+	wtDisableWorldActor(t, ctx, pool, dlWorldID)
 
 	orc := wtOrchestrator(pool)
 	baseTick := wtBaseTick(t, ctx, pool)
@@ -275,5 +287,56 @@ func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	}
 	if driver.callCount != 0 {
 		t.Fatalf("resolve driver called %d times, want 0 — the budget gate must fire BEFORE adjudicate() ever consults the referee", driver.callCount)
+	}
+}
+
+// Deferral C: the instant floor is a real clock crossing, so a pending event due inside it must fire.
+// Before the fix, an empty beat advanced world-time by the floor with no world's turn at all, and the
+// row sat pending forever.
+func TestRunBeat_FloorWindowStillRunsTheWorldsTurn(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	// Pressure off: this test is about the LEDGER firing inside the floor window, not about rolls.
+	wtDisableWorldActor(t, ctx, pool, dlWorldID)
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	// A pending event due at baseTick+1 — inside the instant floor window (startTick, startTick+2].
+	stated := fmt.Sprintf("floor-window ledger probe @%d", baseTick)
+	payload := fmt.Sprintf(
+		`{"actor_id":%q,"attempt":{"type":"Communicated","stated":%q,"listener_id":%q,"content":"probe"}}`,
+		wtMaraID, stated, dlKadeID)
+	var pendingID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO pending_event (pending_id, world_id, fire_at_tick, magnitude, payload, status)
+		 VALUES (gen_random_uuid(), $1, $2, 'small', $3::jsonb, 'pending') RETURNING pending_id`,
+		dlWorldID, baseTick+1, payload).Scan(&pendingID); err != nil {
+		t.Fatalf("insert pending_event: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(), `DELETE FROM pending_event WHERE pending_id=$1`, pendingID); err != nil {
+			t.Errorf("cleanup pending_event: %v", err)
+		}
+	})
+
+	// An EMPTY chain: nothing advances the clock except the floor.
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, nil, baseTick, nil)
+	if err != nil {
+		t.Fatalf("RunBeat: %v", err)
+	}
+	if out.HaltReason != "completed" {
+		t.Fatalf("HaltReason = %q, want completed", out.HaltReason)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx,
+		`SELECT status FROM pending_event WHERE pending_id=$1`, pendingID).Scan(&status); err != nil {
+		t.Fatalf("read pending status: %v", err)
+	}
+	if status != "fired" {
+		t.Fatalf("pending_event status = %q, want fired — the floor window skipped its world's turn", status)
 	}
 }
