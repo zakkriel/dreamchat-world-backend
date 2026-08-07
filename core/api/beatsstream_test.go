@@ -699,6 +699,220 @@ func TestBeats_NonDebugEmitsNoTraceFrame(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
 }
 
+// ── rung3 Task 4 — real line-by-line, where the driver can ─────────────────────────────────────────
+
+// fakeStreamingNarrateDriver implements both Driver and StreamingDriver. GenerateStream feeds
+// narration/1's array text through onDelta with EVERY element split into two chunks (so
+// narrationLineSplitter, beatsstream.go, must actually assemble a line rather than receive it whole),
+// then BLOCKS on resume before returning: every onDelta call — and therefore every frame narrateStream
+// emits from it — happens strictly before `returned` is closed, which is what lets
+// TestBeats_StreamingNarrationFrameArrivesBeforeDriverReturns prove the ordering rather than assert it
+// in prose. Generate errors outright: this driver's whole point is that the streaming path is the one
+// exercised, never the ordinary one.
+type fakeStreamingNarrateDriver struct {
+	name     string
+	segments []string // narration/1 array ELEMENTS (bare objects, no enclosing brackets), in order
+	resume   chan struct{}
+	returned chan struct{}
+}
+
+func newFakeStreamingNarrateDriver(name string, segments []string) *fakeStreamingNarrateDriver {
+	return &fakeStreamingNarrateDriver{name: name, segments: segments, resume: make(chan struct{}), returned: make(chan struct{})}
+}
+
+func (f *fakeStreamingNarrateDriver) Name() string                { return f.name }
+func (f *fakeStreamingNarrateDriver) Capabilities() CapabilitySet { return CapabilitySet{} }
+func (f *fakeStreamingNarrateDriver) Generate(context.Context, GenRequest) (string, error) {
+	return "", fmt.Errorf("fakeStreamingNarrateDriver: Generate called — the streaming path should have been used, not the non-streaming one")
+}
+func (f *fakeStreamingNarrateDriver) GenerateStream(ctx context.Context, req GenRequest, onDelta func(string)) (string, error) {
+	var full strings.Builder
+	write := func(s string) {
+		onDelta(s)
+		full.WriteString(s)
+	}
+	write("[")
+	for i, seg := range f.segments {
+		if i > 0 {
+			write(",")
+		}
+		mid := len(seg) / 2
+		write(seg[:mid])
+		write(seg[mid:])
+	}
+	write("]")
+	<-f.resume
+	close(f.returned)
+	return full.String(), nil
+}
+
+// TestBeats_StreamingNarrationFrameArrivesBeforeDriverReturns is the test that matters for Task 4: a
+// StreamingDriver-capable narrate seat, driven through a real httptest.Server so reading happens on a
+// separate connection than the blocked handler (the same reason TestBeats_EmitsFramesInOrder cannot
+// use httptest.ResponseRecorder — a recorder's buffer is only visible AFTER ServeHTTP returns). The
+// proof: after reading the FIRST narration frame off the wire, the driver's own `returned` channel is
+// still open — GenerateStream has not returned yet. A test that only checked the FINAL output would
+// pass even if nothing streamed; this one cannot.
+func TestBeats_StreamingNarrationFrameArrivesBeforeDriverReturns(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	baseTick := seatPlayerAndMara(t, ctx, pool)
+
+	segments := []string{
+		`{"speaker_id":null,"kind":"narration","text":"The common room holds still."}`,
+		`{"speaker_id":"` + maraID + `","kind":"action","text":"Mara sets a tankard on the bar."}`,
+	}
+	nd := newFakeStreamingNarrateDriver("fake-streaming-narrate:test", segments)
+	bridge := mustBridge(t,
+		NewFakeStructuredDriver("fake-structured:test", map[string]string{
+			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
+		}),
+		nd)
+	h := NewBeatsStreamHandler(pool, true, bridge)
+	srv := httptest.NewServer(h)
+	defer srv.Close()
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/worlds/"+worldID+"/beats?viewer="+playerID,
+		strings.NewReader(`{"text":"tell mara about the note"}`))
+	if err != nil {
+		t.Fatalf("build request: %v", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("do request: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+
+	sr := newSSEReader(resp.Body)
+	raw, err := sr.nextRaw()
+	if err != nil {
+		t.Fatalf("reading interpretation frame: %v", err)
+	}
+	interp := assertValidBeatFrame(t, raw)
+	if interp["kind"] != "interpretation" {
+		t.Fatalf("first frame kind = %v, want interpretation", interp["kind"])
+	}
+
+	raw, err = sr.nextRaw()
+	if err != nil {
+		t.Fatalf("reading first narration frame: %v", err)
+	}
+	first := assertValidBeatFrame(t, raw)
+	if first["kind"] != "narration" {
+		t.Fatalf("second frame kind = %v, want narration (streamed the moment the first line validated)", first["kind"])
+	}
+
+	// THE PROOF: narrateStream (beatsstream.go) emits from INSIDE onDelta, synchronously, before
+	// GenerateStream's own return — a non-streaming path could never put a narration frame on the
+	// wire before the driver call that produced it had already returned.
+	select {
+	case <-nd.returned:
+		t.Fatalf("the driver had already returned by the time the first narration frame reached the wire — nothing streamed")
+	default:
+	}
+	close(nd.resume)
+
+	kinds := []string{interp["kind"].(string), first["kind"].(string)}
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		frame := assertValidBeatFrame(t, raw)
+		kinds = append(kinds, frame["kind"].(string))
+	}
+
+	narrationCount := 0
+	for _, k := range kinds {
+		if k == "narration" {
+			narrationCount++
+		}
+	}
+	if narrationCount != len(segments) {
+		t.Fatalf("narration frame count = %d, want %d (one per streamed line): %v", narrationCount, len(segments), kinds)
+	}
+	tail := kinds[len(kinds)-4:]
+	if tail[0] != "scene" || tail[1] != "journey" || tail[2] != "result" || tail[3] != "trace" {
+		t.Fatalf("frame kinds tail = %v, want [scene journey result trace]; full sequence = %v", tail, kinds)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
+// TestBeats_NonStreamingDriverProducesIdenticalFrameSequence proves the OTHER half of Task 4: a
+// narrate driver that does NOT implement StreamingDriver (scriptedNarrateDriver, beathandler_test.go)
+// still produces the identical frame sequence — same kinds, same order, same narration text — a
+// StreamingDriver-capable driver emitting the SAME two segments would. Same protocol, same frontend;
+// only the TIMING of narration emission differs (all at once here vs. per-line above).
+func TestBeats_NonStreamingDriverProducesIdenticalFrameSequence(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	baseTick := seatPlayerAndMara(t, ctx, pool)
+
+	segments := `[{"speaker_id":null,"kind":"narration","text":"The common room holds still."},` +
+		`{"speaker_id":"` + maraID + `","kind":"action","text":"Mara sets a tankard on the bar."}]`
+	nd := &scriptedNarrateDriver{name: "scripted-narrate:test", replies: []string{segments}}
+	if _, ok := Driver(nd).(StreamingDriver); ok {
+		t.Fatalf("scriptedNarrateDriver unexpectedly implements StreamingDriver — this test needs a non-streaming driver to prove the fallback")
+	}
+
+	bridge := mustBridge(t,
+		NewFakeStructuredDriver("fake-structured:test", map[string]string{
+			"tell mara about the note": `[{"type":"Communicated","stated":"tell mara about the note","listener_id":"` + maraID + `","content":"the note"}]`,
+		}),
+		nd)
+	h := NewBeatsStreamHandler(pool, true, bridge)
+
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+playerID,
+		strings.NewReader(`{"text":"tell mara about the note"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
+	var kinds []string
+	var narrationTexts []string
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		frame := assertValidBeatFrame(t, raw)
+		kinds = append(kinds, frame["kind"].(string))
+		if frame["kind"] == "narration" {
+			msg, _ := frame["message"].(map[string]any)
+			narrationTexts = append(narrationTexts, msg["text"].(string))
+		}
+	}
+
+	if nd.calls != 1 {
+		t.Fatalf("narrate Generate calls = %d, want 1 (the ordinary non-streaming path, one structured call)", nd.calls)
+	}
+	wantKinds := []string{"interpretation", "narration", "narration", "scene", "journey", "result", "trace"}
+	if fmt.Sprint(kinds) != fmt.Sprint(wantKinds) {
+		t.Fatalf("frame kinds = %v, want %v — the non-streaming fallback must produce the IDENTICAL frame sequence a streaming driver would (plan Task 4)", kinds, wantKinds)
+	}
+	wantTexts := []string{"The common room holds still.", "Mara sets a tankard on the bar."}
+	if fmt.Sprint(narrationTexts) != fmt.Sprint(wantTexts) {
+		t.Fatalf("narration texts = %v, want %v", narrationTexts, wantTexts)
+	}
+
+	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
 // ── TestGenBeatFramePayloads — SPEC-011 real-payload generator ──────────────────────────────────
 
 // TestGenBeatFramePayloads is the Go-side payload generator ci/gen_payloads.sh drives (mirroring

@@ -61,6 +61,20 @@ type Driver interface {
 	Generate(ctx context.Context, req GenRequest) (string, error)
 }
 
+// StreamingDriver is an OPTIONAL capability a Driver may also implement (rung3 Task 4, plan §"real
+// line-by-line, where the driver can"): GenerateStream calls onDelta with each raw text chunk as it
+// arrives, and still returns the full accumulated text on success — the identical contract Generate
+// honors, plus the incremental callback. It is a SEPARATE interface, never a Driver method, because
+// granularity is a driver CAPABILITY, not a contract term (the founder chose line-at-a-time delivery
+// precisely because the belts need a whole line to judge — narration/1's array-of-objects shape is
+// unchanged either way). A driver that cannot stream simply does not implement this; the narrate step
+// (beatsstream.go) type-asserts for it and falls back to the ordinary Generate call, producing the
+// IDENTICAL frame sequence either way — same protocol, same frontend, better feel where the stack
+// supports it.
+type StreamingDriver interface {
+	GenerateStream(ctx context.Context, req GenRequest, onDelta func(string)) (string, error)
+}
+
 // --- Seats ------------------------------------------------------------------
 type Seat struct {
 	Name     string

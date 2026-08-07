@@ -260,44 +260,73 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// beathandler.go:225-259. The belts (ghost speaker, verbatim speech) run INSIDE
 	// DecodeAndValidateNarration, on the WHOLE segment array, before any of it becomes a frame — an
 	// unvalidated segment never reaches narrateMessages, so it never reaches the wire (plan Task 3).
+	//
+	// rung3 Task 4: when the bound narrate driver ALSO implements StreamingDriver, narrateStream runs
+	// this same belt per LINE and emits each validated narration frame the instant it completes,
+	// rather than waiting for the whole reply — the plan's "real line-by-line, where the driver can".
+	// A streaming attempt that validates at least one line is treated as this beat's narration in
+	// full: those frames are ALREADY on the wire, so there is no repair/fallback for a streaming
+	// attempt — only the ordinary generate-then-validate-then-emit loop below retries. A streaming
+	// attempt that validates NOTHING has put nothing on the wire yet, so it falls straight through to
+	// that identical loop, unchanged.
 	nd := h.bridge.Driver(SeatNarrate.Name)
 	var segments []NarrationSegment
 	var lastErr error
-	for attempt := 0; attempt < 2; attempt++ {
+	streamed := false
+	if sd, ok := nd.(StreamingDriver); ok {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
-		if attempt > 0 && lastErr != nil {
-			prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
-		}
-		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
-		if genErr != nil {
-			log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
-			lastErr = genErr
-			continue
-		}
-		segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts)
-		if decErr != nil {
-			log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
-			lastErr = decErr
-			continue
-		}
-		segments = segs
-		break
-	}
-	if segments == nil {
-		raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)})
-		if genErr != nil {
-			log.Printf("beats stream: narrate plain fallback Generate failed: %v", genErr)
-			_ = frames.emit("error", errorFrame{Message: "the narrator could not find words"})
+		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)}
+		segs, err := narrateStream(ctx, sd, req, presentIDs, speechTexts, labelFor, frames)
+		switch {
+		case err != nil && len(segs) == 0:
+			log.Printf("beats stream: streaming narrate produced no valid line (%v), falling back to the ordinary attempt loop", err)
+		case err != nil:
+			log.Printf("beats stream: streaming narrate failed after %d line(s) were already emitted: %v", len(segs), err)
 			return
+		case len(segs) > 0:
+			segments, streamed = segs, true
+		default:
+			log.Printf("beats stream: streaming narrate produced no valid line, falling back to the ordinary attempt loop")
 		}
-		segments = []NarrationSegment{{Kind: "narration", Text: raw}}
 	}
 
-	messages, _ := narrateMessages(segments, labelFor)
-	for _, msg := range messages {
-		if err := frames.emit("narration", narrationFrame{Message: msg}); err != nil {
-			log.Printf("beats stream: narration frame: %v", err)
-			return
+	if !streamed {
+		for attempt := range 2 {
+			prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
+			if attempt > 0 && lastErr != nil {
+				prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
+			}
+			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
+			if genErr != nil {
+				log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
+				lastErr = genErr
+				continue
+			}
+			segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts)
+			if decErr != nil {
+				log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
+				lastErr = decErr
+				continue
+			}
+			segments = segs
+			break
+		}
+		if segments == nil {
+			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)})
+			if genErr != nil {
+				log.Printf("beats stream: narrate plain fallback Generate failed: %v", genErr)
+				_ = frames.emit("error", errorFrame{Message: "the narrator could not find words"})
+				return
+			}
+			segments = []NarrationSegment{{Kind: "narration", Text: raw}}
+		}
+
+		messages, _ := narrateMessages(segments, labelFor)
+		for _, msg := range messages {
+			if err := frames.emit("narration", narrationFrame{Message: msg}); err != nil {
+				log.Printf("beats stream: narration frame: %v", err)
+				return
+			}
 		}
 	}
 
@@ -358,4 +387,106 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// narrationLineSplitter incrementally extracts complete top-level elements of a JSON array of objects
+// (narration/1's shape: `[{"speaker_id":…,"kind":…,"text":…}, …]`) from a growing text buffer fed one
+// delta at a time — the mechanism that lets narrateStream validate and emit each narration LINE (one
+// array element) the moment its closing brace arrives, rather than waiting for the whole array to
+// close. It tracks object/array nesting depth and string/escape state so a brace or comma inside a
+// quoted text field is never mistaken for structure.
+type narrationLineSplitter struct {
+	buf       []byte
+	depth     int  // nesting depth of [ and { seen so far (the outer array itself is depth 1)
+	inString  bool
+	escaped   bool
+	elemStart int // byte offset in buf where the in-flight element began, or -1 when not in one
+}
+
+func newNarrationLineSplitter() *narrationLineSplitter {
+	return &narrationLineSplitter{elemStart: -1}
+}
+
+// feed appends delta to the buffer and returns every element (raw JSON object text) that became
+// complete as a result, in order.
+func (s *narrationLineSplitter) feed(delta string) []string {
+	var elems []string
+	for _, c := range []byte(delta) {
+		pos := len(s.buf)
+		s.buf = append(s.buf, c)
+		if s.inString {
+			switch {
+			case s.escaped:
+				s.escaped = false
+			case c == '\\':
+				s.escaped = true
+			case c == '"':
+				s.inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			s.inString = true
+		case '{', '[':
+			if s.depth == 1 && s.elemStart == -1 && c == '{' {
+				s.elemStart = pos
+			}
+			s.depth++
+		case '}', ']':
+			s.depth--
+			if s.depth == 1 && s.elemStart != -1 && c == '}' {
+				elems = append(elems, string(s.buf[s.elemStart:pos+1]))
+				s.elemStart = -1
+			}
+		}
+	}
+	return elems
+}
+
+// narrateStream drives a StreamingDriver's GenerateStream call, splitting the growing narration/1
+// array text into complete elements as they arrive and running EACH one through the SAME belt
+// (DecodeAndValidateNarration, narration.go) an ordinary batch call would — one line, wrapped as its
+// own single-element array, so the ghost-speaker/verbatim-speech checks judge it exactly as they
+// always have. A line that passes is turned into its beatMessage (narrateMessages' own per-segment
+// rule, repeated here rather than imported so this file never widens narration.go's surface) and
+// emitted as a real narration frame BEFORE GenerateStream returns — the entire point of Task 4 (plan:
+// "the first narration frame is written before the driver returns"; "that ordering IS the feature").
+//
+// Once a line is emitted here it is ALREADY on the wire, so this function never retries: an invalid
+// line is simply never emitted (the belt still bites, mid-stream, exactly as
+// TestBeats_GhostSpeakerNeverReachesTheWire pins for the non-streaming path) and the stream is left to
+// run to completion. Returns the segments it emitted; the caller (ServeHTTP) treats a zero-segment,
+// no-error-yet-nothing-emitted result as "nothing reached the wire, fall back to the ordinary
+// generate → validate → emit loop", and a non-nil error the SAME way once nothing was emitted.
+func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, presentIDs []string, speechTexts map[string][]string, labelFor map[string]string, frames *frameWriter) ([]NarrationSegment, error) {
+	splitter := newNarrationLineSplitter()
+	var segments []NarrationSegment
+	var emitErr error
+	_, genErr := sd.GenerateStream(ctx, req, func(delta string) {
+		if emitErr != nil {
+			return
+		}
+		for _, raw := range splitter.feed(delta) {
+			segs, err := DecodeAndValidateNarration("["+raw+"]", presentIDs, speechTexts)
+			if err != nil {
+				log.Printf("beats stream: streamed narration line rejected (never emitted): %v", err)
+				continue
+			}
+			seg := segs[0]
+			msg := beatMessage{SpeakerID: seg.SpeakerID, Kind: seg.Kind, Text: seg.Text}
+			if seg.SpeakerID != nil {
+				msg.SpeakerLabel = labelFor[*seg.SpeakerID]
+			}
+			if err := frames.emit("narration", narrationFrame{Message: msg}); err != nil {
+				emitErr = err
+				return
+			}
+			segments = append(segments, seg)
+		}
+	})
+	if genErr != nil {
+		return segments, genErr
+	}
+	return segments, emitErr
 }

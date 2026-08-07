@@ -99,7 +99,8 @@ done
 # BEAT_STREAM_PAYLOAD_DIR (skipped in the normal `go test ./...` suite), it drives the REAL
 # beatsStreamHandler.ServeHTTP — the identical call net/http itself makes — through a committed beat
 # (Player tells Mara about the note, the same fixture beathandler_test.go's happy path uses) and
-# writes each frame's RAW bytes (interpretation/narration/scene/journey/result) verbatim.
+# writes each frame's RAW bytes (interpretation/narration/scene/journey/result/trace — trace only
+# because the driven handler runs debug=true, rung3 Task 4) verbatim.
 ( cd "$(dirname "$0")/../core/api" && \
   BEAT_STREAM_PAYLOAD_DIR="$OUT" \
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
