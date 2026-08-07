@@ -53,6 +53,25 @@ func DecodeAndValidateChain(raw string) ([]BeatStep, error) {
 // Attempt is one element of beat_chain/2 — an ATTEMPT with ids, never an
 // outcome. Example: {"type":"AttributeChanged","stated":"I open the door",
 // "target_id":"<door uuid>"} — what happens to the door is resolve's job.
+// Sustain is the "until/for <condition>" parse-shape (design §4.4) — a SHAPE the decomposer recognises,
+// like QUERY, never a judgment about how long something ought to take. Exactly one kind:
+//
+//	{"kind":"for",        "seconds":7200}                              — a span the player STATED (R13)
+//	{"kind":"until_at",   "entity_id":…, "place_id":…}                 — that thing, at that place
+//	{"kind":"until_attr", "entity_id":…, "attr":"open", "value":"true"} — that thing, in that state
+//
+// seconds is passed through, NOT classified: reading "two hours" back as 7200 is parsing, the same act as
+// binding a name to an id. duration_class stays what it is — the ladder for acts with an inherent length,
+// whose cap exists so an UNSTATED length is never invented.
+type Sustain struct {
+	Kind     string `json:"kind"`
+	Seconds  int64  `json:"seconds,omitempty"`
+	EntityID string `json:"entity_id,omitempty"`
+	PlaceID  string `json:"place_id,omitempty"`
+	Attr     string `json:"attr,omitempty"`
+	Value    string `json:"value,omitempty"`
+}
+
 type Attempt struct {
 	Type         string   `json:"type"`
 	Stated       string   `json:"stated"`
@@ -78,6 +97,9 @@ type Attempt struct {
 	// engine maps class→seconds per world (fn_duration_class_seconds). Empty on ActorMoved (physics owns
 	// move duration) and on legacy input.
 	DurationClass string `json:"duration_class,omitempty"`
+	// Sustain is the "until/for <condition>" parse-shape (design §4.4, R13) carried by non-move
+	// attempts only — a move's length is physics, never a stated span. See type Sustain.
+	Sustain *Sustain `json:"sustain,omitempty"`
 }
 
 // DecodeAndValidateChainV2 is the belt behind the leash: valid JSON, every
@@ -140,6 +162,27 @@ func validateAttemptFields(i int, a Attempt) error {
 		case "instant", "short", "medium", "long", "extremely_long":
 		default:
 			return fmt.Errorf("step %d duration_class %q outside enum", i, a.DurationClass)
+		}
+	}
+	if a.Sustain != nil {
+		if a.Type == "ActorMoved" {
+			return fmt.Errorf("step %d ActorMoved cannot carry sustain — its length is physics", i)
+		}
+		switch a.Sustain.Kind {
+		case "for":
+			if a.Sustain.Seconds <= 0 {
+				return fmt.Errorf("step %d sustain kind \"for\" requires seconds > 0", i)
+			}
+		case "until_at":
+			if a.Sustain.EntityID == "" || a.Sustain.PlaceID == "" {
+				return fmt.Errorf("step %d sustain kind \"until_at\" requires entity_id+place_id", i)
+			}
+		case "until_attr":
+			if a.Sustain.EntityID == "" || a.Sustain.Attr == "" || a.Sustain.Value == "" {
+				return fmt.Errorf("step %d sustain kind \"until_attr\" requires entity_id+attr+value", i)
+			}
+		default:
+			return fmt.Errorf("step %d sustain kind %q outside for|until_at|until_attr", i, a.Sustain.Kind)
 		}
 	}
 	return nil

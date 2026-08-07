@@ -88,3 +88,40 @@ func TestDecodeV2MixedChainResolvesActionAndQuery(t *testing.T) {
 		t.Fatalf("QUERY target ids = %v, want 2 bound ids", chain[1].QueryTargetIDs)
 	}
 }
+
+// TestDecodeChainV2_Sustain covers the "until/for <condition>" parse-shape (design §4.4, R13): a
+// stated span is passed through, not classified — the duration_class cap does not apply to it.
+func TestDecodeChainV2_Sustain(t *testing.T) {
+	forOK := `[{"type":"AttributeChanged","stated":"I lie hidden for two hours","target_id":"11111111-1111-1111-1111-111111111111","sustain":{"kind":"for","seconds":7200}}]`
+	chain, err := DecodeAndValidateChainV2(forOK)
+	if err != nil {
+		t.Fatalf("valid sustain rejected: %v", err)
+	}
+	if chain[0].Sustain == nil || chain[0].Sustain.Seconds != 7200 {
+		t.Fatalf("sustain not decoded: %+v", chain[0].Sustain)
+	}
+
+	// A stated span far past the duration_class ceiling is exactly what this shape exists for (R13).
+	century := `[{"type":"AttributeChanged","stated":"I wait a hundred years","target_id":"11111111-1111-1111-1111-111111111111","sustain":{"kind":"for","seconds":3153600000}}]`
+	if _, err := DecodeAndValidateChainV2(century); err != nil {
+		t.Fatalf("a stated century must decode — the class cap does not apply to sustain: %v", err)
+	}
+
+	// A move never sustains: its length is physics, and the schema forbids extra fields on ActorMoved.
+	move := `[{"type":"ActorMoved","stated":"I walk home","to_target_id":"11111111-1111-1111-1111-111111111111","sustain":{"kind":"for","seconds":60}}]`
+	if _, err := DecodeAndValidateChainV2(move); err == nil {
+		t.Fatalf("ActorMoved with sustain must be rejected")
+	}
+
+	// Kind-specific required fields are enforced, not merely declared.
+	bad := `[{"type":"AttributeChanged","stated":"I wait","target_id":"11111111-1111-1111-1111-111111111111","sustain":{"kind":"until_at","entity_id":"11111111-1111-1111-1111-111111111111"}}]`
+	if _, err := DecodeAndValidateChainV2(bad); err == nil {
+		t.Fatalf("until_at without place_id must be rejected")
+	}
+
+	// A non-positive span is not a wait.
+	zero := `[{"type":"AttributeChanged","stated":"I wait","target_id":"11111111-1111-1111-1111-111111111111","sustain":{"kind":"for","seconds":0}}]`
+	if _, err := DecodeAndValidateChainV2(zero); err == nil {
+		t.Fatalf("sustain for 0 seconds must be rejected")
+	}
+}
