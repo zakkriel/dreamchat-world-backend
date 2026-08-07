@@ -56,8 +56,12 @@ func setupSceneWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool) scen
 		($7,$1,'artifact','a weathered lantern')`,
 		id.World, id.Viewer, id.Companion, id.Stranger, id.Place, id.ElsewherePlace, id.Prop)
 
+	// NOTE the attribute is `tension`, not `tone` — that is how every place in the real world stores
+	// its mood (seed_drowned_lantern.sql, and what tensionBudgetSeconds reads). The API surfaces it
+	// under the genre-agnostic name `tone`. This fixture originally wrote `tone`, which agreed with a
+	// bug in buildScene and hid it: the assertion below passed while every real scene reported null.
 	mustExec(`INSERT INTO location_state (entity_id, world_id, attrs) VALUES
-		($2,$1, jsonb_build_object('description','A weathered tavern by the docks.','tone','tense')),
+		($2,$1, jsonb_build_object('description','A weathered tavern by the docks.','tension','tense')),
 		($3,$1, '{}'::jsonb)`,
 		id.World, id.Place, id.ElsewherePlace)
 

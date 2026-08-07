@@ -170,12 +170,16 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 		}
 	}
 
-	// tone: the place's authored tension attribute — not carried on Candidate (only Description is),
-	// so one small scoped lookup against the viewer's OWN current location (already established
-	// perceivable above; not a new omniscient reach).
+	// tone: the place's authored TENSION attribute, surfaced to the FE under the genre-agnostic name
+	// "tone". The stored key is `tension` (the same attribute tensionBudgetSeconds reads and
+	// trg_validate_tension guards, seeded per-location e.g. the Drowned Lantern's 'tense') — reading
+	// `tone` here returned NULL for every scene, which a hand-driven curl caught and the shape-only
+	// unit test did not. Not carried on Candidate (only Description is), so one small scoped lookup
+	// against the viewer's OWN current location — already established perceivable above, not a new
+	// omniscient reach.
 	var tone string
 	if err := pool.QueryRow(ctx,
-		`SELECT COALESCE((SELECT attrs->>'tone' FROM location_state WHERE world_id=$1 AND entity_id=$2::uuid), '')`,
+		`SELECT COALESCE((SELECT attrs->>'tension' FROM location_state WHERE world_id=$1 AND entity_id=$2::uuid), '')`,
 		worldID, place.ID).Scan(&tone); err != nil {
 		return sceneView{}, fmt.Errorf("buildScene: tone: %w", err)
 	}
