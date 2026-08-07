@@ -490,3 +490,44 @@ func TestRunWorldTurn_LastEruptionTick(t *testing.T) {
 		t.Fatalf("lastEruptionTick = %d, want >= the just-logged fired_tick %d", after, firedTick)
 	}
 }
+
+// TestRunWorldTurn_Standalone_CallableWithoutBeatLoop proves the design's Unit-6 reuse guarantee: the
+// world's-turn composer is a STANDALONE unit callable WITHOUT runChain/RunBeat — the exact way the
+// Journey will call it once per leg. Every other unit (fireDuePending, rollTier, runWorldActor) is
+// already directly tested; this closes the gap for runWorldTurn itself (code-health audit, modular lens).
+func TestRunWorldTurn_Standalone_CallableWithoutBeatLoop(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	// Call the composer DIRECTLY — no chain, no RunBeat — with hand-picked ticks.
+	out := BeatOutcome{Committed: []string{}, UnresolvedCandidates: []string{}, Telegraphs: []string{}}
+	firedMag, seqUsed, err := orc.runWorldTurn(ctx, dlWorldID, wtTavernID, baseTick, baseTick+10, 0, &out, nil)
+	if err != nil {
+		t.Fatalf("runWorldTurn (standalone): %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+
+	if firedMag != "small" {
+		t.Fatalf("firedMag = %q, want small (forced)", firedMag)
+	}
+	if seqUsed < 1 {
+		t.Fatalf("seqUsed = %d, want >=1 (the eruption consumed a (tick,seq) slot)", seqUsed)
+	}
+	// The forced eruption committed and was recorded in the fire-log — identical to going through a beat.
+	tier, _, eventID, ok := wtEruptionRowForEvent(t, ctx, pool, dlWorldID, out.Committed)
+	if !ok {
+		t.Fatalf("no world_eruption row references any committed event id %v — standalone call did not fire", out.Committed)
+	}
+	if tier != "small" {
+		t.Fatalf("world_eruption.tier = %q, want small", tier)
+	}
+	if eventID == "" {
+		t.Fatalf("world_eruption.event_id empty")
+	}
+}
