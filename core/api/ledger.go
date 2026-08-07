@@ -198,7 +198,14 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 		// (worldactor.go). committedIDs + halt together decide whether this row actually landed in canon,
 		// exactly as before: halt != "" OR committedIDs empty ⇒ nothing committed ⇒ this row cancels, not
 		// fires. commitWorldPayload already appended any committed ids to outcome.Committed on success.
-		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, nil, outcome, trace)
+		// The pending row's status flip IS this commit's bookkeeping — it rides the same tx, so a row can
+		// never be committed-but-still-pending (which would re-fire it on the next crossing).
+		pendingID := d.id
+		flipFired := func(ctx context.Context, tx pgx.Tx, _ []string) error {
+			_, execErr := tx.Exec(ctx, `UPDATE pending_event SET status='fired' WHERE pending_id=$1`, pendingID)
+			return execErr
+		}
+		committedIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, pp.ActorID, pp.Attempt, tickAfter, curSeq, flipFired, outcome, trace)
 		if commitErr != nil {
 			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s: %w", d.id, commitErr)
 		}
@@ -213,13 +220,6 @@ func (o *Orchestrator) fireDuePending(ctx context.Context, worldID string, tickB
 				return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s cancel status: %w", d.id, execErr)
 			}
 			continue
-		}
-
-		// TODO(Task 9): the payload commit and this status flip are not yet in one transaction — the
-		// world's-turn composer owns the beat's tx boundary and retry semantics and will make
-		// commit+flip atomic (cf. commitRulingTx/resolveHeldIDs).
-		if _, execErr := o.DB.Exec(ctx, `UPDATE pending_event SET status='fired' WHERE pending_id=$1`, d.id); execErr != nil {
-			return "", curSeq - seq, fmt.Errorf("fireDuePending: pending_event %s flip status: %w", d.id, execErr)
 		}
 
 		if magnitudeRank[d.magnitude] > magnitudeRank[firedMag] {

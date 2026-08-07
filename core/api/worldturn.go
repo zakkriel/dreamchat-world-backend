@@ -3,6 +3,8 @@ package main
 import (
 	"context"
 	"fmt"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // Living World / Task 9 (Unit 6) — the world's-turn composer. Everything the earlier tasks built now
@@ -23,10 +25,10 @@ import (
 // carries NO progress/threshold/"until" logic of its own; that boundary (Station-G/Journey) is not
 // crossed here.
 //
-// ATOMICITY IS DEFERRED (task-9-brief ambiguity resolution #5): the world_eruption insert below is a
-// plain o.DB.Exec, not yet in the same tx as the eruption commit it records — see the matching TODO at
-// the insert site below, and ledger.go's own TODO(Task 9) on fireDuePending's row commit + status flip.
-// Both are flagged for a dedicated whole-branch atomicity follow-up; no tx refactor happens in this task.
+// ATOMICITY (rung 0, deferral A — the deferral task-9-brief ambiguity resolution #5 recorded is closed):
+// the world_eruption insert below is no longer a standalone o.DB.Exec. It is handed down as a
+// postCommitFn (ledger.go) so it runs INSIDE the eruption commit's own transaction — the pair lands
+// together or not at all, as it already does for fireDuePending's pending-row flip.
 //
 // seqUsed reports how many (tick,seq) slots this call ACTUALLY consumed at tickAfter — the ledger's own
 // seqUsed (fireDuePending, Task 4/task-9-review) plus, if the roll also fires, the eruption commit's own
@@ -125,17 +127,22 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 		return ledgerMag, ledgerSeq, nil
 	}
 
-	eventID, actorSeq, actorErr := o.runWorldActor(ctx, worldID, scene, firedTier, tickAfter, nextSeq, outcome, trace)
+	// The fire-log row IS this eruption's bookkeeping: it rides the eruption's own tx, so the pair can
+	// never split. A committed eruption with no fire-log row would leave the tier's derived pressure
+	// (fn_pressure_chance reads max(fired_tick)) permanently undrained — the whole-branch review's
+	// "lost drain". Ownership is unchanged: the composer still decides what goes in the row.
+	logEruption := func(ctx context.Context, tx pgx.Tx, eventIDs []string) error {
+		if len(eventIDs) == 0 {
+			return fmt.Errorf("eruption committed no event id")
+		}
+		_, execErr := tx.Exec(ctx,
+			`INSERT INTO world_eruption (world_id, tier, fired_tick, event_id) VALUES ($1, $2, $3, $4)`,
+			worldID, firedTier, tickAfter, eventIDs[0])
+		return execErr
+	}
+	eventID, actorSeq, actorErr := o.runWorldActor(ctx, worldID, scene, firedTier, tickAfter, nextSeq, logEruption, outcome, trace)
 	if actorErr != nil {
 		return "", 0, fmt.Errorf("runWorldTurn: runWorldActor(%s): %w", firedTier, actorErr)
-	}
-
-	// TODO(atomicity follow-up): eruption commit + this fire-log write are not yet in one tx;
-	// deferred to a dedicated atomicity task (see ledger progress).
-	if _, execErr := o.DB.Exec(ctx,
-		`INSERT INTO world_eruption (world_id, tier, fired_tick, event_id) VALUES ($1, $2, $3, $4)`,
-		worldID, firedTier, tickAfter, eventID); execErr != nil {
-		return "", 0, fmt.Errorf("runWorldTurn: insert world_eruption(%s): %w", firedTier, execErr)
 	}
 
 	if trace != nil {

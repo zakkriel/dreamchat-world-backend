@@ -66,7 +66,7 @@ func TestRunWorldActor_AuthorsWithinSize(t *testing.T) {
 	before := waCanonCount(t, ctx, pool, dlWorldID)
 	var out BeatOutcome
 
-	eventID, seqUsed, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "medium", baseTick, 0, &out, nil)
+	eventID, seqUsed, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "medium", baseTick, 0, nil, &out, nil)
 	if err != nil {
 		t.Fatalf("runWorldActor: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestRunWorldActor_InvalidAttemptFailsClosed(t *testing.T) {
 	before := waCanonCount(t, ctx, pool, dlWorldID)
 
 	var out BeatOutcome
-	if _, _, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "small", baseTick, 0, &out, nil); err == nil {
+	if _, _, err := orc.runWorldActor(ctx, dlWorldID, wtTavernID, "small", baseTick, 0, nil, &out, nil); err == nil {
 		t.Fatalf("runWorldActor did not fail on an invalid authored attempt")
 	}
 	if got := waCanonCount(t, ctx, pool, dlWorldID); got != before {

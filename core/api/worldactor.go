@@ -36,14 +36,16 @@ import (
 // Communicated co-presence check, an ActorMoved's resolved destination scene, …), never a location this
 // function assigns itself.
 //
-// Does NOT write world_eruption — Task 9's composer owns the fire-log row; this seat only authors and
-// commits the truth event itself.
+// Does NOT write world_eruption itself — Task 9's composer still OWNS the fire-log row; it now supplies
+// that write as a postCommitFn (ledger.go) which this seat hands straight to commitWorldPayload, so the
+// row lands inside the SAME transaction as the truth event it records. This seat only authors and
+// commits the truth event, and never inspects or invents the bookkeeping it carries.
 //
 // seqUsed reports how many (tick,seq) slots the commit consumed (commitWorldPayload's own seqAdvance —
 // 1 for a passthrough commit, ar.SeqAdvance/fallback-1 for an adjudicated one) — 0 on every error path
 // (the composer treats any error here as fatal and never threads seqUsed past it; task-9 review,
 // Important #1).
-func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size string, now int64, seq int, outcome *BeatOutcome, trace *BeatTrace) (eventID string, seqUsed int, err error) {
+func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size string, now int64, seq int, postCommit postCommitFn, outcome *BeatOutcome, trace *BeatTrace) (eventID string, seqUsed int, err error) {
 	var sliceRaw []byte
 	if err := o.DB.QueryRow(ctx, `SELECT fn_world_slice($1::uuid, $2::uuid)`, worldID, scene).Scan(&sliceRaw); err != nil {
 		return "", 0, fmt.Errorf("runWorldActor: fn_world_slice: %w", err)
@@ -79,7 +81,7 @@ func (o *Orchestrator) runWorldActor(ctx context.Context, worldID, scene, size s
 		return "", 0, fmt.Errorf("runWorldActor: %w", fieldErr)
 	}
 
-	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, nil, outcome, trace)
+	eventIDs, seqAdvance, halt, commitErr := o.commitWorldPayload(ctx, worldID, authored.ActorID, authored.Attempt, now, seq, postCommit, outcome, trace)
 	if commitErr != nil {
 		return "", 0, fmt.Errorf("runWorldActor: commit: %w", commitErr)
 	}
