@@ -1443,6 +1443,26 @@ $$;
 
 
 --
+-- Name: fn_journey_legs(uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_journey_legs(p_world_id uuid, p_span_seconds bigint) RETURNS integer
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT GREATEST(5, LEAST(10, COALESCE(
+    (SELECT legs FROM journey_legs_band
+       WHERE world_id = p_world_id AND max_span_seconds >= p_span_seconds
+       ORDER BY max_span_seconds ASC LIMIT 1),
+    CASE  -- built-in fallback (retune per-world via the table)
+      WHEN p_span_seconds <= 3600 THEN 5     -- <= 1 hour
+      WHEN p_span_seconds <= 86400 THEN 7    -- <= 1 day
+      ELSE 10
+    END
+  )));
+$$;
+
+
+--
 -- Name: fn_location_depth(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2241,6 +2261,8 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
   INSERT INTO extent_class_metres (world_id, class, radius_m)
   VALUES (p_world_id, 'intimate', 5), (p_world_id, 'small', 50), (p_world_id, 'medium', 200),
          (p_world_id, 'large', 1000), (p_world_id, 'vast', 5000) ON CONFLICT DO NOTHING;
+  INSERT INTO journey_legs_band (world_id, max_span_seconds, legs)
+  VALUES (p_world_id, 3600, 5), (p_world_id, 86400, 7), (p_world_id, 31536000, 10) ON CONFLICT DO NOTHING;
 $$;
 
 
@@ -2470,6 +2492,19 @@ CREATE TABLE public.journey (
     CONSTRAINT journey_legs_total_check CHECK ((legs_total > 0)),
     CONSTRAINT journey_span_seconds_check CHECK ((span_seconds > 0)),
     CONSTRAINT journey_status_check CHECK ((status = ANY (ARRAY['active'::text, 'arrived'::text, 'ended'::text])))
+);
+
+
+--
+-- Name: journey_legs_band; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.journey_legs_band (
+    world_id uuid NOT NULL,
+    max_span_seconds bigint NOT NULL,
+    legs integer NOT NULL,
+    CONSTRAINT journey_legs_band_legs_check CHECK ((legs > 0)),
+    CONSTRAINT journey_legs_band_max_span_seconds_check CHECK ((max_span_seconds > 0))
 );
 
 
@@ -2738,6 +2773,14 @@ ALTER TABLE ONLY public.extent_class_metres
 
 ALTER TABLE ONLY public.held_outcome
     ADD CONSTRAINT held_outcome_pkey PRIMARY KEY (held_id);
+
+
+--
+-- Name: journey_legs_band journey_legs_band_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.journey_legs_band
+    ADD CONSTRAINT journey_legs_band_pkey PRIMARY KEY (world_id, max_span_seconds);
 
 
 --
@@ -3286,4 +3329,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260805100003'),
     ('20260807100001'),
     ('20260807100002'),
-    ('20260807100003');
+    ('20260807100003'),
+    ('20260807100004');
