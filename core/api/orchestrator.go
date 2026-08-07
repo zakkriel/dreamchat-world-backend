@@ -235,17 +235,13 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				}
 				dur = d
 			} else {
-				class := attempt.DurationClass
-				if class == "" {
-					class = "instant"
-				}
-				d, derr := o.durationClassSeconds(ctx, worldID, class)
+				d, derr := o.nonMoveDurationSeconds(ctx, worldID, attempt.DurationClass)
 				if derr != nil {
 					return fmt.Errorf("fn_duration_class_seconds: %w", derr)
 				}
 				dur = d
 			}
-			overBudget := dur > budgetRemaining || dur > math.MaxInt64-curTick
+			over := overBudget(dur, budgetRemaining, curTick)
 			// Trace (Unit 3): capture the MOVE's physics + the §6 gate result. The perceived fact sheet
 			// is a DEBUG-ONLY extra read, so it is gated on trace != nil — a non-debug beat (nil trace)
 			// issues NO extra query and pays zero. A capture-read failure degrades (log + record without
@@ -257,9 +253,9 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 					log.Printf("trace: move fact sheet failed (debug-only capture, degrading): %v", fsErr)
 					fs = ""
 				}
-				trace.appendMove(attempt, fs, dur, budgetRemaining, !overBudget)
+				trace.appendMove(attempt, fs, dur, budgetRemaining, !over)
 			}
-			if overBudget {
+			if over {
 				outcome.HaltReason = "turn_budget"
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
@@ -302,12 +298,12 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			if sceneErr != nil {
 				return sceneErr
 			}
-			firedMag, seqUsed, wtErr := o.runWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
+			newSeq, cutBeat, wtErr := o.advanceWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
 			if wtErr != nil {
-				return fmt.Errorf("world's turn: %w", wtErr)
+				return wtErr
 			}
-			curSeq += seqUsed
-			if firedMag == "medium" || firedMag == "large" {
+			curSeq = newSeq
+			if cutBeat {
 				outcome.HaltReason = "world_eruption"
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
@@ -325,15 +321,11 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			// passthrough branch). If the duration exceeds what remains, the chain halts turn_budget
 			// WITHOUT calling adjudicate — the prefix stands, mirroring the pre-commit gate every other
 			// branch in this loop already uses. Still no Journey/accumulation logic.
-			class := attempt.DurationClass
-			if class == "" {
-				class = "instant"
-			}
-			dur, durErr := o.durationClassSeconds(ctx, worldID, class)
+			dur, durErr := o.nonMoveDurationSeconds(ctx, worldID, attempt.DurationClass)
 			if durErr != nil {
 				return fmt.Errorf("fn_duration_class_seconds: %w", durErr)
 			}
-			if dur > budgetRemaining || dur > math.MaxInt64-curTick {
+			if overBudget(dur, budgetRemaining, curTick) {
 				outcome.HaltReason = "turn_budget"
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
@@ -366,12 +358,12 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			if sceneErr != nil {
 				return sceneErr
 			}
-			firedMag, seqUsed, wtErr := o.runWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
+			newSeq, cutBeat, wtErr := o.advanceWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
 			if wtErr != nil {
-				return fmt.Errorf("world's turn: %w", wtErr)
+				return wtErr
 			}
-			curSeq += seqUsed
-			if firedMag == "medium" || firedMag == "large" {
+			curSeq = newSeq
+			if cutBeat {
 				outcome.HaltReason = "world_eruption"
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
@@ -403,6 +395,47 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = curTick - startTick
 	return nil
+}
+
+// nonMoveDurationSeconds resolves a non-move attempt's decomposer-tagged duration_class (Task 1's
+// parse-shape enum instant|short|medium|long|extremely_long) to seconds via fn_duration_class_seconds
+// (Task 1/Task 2), owning the ""→"instant" fallback (legacy input, or simply no estimate — Task 3) so
+// runChain's passthrough and adjudicated Stage-3 branches share ONE lookup instead of two byte-identical
+// copies. The move branch (ActorMoved) never calls this — its duration is real physics
+// (fnMoveDurationActor), not a duration_class.
+func (o *Orchestrator) nonMoveDurationSeconds(ctx context.Context, worldID, durationClass string) (int64, error) {
+	class := durationClass
+	if class == "" {
+		class = "instant"
+	}
+	return o.durationClassSeconds(ctx, worldID, class)
+}
+
+// overBudget reports whether dur (seconds) does not fit the beat's remaining §6 budget — either it
+// exceeds budgetRemaining outright, or curTick+dur would overflow int64 (the runaway/overflow guard,
+// belt-and-suspenders under `none`'s math.MaxInt64 budget where the first clause alone never fires, and
+// which also catches the speed-0 "blocked by arithmetic" sentinel, §2). Pure — no I/O, no receiver — so
+// both the move and non-move gates in runChain's Stage 3 (and the passthrough/adjudicated non-move
+// branches specifically) share the identical formula instead of each inlining its own copy.
+func overBudget(dur, budgetRemaining, curTick int64) bool {
+	return dur > budgetRemaining || dur > math.MaxInt64-curTick
+}
+
+// advanceWorldTurn runs the world's turn (runWorldTurn) after a committed clock-advancing attempt —
+// fires due scheduled events, then (if nothing medium/large already did) rolls the pressure tiers — and
+// reports whether the §5 cut applies (cutBeat, magnitude medium/large). It does NOT set
+// outcome.HaltReason/TicksAdvanced or return early: the caller (runChain's passthrough and adjudicated
+// Stage-4 blocks) owns the halt itself, exactly as before this extraction — this is a pure DRY
+// extraction of the two blocks that used to be byte-identical in both branches (task-9-brief ambiguity
+// resolution #3), including the "world's turn: %w" error-wrap text. sceneID is resolved by the caller's
+// own ensureScene() call BEFORE invoking this helper, unchanged from before. newSeq is curSeq +
+// runWorldTurn's own seqUsed — a direct drop-in replacement for the caller's prior `curSeq += seqUsed`.
+func (o *Orchestrator) advanceWorldTurn(ctx context.Context, worldID, sceneID string, attemptTickBefore, curTick int64, curSeq int, outcome *BeatOutcome, trace *BeatTrace) (newSeq int, cutBeat bool, err error) {
+	firedMag, seqUsed, wtErr := o.runWorldTurn(ctx, worldID, sceneID, attemptTickBefore, curTick, curSeq, outcome, trace)
+	if wtErr != nil {
+		return curSeq, false, fmt.Errorf("world's turn: %w", wtErr)
+	}
+	return curSeq + seqUsed, firedMag == "medium" || firedMag == "large", nil
 }
 
 // HeldOutcome is one pending held act read back from the held_outcome table: the NPC whose
