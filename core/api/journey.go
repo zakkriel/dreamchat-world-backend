@@ -292,3 +292,98 @@ func (o *Orchestrator) endJourney(ctx context.Context, j *Journey, status string
 	j.Status = status
 	return nil
 }
+
+// runJourneyLeg runs ONE leg of j, in order: compute the slice (legSliceSeconds), advance the
+// journey's clock in memory, run the world's turn — runWorldTurn, UNCHANGED, the seam its own
+// docstring promised — for (tickBefore, tickAfter] in the actor's CURRENT scene (actorLocation;
+// stage resolution is Task 8, not this leg), persist current_tick/legs_done, then decide in
+// priority order (design §4.3, R5):
+//
+//  1. A medium/large eruption fired this leg → the journey ENDS here, "journey_interrupted" (R5: a
+//     hard cut-in ends the journey outright — nothing suspends, nothing auto-resumes; the player is
+//     standing where it happened with a full turn and can simply restate).
+//  2. The threshold is met → for travel, the arrival move commits through the SAME apply path
+//     (commitWorldPayload, nil postCommit — an ordinary commit, not a bypass, so the perception
+//     fan-out happens for free) to goal_target; the journey ends 'arrived', "journey_arrived".
+//  3. The last leg is spent without the threshold met — only reachable for a watch whose horizon
+//     ran out (travel/wait's own threshold always closes exactly on the leg that spends
+//     span_seconds, by legSliceSeconds's own "last leg closes the span exactly" guarantee) → the
+//     journey ends 'ended', "journey_unresolved" — nothing waits forever.
+//  4. Otherwise the journey stays active, "journey_leg" — the player may continue.
+//
+// seq is threaded from 0 for the leg — it is its own turn, not a continuation of some outer beat's
+// seq. The arrival commit (case 2) starts PAST whatever (tick,seq) slots the world's turn itself
+// already consumed at tickAfter (seqUsed), so the two commits can never collide on the same slot —
+// the same discipline runWorldTurn's own eruption commit already uses against fireDuePending's
+// ledger fires.
+func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *BeatOutcome, trace *BeatTrace) error {
+	tickBefore := j.CurrentTick
+	tickAfter := tickBefore + legSliceSeconds(j)
+
+	scene, err := o.actorLocation(ctx, j.WorldID, j.ActorID)
+	if err != nil {
+		return fmt.Errorf("runJourneyLeg: actor location: %w", err)
+	}
+
+	firedMag, seqUsed, err := o.runWorldTurn(ctx, j.WorldID, scene, tickBefore, tickAfter, 0, outcome, trace)
+	if err != nil {
+		return fmt.Errorf("runJourneyLeg: runWorldTurn: %w", err)
+	}
+
+	j.CurrentTick = tickAfter
+	j.LegsDone++
+	if _, err := o.DB.Exec(ctx,
+		`UPDATE journey SET current_tick=$1, legs_done=$2 WHERE journey_id=$3::uuid`,
+		j.CurrentTick, j.LegsDone, j.ID); err != nil {
+		return fmt.Errorf("runJourneyLeg: persist: %w", err)
+	}
+
+	if eruptionCutsBeat(firedMag) {
+		if err := o.endJourney(ctx, j, "ended"); err != nil {
+			return fmt.Errorf("runJourneyLeg: end (interrupted): %w", err)
+		}
+		if outcome != nil {
+			outcome.HaltReason = "journey_interrupted"
+		}
+		return nil
+	}
+
+	met, err := o.thresholdMet(ctx, j)
+	if err != nil {
+		return fmt.Errorf("runJourneyLeg: thresholdMet: %w", err)
+	}
+	if met {
+		if j.Kind == "travel" {
+			arrival := Attempt{Type: "ActorMoved", Stated: "I arrive.", ToTargetID: j.GoalTarget}
+			_, _, halt, commitErr := o.commitWorldPayload(ctx, j.WorldID, j.ActorID, arrival, j.CurrentTick, seqUsed, nil, outcome, trace)
+			if commitErr != nil {
+				return fmt.Errorf("runJourneyLeg: arrival commit: %w", commitErr)
+			}
+			if halt != "" {
+				return fmt.Errorf("runJourneyLeg: arrival commit halted: %s", halt)
+			}
+		}
+		if err := o.endJourney(ctx, j, "arrived"); err != nil {
+			return fmt.Errorf("runJourneyLeg: end (arrived): %w", err)
+		}
+		if outcome != nil {
+			outcome.HaltReason = "journey_arrived"
+		}
+		return nil
+	}
+
+	if j.LegsDone >= j.LegsTotal {
+		if err := o.endJourney(ctx, j, "ended"); err != nil {
+			return fmt.Errorf("runJourneyLeg: end (unresolved): %w", err)
+		}
+		if outcome != nil {
+			outcome.HaltReason = "journey_unresolved"
+		}
+		return nil
+	}
+
+	if outcome != nil {
+		outcome.HaltReason = "journey_leg"
+	}
+	return nil
+}

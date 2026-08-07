@@ -237,3 +237,208 @@ func TestThresholdMet_UntilAtFlipsWhenTheEntityArrives(t *testing.T) {
 		t.Fatalf("thresholdMet = false after Mara arrived at Dock Street, want true")
 	}
 }
+
+// Task 5 — a leg runs, and the world gets its turn. runJourneyLeg composes legSliceSeconds,
+// runWorldTurn (unchanged), and thresholdMet/endJourney into ONE leg. wtDisableWorldActor is used
+// wherever a stray pressure-roll eruption would corrupt the assertion under test (arrival, the
+// horizon expiry); wtForceTierFires("medium") is used to make the interruption case deterministic.
+
+// The world takes a turn on EVERY leg — this is the ruling's "multiple chances to stop you", and it
+// is the reason the journey exists rather than a fast-forward: a pending_event scheduled inside the
+// leg's (tickBefore, tickAfter] window must fire during a single runJourneyLeg call.
+func TestRunJourneyLeg_FiresTheWorldsTurnEveryLeg(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // pressure off — this test is about the ledger, not a roll.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	attempt := Attempt{
+		Type:     "AttributeChanged",
+		Stated:   "I wait quietly at the bar",
+		TargetID: dlKadeID,
+		Sustain:  &Sustain{Kind: "for", Seconds: 1000},
+	}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	tickBefore := j.CurrentTick
+	slice := legSliceSeconds(j)
+	if slice < 1 {
+		t.Fatalf("legSliceSeconds = %d, want >=1 (a pending row at tickBefore+1 must land inside the leg's window)", slice)
+	}
+
+	// A due pending_event, exactly the shape ledger_test.go's own fixtures use: Mara speaks to Kade.
+	pendingAttempt := `{"type":"Communicated","stated":"a gull screeches overhead","listener_id":"` + dlKadeID + `","content":"just a gull"}`
+	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, tickBefore+1, "small", wtMaraID, pendingAttempt)
+	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
+
+	outcome := &BeatOutcome{}
+	if err := orc.runJourneyLeg(ctx, j, outcome, nil); err != nil {
+		t.Fatalf("runJourneyLeg: %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
+
+	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
+		t.Fatalf("pending_event status = %q, want fired — the world's turn must run on every leg", status)
+	}
+	if outcome.HaltReason != "journey_leg" {
+		t.Fatalf("HaltReason = %q, want journey_leg (a quiet small-magnitude ledger fire never ends the journey)", outcome.HaltReason)
+	}
+	if j.Status != "active" {
+		t.Fatalf("Journey.Status = %q, want active (one quiet leg of many does not end the journey)", j.Status)
+	}
+}
+
+// A hard cut-in ends the journey outright (R5) — nothing is suspended, nothing auto-resumes.
+func TestRunJourneyLeg_MediumEruptionEndsTheJourney(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtForceTierFires(t, ctx, pool, dlWorldID, "medium")
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	attempt := Attempt{
+		Type:     "AttributeChanged",
+		Stated:   "I wait quietly at the bar",
+		TargetID: dlKadeID,
+		Sustain:  &Sustain{Kind: "for", Seconds: 1000},
+	}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	outcome := &BeatOutcome{}
+	if err := orc.runJourneyLeg(ctx, j, outcome, nil); err != nil {
+		t.Fatalf("runJourneyLeg: %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
+
+	if outcome.HaltReason != "journey_interrupted" {
+		t.Fatalf("HaltReason = %q, want journey_interrupted (R5 — a hard cut-in ends the journey outright)", outcome.HaltReason)
+	}
+	if j.Status != "ended" {
+		t.Fatalf("Journey.Status (in-memory) = %q, want ended", j.Status)
+	}
+	var dbStatus string
+	if err := pool.QueryRow(ctx, `SELECT status FROM journey WHERE journey_id=$1::uuid`, j.ID).Scan(&dbStatus); err != nil {
+		t.Fatalf("read back journey.status: %v", err)
+	}
+	if dbStatus != "ended" {
+		t.Fatalf("journey.status in the DB = %q, want ended — nothing is suspended, nothing auto-resumes", dbStatus)
+	}
+}
+
+// Walking the whole span arrives, and arrival is a real committed move — the actor is actually
+// there, not merely flagged 'arrived'.
+func TestRunJourneyLeg_LastLegArrivesAndCommitsTheMove(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // no stray eruption may cut the trip short.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+
+	var last *BeatOutcome
+	for i := range j.LegsTotal {
+		leg := &BeatOutcome{}
+		if err := orc.runJourneyLeg(ctx, j, leg, nil); err != nil {
+			t.Fatalf("runJourneyLeg (leg %d): %v", i, err)
+		}
+		committed := leg.Committed
+		t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, committed) })
+		last = leg
+		if j.Status != "active" {
+			break
+		}
+	}
+
+	if last == nil || last.HaltReason != "journey_arrived" {
+		got := ""
+		if last != nil {
+			got = last.HaltReason
+		}
+		t.Fatalf("HaltReason = %q, want journey_arrived", got)
+	}
+	if j.Status != "arrived" {
+		t.Fatalf("Journey.Status = %q, want arrived", j.Status)
+	}
+	if got := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); got != jrDockStreetID {
+		t.Fatalf("actor_state.location_id = %q, want the goal %q — arrival is a committed move, not a status flag", got, jrDockStreetID)
+	}
+}
+
+// A watch whose horizon expires ends unresolved — nothing waits forever.
+func TestRunJourneyLeg_WatchHorizonExpiresUnresolved(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // this proves the horizon, not a stray interruption.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	// Watch for Mara reaching Dock Street — she never does, so the predicate never flips.
+	attempt := Attempt{
+		Type:    "AttributeChanged",
+		Stated:  "I wait until Mara reaches Dock Street",
+		Sustain: &Sustain{Kind: "until_at", EntityID: wtMaraID, PlaceID: jrDockStreetID},
+	}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+	if j.Kind != "watch" {
+		t.Fatalf("Kind = %q, want watch", j.Kind)
+	}
+
+	legsTotal := j.LegsTotal
+	var last *BeatOutcome
+	for i := range legsTotal {
+		leg := &BeatOutcome{}
+		if err := orc.runJourneyLeg(ctx, j, leg, nil); err != nil {
+			t.Fatalf("runJourneyLeg (leg %d): %v", i, err)
+		}
+		committed := leg.Committed
+		t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, committed) })
+		last = leg
+		if j.Status != "active" {
+			break
+		}
+	}
+
+	if last == nil || last.HaltReason != "journey_unresolved" {
+		got := ""
+		if last != nil {
+			got = last.HaltReason
+		}
+		t.Fatalf("HaltReason = %q, want journey_unresolved (the watch's horizon ran out without the fact)", got)
+	}
+	if j.Status != "ended" {
+		t.Fatalf("Journey.Status = %q, want ended", j.Status)
+	}
+	if j.LegsDone != legsTotal {
+		t.Fatalf("LegsDone = %d, want all %d legs consumed (nothing waits forever)", j.LegsDone, legsTotal)
+	}
+}
