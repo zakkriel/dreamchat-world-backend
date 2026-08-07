@@ -12,10 +12,10 @@ import (
 // Lantern play world (`make reset` precedes go test in the battery — matches ledger_test.go's/
 // pressure_test.go's/worldactor_test.go's wtOrchestrator/dlWorldID/wtMaraID pattern).
 //
-// The roll is deterministic (pressure.go's deterministicUnit — a pure hash, never math/rand), so these
+// The roll is deterministic (pressure.go's deterministicRoll — a pure hash, never math/rand), so these
 // tests FORCE a fire via world_actor_config (task-9-brief Test resolution): climb_rate=1,
 // climb_chunk_ticks=1, cap=1 saturates a tier's chance to exactly 1.0 for any tick past its last
-// eruption, and rollTier's roll is always < 1.0 (deterministicUnit's range is [0,1)) — so that tier
+// eruption, and rollTier's roll is always < 1.0 (deterministicRoll's range is [0,1)) — so that tier
 // fires with certainty. The other tiers are pinned to climb_rate=0/cap=0 (fn_pressure_chance's outer
 // COALESCE guarantees exactly 0 for that shape — TestRollTier_ChanceZeroNeverFires, pressure_test.go),
 // so they never fire.

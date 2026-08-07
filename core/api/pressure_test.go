@@ -13,15 +13,15 @@ import (
 
 // TestDeterministicUnit_Stable is the brief's own literal test (task-6-brief.md Step 1).
 func TestDeterministicUnit_Stable(t *testing.T) {
-	a := deterministicUnit("w", 100, 0, "small")
-	b := deterministicUnit("w", 100, 0, "small")
+	a := deterministicRoll("w", 100, 0, "small")
+	b := deterministicRoll("w", 100, 0, "small")
 	if a != b {
 		t.Fatalf("not deterministic: %v %v", a, b)
 	}
 	if a < 0 || a >= 1 {
 		t.Fatalf("out of range: %v", a)
 	}
-	if deterministicUnit("w", 101, 0, "small") == a {
+	if deterministicRoll("w", 101, 0, "small") == a {
 		t.Fatalf("tick should vary the draw")
 	}
 }
@@ -30,14 +30,14 @@ func TestDeterministicUnit_Stable(t *testing.T) {
 // tier must each independently move the draw too — a pure hash of only SOME of the four inputs would
 // still pass TestDeterministicUnit_Stable but silently ignore the others.
 func TestDeterministicUnit_VariesByAllInputs(t *testing.T) {
-	base := deterministicUnit("w", 100, 0, "small")
-	if deterministicUnit("w", 100, 1, "small") == base {
+	base := deterministicRoll("w", 100, 0, "small")
+	if deterministicRoll("w", 100, 1, "small") == base {
 		t.Fatalf("lastEruption should vary the draw")
 	}
-	if deterministicUnit("w", 100, 0, "medium") == base {
+	if deterministicRoll("w", 100, 0, "medium") == base {
 		t.Fatalf("tier should vary the draw")
 	}
-	if deterministicUnit("other-world", 100, 0, "small") == base {
+	if deterministicRoll("other-world", 100, 0, "small") == base {
 		t.Fatalf("worldID should vary the draw")
 	}
 }

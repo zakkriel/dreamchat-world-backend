@@ -118,7 +118,7 @@ type TraceWorldTurn struct {
 }
 
 // TraceRoll is one pressure tier's evaluated roll: the derived chance (fn_pressure_chance), the
-// deterministic draw (deterministicUnit), and whether roll < chance fired it. Both numbers ride along
+// deterministic draw (deterministicRoll), and whether roll < chance fired it. Both numbers ride along
 // (not just the boolean) so the trace shows the actual numbers behind the decision — the tuning surface
 // this task exists for.
 type TraceRoll struct {

@@ -11,16 +11,16 @@ import (
 // never NULL. This file adds the Go side that decides whether a tier actually fires THIS slot.
 // "Deterministic" is a hard requirement (replay must reproduce the identical result byte-for-byte),
 // so the draw is a pure hash of committed state — worldID/tick/lastEruption/tier — NEVER math/rand
-// or wall-clock. One responsibility per function: deterministicUnit (the pure draw), pressureChance
+// or wall-clock. One responsibility per function: deterministicRoll (the pure draw), pressureChance
 // (the SQL read), rollTier (compose the two into a fire/no-fire decision).
 
-// deterministicUnit hashes worldID|tick|lastEruption|tier with fnv64a and maps the result into
+// deterministicRoll hashes worldID|tick|lastEruption|tier with fnv64a and maps the result into
 // [0,1) by taking the top 53 bits of the 64-bit sum (float64's mantissa is 53 bits) and dividing by
 // 2^53. Pure: no math/rand, no wall-clock — identical inputs ALWAYS produce the identical output
 // (replay-safe), and changing any one of the four inputs (tick, lastEruption, tier, or worldID)
 // changes the output. The '|' separators between fields keep e.g. worldID="a",tick=12 distinct from
 // worldID="a1",tick=2 — an unseparated concatenation could collide across such boundaries.
-func deterministicUnit(worldID string, tick, lastEruption int64, tier string) float64 {
+func deterministicRoll(worldID string, tick, lastEruption int64, tier string) float64 {
 	h := fnv.New64a()
 	fmt.Fprintf(h, "%s|%d|%d|%s", worldID, tick, lastEruption, tier)
 	return float64(h.Sum64()>>11) / float64(uint64(1)<<53)
@@ -57,7 +57,7 @@ func (o *Orchestrator) rollTier(ctx context.Context, worldID, tier string, now, 
 	if err != nil {
 		return false, 0, 0, err
 	}
-	roll = deterministicUnit(worldID, now, lastEruption, tier)
+	roll = deterministicRoll(worldID, now, lastEruption, tier)
 	fired = roll < chance
 	return fired, chance, roll, nil
 }

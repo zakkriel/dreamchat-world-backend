@@ -11,8 +11,10 @@ import (
 // within the drawn size. It sees the WHOLE WORLD (fn_world_slice — unlike every other seat, which
 // reasons over a gather_slice-bounded action or a fn_fact_sheet-bounded set of targets), authors a truth
 // event constrained to the drawn size, and commits it through the SAME pipeline everyone else uses
-// (commitWorldPayload — ledger.go's Task 8 DRY extraction, shared with fireDuePending). Not yet wired
-// into the beat (Task 9 does that) — directly callable and directly tested until then.
+// (commitWorldPayload — ledger.go's Task 8 DRY extraction, shared with fireDuePending). It is LIVE in
+// every beat: runWorldTurn (worldturn.go) calls it when a tier fires, and runChain invokes the world's
+// turn after each committed clock-advancing attempt (orchestrator.go advanceWorldTurn); the real driver
+// is bound in beathandler.go. It also stays directly callable (and directly tested) on its own.
 
 // runWorldActor builds the world-scope payload (fn_world_slice(worldID, scene)), hands it to the bound
 // WorldActor driver with `size` as an input constraint (the drawn tier: "small"|"medium"|"large") and
