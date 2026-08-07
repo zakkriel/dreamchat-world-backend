@@ -2507,6 +2507,7 @@ CREATE TABLE public.world_actor_setting (
 --
 
 CREATE TABLE public.world_eruption (
+    eruption_id uuid DEFAULT gen_random_uuid() NOT NULL,
     world_id uuid NOT NULL,
     tier text NOT NULL,
     fired_tick bigint NOT NULL,
@@ -2718,6 +2719,14 @@ ALTER TABLE ONLY public.world_actor_config
 
 ALTER TABLE ONLY public.world_actor_setting
     ADD CONSTRAINT world_actor_setting_pkey PRIMARY KEY (world_id);
+
+
+--
+-- Name: world_eruption world_eruption_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_eruption
+    ADD CONSTRAINT world_eruption_pkey PRIMARY KEY (eruption_id);
 
 
 --
@@ -3060,6 +3069,14 @@ ALTER TABLE ONLY public.status_modifier
 
 ALTER TABLE ONLY public.trait_provenance
     ADD CONSTRAINT trait_provenance_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.canon_event(event_id);
+
+
+--
+-- Name: world_eruption world_eruption_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_eruption
+    ADD CONSTRAINT world_eruption_event_id_fkey FOREIGN KEY (event_id) REFERENCES public.canon_event(event_id);
 
 
 --

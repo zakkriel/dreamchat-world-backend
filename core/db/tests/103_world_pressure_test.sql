@@ -77,7 +77,7 @@ SELECT is(
 -- accrual is derived from the fire-log, not a persisted counter.
 SELECT lives_ok(
   $$INSERT INTO world_eruption (world_id, tier, fired_tick, event_id)
-    VALUES ('22222222-2222-2222-2222-222222222222','small',6000,gen_random_uuid())$$,
+    VALUES ('22222222-2222-2222-2222-222222222222','small',6000,(SELECT event_id FROM canon_event WHERE world_id='22222222-2222-2222-2222-222222222222' LIMIT 1))$$,
   '(c0) inserting a world_eruption row (the fire-log) succeeds');
 
 SELECT is(

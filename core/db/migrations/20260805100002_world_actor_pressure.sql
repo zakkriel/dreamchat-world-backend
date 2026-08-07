@@ -23,10 +23,11 @@ CREATE TABLE world_actor_setting (
   intensity numeric NOT NULL DEFAULT 1.0 CHECK (intensity >= 0)
 );
 CREATE TABLE world_eruption (           -- append-only: the last-eruption source + fire audit log
+  eruption_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),  -- like every sibling log table (canon_event, state_mutation, perception_record, pending_event)
   world_id uuid NOT NULL,
   tier text NOT NULL CHECK (tier IN ('small','medium','large')),
   fired_tick bigint NOT NULL,
-  event_id uuid NOT NULL
+  event_id uuid NOT NULL REFERENCES canon_event(event_id)  -- every fire-log row points to the real committed eruption event
 );
 CREATE INDEX idx_world_eruption_lookup ON world_eruption (world_id, tier, fired_tick DESC);
 
@@ -80,19 +81,10 @@ CREATE OR REPLACE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS v
   INSERT INTO world_actor_setting (world_id) VALUES (p_world_id) ON CONFLICT DO NOTHING;
 $$;
 
--- Backfill: no world-enumerating table exists (Task 2), but movement_type
--- DOES enumerate every world (seed_world_defaults always seeds a 'walk' row
--- into it), so use it to backfill pressure config + setting onto any world
--- that already existed before this migration. Same tier/rate/chunk/cap values
--- as seed_world_defaults above, so newly- and previously-seeded worlds match.
--- No-op against `make reset` (no worlds exist yet at migrate-time); this is
--- for applying the migration to an already-populated DB.
-INSERT INTO world_actor_config (world_id, tier, climb_rate, climb_chunk_ticks, cap)
-SELECT DISTINCT mt.world_id, v.tier, v.rate, v.chunk, 0.70
-FROM (SELECT DISTINCT world_id FROM movement_type) mt,
-     (VALUES ('small',0.01,60),('medium',0.01,3600),('large',0.01,86400)) AS v(tier,rate,chunk)
-ON CONFLICT DO NOTHING;
-INSERT INTO world_actor_setting (world_id) SELECT DISTINCT world_id FROM movement_type ON CONFLICT DO NOTHING;
+-- No standalone backfill: like sibling migration 20260805100001 (duration_class),
+-- new worlds get their config from seed_world_defaults, and fn_pressure_chance's
+-- own COALESCE(...,0) safely returns 0 ("no config" == "world actor off") for any
+-- world not yet seeded — so there are no duplicated per-tier defaults to drift.
 
 -- migrate:down
 
