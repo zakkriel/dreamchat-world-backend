@@ -45,15 +45,14 @@ type sceneNow struct {
 }
 
 // sceneView is the scene_current/1 projection: perception-bound, schema_version-stamped, no canon
-// row crosses (B-1, I-3, D-7). Journey is `any` and always nil this rung — Task 2 (design §4.8, the
-// journeyBlock) fills it in with a typed value; leaving it untyped here means Task 1 makes no claim
-// about a shape it does not yet produce.
+// row crosses (B-1, I-3, D-7). Journey is the rung3 Task 2 block (journey.go's journeyBlock), or nil
+// when the viewer holds no active journey — never an empty/placeholder value for "not travelling".
 type sceneView struct {
 	SchemaVersion string             `json:"schema_version"`
 	Place         scenePlace         `json:"place"`
 	Participants  []sceneParticipant `json:"participants"`
 	Now           sceneNow           `json:"now"`
-	Journey       any                `json:"journey"`
+	Journey       *journeyBlock      `json:"journey"`
 	Current       []string           `json:"current"` // "what matters now" — payload.Lines verbatim; prose the FE renders as-is (D-7), never structured state to interpret
 }
 
@@ -186,6 +185,11 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 		current = []string{}
 	}
 
+	journey, err := (&Orchestrator{DB: pool}).journeyBlock(ctx, worldID, viewerID)
+	if err != nil {
+		return sceneView{}, fmt.Errorf("buildScene: journeyBlock: %w", err)
+	}
+
 	return sceneView{
 		SchemaVersion: sceneCurrentSchemaVersion,
 		Place: scenePlace{
@@ -199,7 +203,7 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 			Tick:         tick,
 			DisplayLabel: nullIfEmpty(displayLabel),
 		},
-		Journey: nil, // Task 2: the journeyBlock, or null when the viewer is not on one
+		Journey: journey,
 		Current: current,
 	}, nil
 }

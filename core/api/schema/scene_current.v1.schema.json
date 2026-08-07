@@ -40,10 +40,33 @@
         "display_label": { "type": ["string", "null"] }
       }
     },
-    "journey": { "type": "null" },
+    "journey": {
+      "oneOf": [
+        { "type": "null" },
+        { "$ref": "#/$defs/journey_block" }
+      ]
+    },
     "current": {
       "type": "array",
       "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "journey_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active", "kind", "goal_label", "where_label", "progress", "legs_done", "legs_total", "interruptible", "status"],
+      "properties": {
+        "active":        { "type": "boolean" },
+        "kind":          { "enum": ["travel", "wait", "watch"] },
+        "goal_label":    { "type": ["string", "null"] },
+        "where_label":   { "type": ["string", "null"] },
+        "progress":      { "type": "number", "minimum": 0, "maximum": 1 },
+        "legs_done":     { "type": "integer", "minimum": 0 },
+        "legs_total":    { "type": "integer", "minimum": 0 },
+        "interruptible": { "type": "boolean" },
+        "status":        { "enum": ["active", "arrived", "ended"] }
+      }
     }
   }
 }

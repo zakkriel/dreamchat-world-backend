@@ -277,7 +277,7 @@ func TestGenSceneCurrentPayloads(t *testing.T) {
 		t.Skip("SCENE_PAYLOAD_DIR unset — this generator only runs from ci/gen_payloads.sh")
 	}
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	h := NewSceneHandler(pool, true) // debug → honor ?viewer=
 
 	write := func(name, viewer string) {
@@ -294,4 +294,135 @@ func TestGenSceneCurrentPayloads(t *testing.T) {
 	}
 	write("scene_current_P.json", playerID)
 	write("scene_current_J.json", jonasID)
+
+	// A payload with `journey` NON-null (rung3 Task 2): every payload above has journey=null, so
+	// without this the schema's journey_block $defs branch is declared but never actually exercised
+	// by a real payload (make schema-contract's whole point). Written directly against the journey
+	// table — not via startJourney/real move physics, which is not this generator's concern — and
+	// cleaned up by (world_id, actor_id) regardless of outcome: a leaked active-journey row would
+	// poison the unique partial index on every later run against this actor (has bitten twice).
+	ctx := context.Background()
+	var journeyID string
+	if err := pool.QueryRow(ctx, `
+		INSERT INTO journey (world_id, actor_id, kind, threshold, span_seconds, legs_total, legs_done,
+		                      started_tick, current_tick, goal_target, status)
+		VALUES ($1::uuid, $2::uuid, 'travel', '{"kind":"span"}'::jsonb, 60, 6, 2, 1, 25, $3::uuid, 'active')
+		RETURNING journey_id`,
+		worldID, playerID, jonasID).Scan(&journeyID); err != nil {
+		t.Fatalf("mid-journey fixture: insert: %v", err)
+	}
+	t.Cleanup(func() {
+		if _, err := pool.Exec(context.Background(),
+			`DELETE FROM journey WHERE world_id=$1::uuid AND actor_id=$2::uuid`, worldID, playerID); err != nil {
+			t.Fatalf("mid-journey fixture: cleanup: %v", err)
+		}
+	})
+	write("scene_current_P_journeying.json", playerID)
+}
+
+// TestJourneyBlock_ReportsWhereYouAreHeadedAndHowFar (plan rung3 Task 2, step 1) exercises the real
+// Drowned Lantern travel journey (dlWorldID/dlKadeID/jrDockStreetID — journey_test.go's own fixture)
+// through journeyBlock rather than scene/current's HTTP layer, so it pins the projection itself: the
+// block reports Kade's OWN name for the destination (fn_display_name), never the raw target uuid,
+// and legs_done/legs_total/progress track the persisted row as legs run — progress must rise, never
+// go backwards, across at least one leg.
+func TestJourneyBlock_ReportsWhereYouAreHeadedAndHowFar(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // no stray eruption may cut the trip short mid-assertion.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	var wantGoalLabel string
+	if err := pool.QueryRow(ctx, `SELECT fn_display_name($1,$2::uuid,$3::uuid)`,
+		dlWorldID, dlKadeID, jrDockStreetID).Scan(&wantGoalLabel); err != nil {
+		t.Fatalf("expected goal label: %v", err)
+	}
+
+	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+
+	before, err := orc.journeyBlock(ctx, dlWorldID, dlKadeID)
+	if err != nil {
+		t.Fatalf("journeyBlock (just started): %v", err)
+	}
+	if before == nil {
+		t.Fatalf("journeyBlock = nil, want the journey just started")
+	}
+	if before.Kind != "travel" || !before.Active || before.Status != "active" || !before.Interruptible {
+		t.Fatalf("just-started block = %+v, want an active, interruptible travel block", before)
+	}
+	if before.LegsTotal != j.LegsTotal || before.LegsDone != 0 {
+		t.Fatalf("LegsTotal/LegsDone = %d/%d, want %d/0", before.LegsTotal, before.LegsDone, j.LegsTotal)
+	}
+	if before.GoalLabel == nil || *before.GoalLabel != wantGoalLabel || *before.GoalLabel == jrDockStreetID {
+		t.Fatalf("GoalLabel = %v, want the viewer's own label %q, never the raw target id %q", before.GoalLabel, wantGoalLabel, jrDockStreetID)
+	}
+
+	lastProgress := before.Progress
+	rose := false
+	for i := range j.LegsTotal {
+		leg := &BeatOutcome{}
+		if err := orc.runJourneyLeg(ctx, j, leg, nil); err != nil {
+			t.Fatalf("runJourneyLeg (leg %d): %v", i, err)
+		}
+		committed := leg.Committed
+		t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, committed) })
+		if j.Status != "active" {
+			break // the trip arrived/ended — journeyBlock's own null-once-inactive contract is the sibling test's job.
+		}
+
+		block, err := orc.journeyBlock(ctx, dlWorldID, dlKadeID)
+		if err != nil {
+			t.Fatalf("journeyBlock (after leg %d): %v", i, err)
+		}
+		if block == nil {
+			t.Fatalf("journeyBlock = nil after leg %d, journey still active", i)
+		}
+		if block.LegsDone != j.LegsDone {
+			t.Fatalf("LegsDone = %d, want the row's %d after leg %d", block.LegsDone, j.LegsDone, i)
+		}
+		if block.Progress < lastProgress {
+			t.Fatalf("Progress went backwards after leg %d: %v -> %v", i, lastProgress, block.Progress)
+		}
+		if block.Progress > lastProgress {
+			rose = true
+		}
+		lastProgress = block.Progress
+	}
+	if !rose {
+		t.Fatalf("progress never rose across any leg (started at %v, ended at %v)", before.Progress, lastProgress)
+	}
+}
+
+// TestJourneyBlock_NullWhenNotTravelling (plan rung3 Task 2, step 1) pins the "not travelling" side:
+// a viewer with no journey row at all — no active journey, no journey table row of any kind for the
+// pair — gets a real nil block, never an empty/placeholder value. Fresh random ids (no seed
+// dependency): activeJourney's query needs no other row to exist.
+func TestJourneyBlock_NullWhenNotTravelling(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	orc := wtOrchestrator(pool)
+
+	var freshWorld, freshActor string
+	if err := pool.QueryRow(ctx, `SELECT gen_random_uuid(), gen_random_uuid()`).Scan(&freshWorld, &freshActor); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+
+	block, err := orc.journeyBlock(ctx, freshWorld, freshActor)
+	if err != nil {
+		t.Fatalf("journeyBlock: %v", err)
+	}
+	if block != nil {
+		t.Fatalf("journeyBlock = %+v, want nil (viewer holds no journey)", block)
+	}
 }

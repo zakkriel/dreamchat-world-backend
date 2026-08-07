@@ -565,3 +565,76 @@ func (o *Orchestrator) journeyScene(ctx context.Context, j *Journey, tickAfter i
 	loc, err := o.actorLocation(ctx, j.WorldID, j.ActorID)
 	return loc, point, false, err
 }
+
+// journeyBlock is the scene projection's `journey` field (design §4.8, plan rung3 Task 2; schema
+// core/api/schema/scene_current.v1.schema.json's `$defs.journey_block`): the viewer's OWN read on
+// wherever they stand mid-journey — a label for the destination and for the place currently
+// underfoot (never a raw id, D-7/B-1), a 0..1 progress fraction, and `interruptible=true` for as
+// long as the journey stays active (the honest "the world may still stop you" the play page needs
+// to say, rather than implying safety once a trip has begun).
+type journeyBlock struct {
+	Active        bool    `json:"active"`
+	Kind          string  `json:"kind"`          // "travel" | "wait" | "watch"
+	GoalLabel     *string `json:"goal_label"`     // the viewer's own name for the destination; nil for wait/watch (no goal_target)
+	WhereLabel    *string `json:"where_label"`    // the place currently being passed through; nil for open road
+	Progress      float64 `json:"progress"`       // 0..1 — journeyProgress against the row's own CurrentTick
+	LegsDone      int     `json:"legs_done"`
+	LegsTotal     int     `json:"legs_total"`
+	Interruptible bool    `json:"interruptible"`  // true while active — the world may still stop you
+	Status        string  `json:"status"`         // "active" | "arrived" | "ended"
+}
+
+// journeyBlock reads worldID/viewerID's ACTIVE journey fresh (activeJourney's own discipline — no
+// server memory) and projects it into the scene payload's shape. Returns (nil, nil) when the viewer
+// holds no active journey: "not travelling" is the ordinary case, never an error, and scene/current
+// ships a real `null` for it rather than an empty/placeholder block — this function only ever
+// produces a block whose Status is "active" (activeJourney's own WHERE clause never returns an
+// arrived/ended row); the wider status enum exists for the journey block's OTHER caller, the beat
+// stream's post-resolution `journey` frame (design §4.8, rung3 Task 3), which projects the row it
+// already holds in memory the instant a leg ends it.
+func (o *Orchestrator) journeyBlock(ctx context.Context, worldID, viewerID string) (*journeyBlock, error) {
+	j, err := o.activeJourney(ctx, worldID, viewerID)
+	if err != nil {
+		return nil, fmt.Errorf("journeyBlock: activeJourney: %w", err)
+	}
+	if j == nil {
+		return nil, nil
+	}
+
+	displayName := func(entityID string) (*string, error) {
+		if entityID == "" {
+			return nil, nil
+		}
+		var label string
+		if err := o.DB.QueryRow(ctx, `SELECT fn_display_name($1::uuid, $2::uuid, $3::uuid)`,
+			worldID, viewerID, entityID).Scan(&label); err != nil {
+			return nil, err
+		}
+		return &label, nil
+	}
+
+	goalLabel, err := displayName(j.GoalTarget)
+	if err != nil {
+		return nil, fmt.Errorf("journeyBlock: goal_label: %w", err)
+	}
+	// where_label: the place the traveller is currently passing through (j.StageID — journeyScene's
+	// own "known place underfoot" bookkeeping, set only once a leg lands ON a recognized place), or
+	// nil for open road / a wait-watch journey that never populates it (journeyScene never touches
+	// stage_id for a non-travel kind).
+	whereLabel, err := displayName(j.StageID)
+	if err != nil {
+		return nil, fmt.Errorf("journeyBlock: where_label: %w", err)
+	}
+
+	return &journeyBlock{
+		Active:        j.Status == "active",
+		Kind:          j.Kind,
+		GoalLabel:     goalLabel,
+		WhereLabel:    whereLabel,
+		Progress:      journeyProgress(j, j.CurrentTick),
+		LegsDone:      j.LegsDone,
+		LegsTotal:     j.LegsTotal,
+		Interruptible: j.Status == "active",
+		Status:        j.Status,
+	}, nil
+}
