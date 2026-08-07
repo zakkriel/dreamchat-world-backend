@@ -87,6 +87,34 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		UnresolvedCandidates: []string{},
 		Telegraphs:           []string{},
 	}
+
+	// R6 / design §4.7: read the actor's active journey fresh from the table — no server memory, no
+	// session object, the same discipline pendingHeldOutcomes already applies for held acts — BEFORE
+	// the chain runs, and route on it. "Continue advances one leg. Any other input ends the journey
+	// and runs as a normal turn where you stand" (founder, R6). In this rung "continue" IS an empty
+	// chain (rung 3 maps POST /beats/continue onto exactly that): an empty chain with an active
+	// journey runs ONE leg INSTEAD OF the normal chain/floor path below, never in addition to it — if
+	// this fell through to runChain, its own Step-5 instant-floor tail would ALSO fire on the empty
+	// chain (curTick == startTick), costing a second clock advance and a second world's turn for one
+	// continue press. A non-empty chain is the player changing their mind: the journey ends right
+	// here, standing exactly where the interruption found them, and falls through to the ordinary path.
+	j, jErr := o.activeJourney(ctx, worldID, actorID)
+	if jErr != nil {
+		return outcome, fmt.Errorf("active journey: %w", jErr)
+	}
+	if j != nil {
+		if len(chain) == 0 {
+			if legErr := o.runJourneyLeg(ctx, j, &outcome, trace); legErr != nil {
+				return outcome, fmt.Errorf("journey leg: %w", legErr)
+			}
+			outcome.TicksAdvanced = j.CurrentTick - startTick
+			return outcome, nil
+		}
+		if endErr := o.endJourney(ctx, j, "ended"); endErr != nil {
+			return outcome, fmt.Errorf("end journey: %w", endErr)
+		}
+	}
+
 	// §6: the beat's cumulative time budget is derived from the scene's CURRENT tension at beat
 	// start (measured at ask-time, never stored). An unset scene reads 'none' → ∞ and never halts.
 	budgetRemaining, err := o.beatBudgetSeconds(ctx, worldID, actorID)

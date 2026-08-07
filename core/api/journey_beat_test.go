@@ -77,8 +77,12 @@ func TestRunBeat_OverBudgetMoveBecomesAJourney(t *testing.T) {
 
 	var status string
 	var legsTotal, legsDone int
+	// Task 7 note: filtered to status='active' (not just world_id/actor_id) — this playerID/worldID
+	// pair is reused across several files' fixtures, and an unfiltered read risks picking up an
+	// unrelated leftover row (any prior test's own journey, ended by an unrelated later beat) instead
+	// of the one THIS test just created.
 	if err := pool.QueryRow(ctx,
-		`SELECT status, legs_total, legs_done FROM journey WHERE world_id=$1 AND actor_id=$2`,
+		`SELECT status, legs_total, legs_done FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`,
 		worldID, playerID).Scan(&status, &legsTotal, &legsDone); err != nil {
 		t.Fatalf("active journey row: %v", err)
 	}

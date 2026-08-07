@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -440,5 +441,134 @@ func TestRunJourneyLeg_WatchHorizonExpiresUnresolved(t *testing.T) {
 	}
 	if j.LegsDone != legsTotal {
 		t.Fatalf("LegsDone = %d, want all %d legs consumed (nothing waits forever)", j.LegsDone, legsTotal)
+	}
+}
+
+// Task 7 — continue, and changing your mind (R6): "the actions are all typed… there is no waiting or
+// loading, so the user cannot ever interrupt its own actions while they are being computed unless the
+// world interrupts him first. And after an interruption the user has full autonomy." In this rung
+// "continue" IS an empty chain (rung 3 maps POST /beats/continue onto exactly that) — RunBeat reads
+// the actor's active journey fresh, then routes: an empty chain runs one leg IN PLACE OF the normal
+// chain/floor path; any other chain ends the journey and falls through to an ordinary beat.
+
+// Continue = an empty chain while a journey is active: it advances exactly one leg and commits no new
+// action. This also pins the instant-floor interaction the plan calls out by name: runChain's own
+// Step-5 tail fires on ANY empty chain (curTick == startTick) — if RunBeat fell through to runChain
+// here instead of intercepting, the beat would cost the leg's own slice AND the 2s instant floor AND
+// a second world's turn. Asserting the journey's persisted current_tick advanced by EXACTLY the leg's
+// own slice (not slice+2) is what catches that regression; legs_done and status pin the rest.
+func TestRunBeat_EmptyChainAdvancesTheActiveJourney(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // isolate the routing decision from a stray eruption.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	waitAttempt := Attempt{
+		Type:     "AttributeChanged",
+		Stated:   "I wait quietly at the bar",
+		TargetID: dlKadeID,
+		Sustain:  &Sustain{Kind: "for", Seconds: 1000},
+	}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, waitAttempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	wantSlice := legSliceSeconds(j) // pure — computed BEFORE the leg mutates j, off the fresh row's own fields.
+	if wantSlice <= 0 {
+		t.Fatalf("legSliceSeconds = %d, want a positive first-leg slice", wantSlice)
+	}
+
+	outcome, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, j.CurrentTick+1, nil)
+	if err != nil {
+		t.Fatalf("RunBeat (continue): %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
+
+	if outcome.HaltReason != "journey_leg" {
+		t.Fatalf("HaltReason = %q, want journey_leg (a quiet continue press never ends the journey)", outcome.HaltReason)
+	}
+
+	var legsDone int
+	var status string
+	var currentTick int64
+	if err := pool.QueryRow(ctx, `SELECT legs_done, status, current_tick FROM journey WHERE journey_id=$1::uuid`, j.ID).
+		Scan(&legsDone, &status, &currentTick); err != nil {
+		t.Fatalf("read back journey: %v", err)
+	}
+	if legsDone != 1 {
+		t.Fatalf("legs_done = %d, want exactly 1 — a continue press advances ONE leg, never two", legsDone)
+	}
+	if status != "active" {
+		t.Fatalf("status = %q, want active (one leg of many does not end the journey)", status)
+	}
+	if currentTick != baseTick+wantSlice {
+		t.Fatalf("current_tick = %d, want %d (baseTick + exactly the leg's slice — NOT also the 2s instant floor)",
+			currentTick, baseTick+wantSlice)
+	}
+}
+
+// Any real input ends the journey and then runs normally, where the actor actually stands (R6): the
+// player changed their mind mid-wait, so the wait journey is discarded — not suspended, not
+// auto-resumed — and the new action resolves as an ordinary beat against wherever Kade actually is.
+func TestRunBeat_NewActionEndsTheJourneyAndRunsWhereYouStand(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // isolate the routing decision from a stray eruption.
+	wtSetTavernTension(t, ctx, pool, "none")     // unbounded budget: the new action must COMPLETE, not start a second journey.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	waitAttempt := Attempt{
+		Type:     "AttributeChanged",
+		Stated:   "I wait quietly at the bar",
+		TargetID: dlKadeID,
+		Sustain:  &Sustain{Kind: "for", Seconds: 1000},
+	}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, waitAttempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	beforeCanon := lgCanonCount(t, ctx, pool, dlWorldID)
+
+	realAttempt := Attempt{Type: "Communicated", Stated: "I greet Mara instead", ListenerID: wtMaraID, Content: "Morning, Mara."}
+	outcome, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{realAttempt}, j.CurrentTick+1, nil)
+	if err != nil {
+		t.Fatalf("RunBeat (new action): %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
+
+	if strings.HasPrefix(outcome.HaltReason, "journey_") {
+		t.Fatalf("HaltReason = %q, want an ordinary beat outcome — the discarded journey must not still be steering this beat", outcome.HaltReason)
+	}
+	if outcome.HaltReason != "completed" {
+		t.Fatalf("HaltReason = %q, want completed — the new action resolved", outcome.HaltReason)
+	}
+	if len(outcome.Committed) == 0 {
+		t.Fatalf("Committed is empty, want the new action to have actually resolved")
+	}
+	if got := lgCanonCount(t, ctx, pool, dlWorldID); got != beforeCanon+len(outcome.Committed) {
+		t.Fatalf("canon count = %d, want beforeCanon(%d)+committed(%d) — the new action must actually commit", got, beforeCanon, len(outcome.Committed))
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `SELECT status FROM journey WHERE journey_id=$1::uuid`, j.ID).Scan(&status); err != nil {
+		t.Fatalf("read back journey: %v", err)
+	}
+	if status != "ended" {
+		t.Fatalf("journey status = %q, want ended (R6 — any other input ends the journey)", status)
+	}
+
+	if got := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); got != startLoc {
+		t.Fatalf("actor location = %q, want unchanged %q — the new action ran WHERE the player stands, not at some journey waypoint", got, startLoc)
 	}
 }

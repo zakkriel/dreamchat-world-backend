@@ -185,10 +185,14 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	if outcome.HaltReason != "journey_leg" {
 		t.Fatalf("halt_reason = %q, want %q (third 12 s move overflows the 30 s tense budget, so it becomes a journey instead of bouncing)", outcome.HaltReason, "journey_leg")
 	}
+	// Task 7 (R6): the SECOND RunBeat call below (the "none" section, same actor/world) is exactly
+	// "changing your mind" — it ends this journey outright before it runs, so by the time this
+	// cleanup fires the row is already 'ended', not 'active'. No status filter, or the row leaks
+	// and corrupts a LATER test's own (unfiltered) journey read for this same actor/world pair.
 	t.Cleanup(func() {
 		if _, err := pool.Exec(context.Background(),
-			`DELETE FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`, worldID, playerID); err != nil {
-			t.Errorf("cleanup active journey: %v", err)
+			`DELETE FROM journey WHERE world_id=$1 AND actor_id=$2`, worldID, playerID); err != nil {
+			t.Errorf("cleanup journey: %v", err)
 		}
 	})
 	if len(outcome.Committed) != 2 {
