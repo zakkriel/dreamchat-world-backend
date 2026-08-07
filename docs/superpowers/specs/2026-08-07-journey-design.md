@@ -135,6 +135,15 @@ an area is the more real and even 'drawable if needed'."* Ruled: one shape langu
 of points — replacing `attrs.extent` outright rather than living beside it. Verified before ruling that
 nothing in SQL reads the box and its only consumer is the mint bounds check (§4.5).
 
+**R13 — A stated span is passed through, not classified.** For a timed wait the decomposer emits the
+quantity the player actually said (`{"kind":"for","seconds":7200}` for "two hours"). This does not
+reopen the `duration_class` rule: that ladder exists so an *unstated* length is never invented, and its
+two-hour cap is what stops "I wait 100 years" arriving as a class. Reading a span the player typed is
+parsing, the same act as binding a name to an id. Rejected alternatives: capping waits at the class
+ceiling (makes "wait until dawn" unsayable — the exact case the Living World design named as the
+Journey's job), and a coarser ladder for long waits (rounds the player's own words, so a vigil ends at
+the wrong hour).
+
 ## 4. Derived design (mine, from the rulings)
 
 Everything in this section is inference from §3 plus the existing code. It is the part to attack in review.
@@ -224,6 +233,22 @@ The decomposer gains the *"until/for <condition>"* parse-shape the Living World 
 (Unit 1) — a shape, like `QUERY`, never a judgment. Predicate targets are bound from the existing
 perception-bounded candidate whitelist (RULINGS-2026-07-30 §1), so you cannot watch for something you have
 no knowledge path to.
+
+**The parse-shape, concretely.** Travel needs no vocabulary at all — "walk to the old house" is an
+ordinary `ActorMoved` and the *engine* notices it does not fit the beat. Waits and watches do, so the
+non-move attempt types gain an optional `sustain` object, one of:
+
+```
+{"kind":"for",       "seconds": <integer > 0>}                       // "lie hidden for two hours"
+{"kind":"until_at",  "entity_id": <uuid>, "place_id": <uuid>}        // "wait until the ship is at the dock"
+{"kind":"until_attr","entity_id": <uuid>, "attr": <string>, "value": <string>}  // "wait until the door is open"
+```
+
+`seconds` is a **quantity the player stated**, not a model judgment (R13) — reading "two hours" back as
+7200 is parsing, the same act as binding a name to an id. It is why waits are not bounded by the
+`duration_class` ladder, whose cap exists to stop an *unstated* length being invented. Both predicate
+forms bind ids only from the perception-bounded candidate whitelist, and both are evaluated by the
+engine in SQL — no model runs per leg.
 
 ### 4.5 Ground: extent and containment (rung 1)
 
