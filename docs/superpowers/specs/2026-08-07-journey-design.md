@@ -221,12 +221,18 @@ no knowledge path to.
 
 ### 4.5 Ground: extent and containment (rung 1)
 
-- **Optional** `attrs.area` on a place: an array of ≥3 `{x,y}` points in the same parent frame as its own
-  coordinate. A place without one is a point and contains nothing — so every place that ships today is
-  unaffected and no existing spatial function changes behaviour.
-- `fn_place_at(world, point)` → the **smallest-area** place containing the point; NULL = open road.
-  Nesting falls out: inside the city and inside its market square → the square. Postgres tests
-  point-in-polygon natively (`polygon @> point`); no extension, no PostGIS.
+- **`attrs.extent` already exists** and must be extended, never duplicated: the seed gives the root
+  Harbor Quarter `attrs.extent = {"w":2000,"h":2000}` (`seed_drowned_lantern.sql:283`) — a box in that
+  place's own frame, centred on its `attrs.coordinates`. A second area convention beside it is
+  prohibited, so containment reads *this* field.
+- **Extent stays optional and gains a polygon form.** `{"w":…,"h":…}` keeps its current meaning; a place
+  may instead carry `{"points":[{"x":…,"y":…},…]}` (≥3) for a non-box footprint such as a road corridor.
+  A place with no extent is a point and contains nothing — so every room that ships today is unaffected
+  and no existing spatial function changes behaviour.
+- `fn_place_at(world, point)` → the **smallest-extent** place containing the point; NULL = open road.
+  Nesting falls out: inside the quarter and inside the tavern → the tavern. Postgres tests
+  point-in-polygon natively (`polygon @> point`), and a box converts to a polygon in the same call; no
+  extension, no PostGIS.
 - `extent_class_metres(world, class)` — a per-world config table mapping a size class to a footprint
   radius, drawn as a regular polygon around the point. Same shape and rationale as
   `duration_class_seconds`: **the author picks the class, the engine owns what it means in metres.**
