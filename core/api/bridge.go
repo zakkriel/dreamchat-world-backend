@@ -183,6 +183,17 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return NewFakeStructuredDriver("fake-structured:"+dc.Model, nil), nil
 	case "fake-text":
 		return NewFakeTextDriver("fake-text:" + dc.Model), nil
+	// Two seats have a NON-CHAIN output shape, so the generic structured fake (which returns a chain
+	// array) cannot stand in for them: the World Actor authors {actor_id, attempt} and the place author
+	// authors {descriptor, kind, extent_class}. Their dedicated fakes existed but were reachable only by
+	// tests binding drivers directly (NewBridgeWithDrivers) — never through this factory, so
+	// DREAMCHAT_BRIDGE=fake produced a server that died the moment a pressure tier fired
+	// ("cannot unmarshal array into pendingPayload"). Caught by hand-driving the endpoint, which is
+	// exactly the class of defect a test binding its own fakes cannot see.
+	case "fake-world-actor":
+		return NewFakeWorldActorDriver(), nil
+	case "fake-place-author":
+		return NewFakePlaceAuthorDriver(), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", dc.Provider)
 	}

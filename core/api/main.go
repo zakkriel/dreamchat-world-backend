@@ -95,8 +95,8 @@ func defaultSeatConfig() SeatConfig {
 			"resolve":            {Provider: "fake-structured", Model: "dev"},
 			"cognition_batch":    {Provider: "fake-structured", Model: "dev"},
 			"cognition_isolated": {Provider: "fake-structured", Model: "dev"},
-			"world_actor":        {Provider: "fake-structured", Model: "dev"},
-			"place_author":       {Provider: "fake-structured", Model: "dev"},
+			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
+			"place_author":       {Provider: "fake-place-author", Model: "dev"},
 		}
 	}
 	model := os.Getenv("DREAMCHAT_MODEL")
