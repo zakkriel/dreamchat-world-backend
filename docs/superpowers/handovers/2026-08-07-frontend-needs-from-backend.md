@@ -66,6 +66,65 @@ default, and this entry is the stub's documentation.
 
 ---
 
+## 2.5 The Compendium projections are skeletons (proposed SPEC-029) — this blocks chunk 4's gate
+
+**Found while building the Compendium pages onto the design system.** Every page endpoint returns its
+full contract shape, and almost every *field inside it* is a hardcoded stub. Source:
+`core/db/migrations/20260615090001_compendium_read_functions.sql`.
+
+| Surface | Field | What the SQL ships | Line |
+|---|---|---|---|
+| actor | `perceived_role` | `NULL` | `:100` |
+| actor | `current_synthesis` | `NULL` | `:101` |
+| actor | `last_known_status` | `NULL` | `:102` |
+| actor | `known_artifacts` | `[]` | `:103` |
+| actor | `inline_links` | `[]` | `:105` |
+| location | `part_of` | `NULL` | `:123` |
+| location | `current_synthesis` | `NULL` | `:124` |
+| location | `last_known_status` | `NULL` | `:125` |
+| location | `known_areas_inside` | `[]` (comment: "deferred lenses") | `:126` |
+| location | `key_actors` | `[]` (comment: "deferred lenses") | `:127` |
+| location | `inline_links` | `[]` | `:129` |
+| artifact | `perceived_type` | `NULL` | `:146` |
+| artifact | `current_synthesis` | `NULL` | `:147` |
+| artifact | `last_known_location` | `NULL` (comment: "carry-state deferred") | `:148` |
+| artifact | `current_holder_owner_access` | `NULL` | `:149` |
+| artifact | `inline_links` | `[]` | `:151` |
+| all three | `collected_knowledge_groups` | exactly ONE group, `group_key` = the target's own id, `group_label` = its perceived name | `:78-82` |
+| all three + timeline | `decay` | `{"stale": false}` — the flag is a literal | `:70`, `:181` |
+
+**So a real Actor page today contains an id, a perceived name, and one flat knowledge list.** Nothing
+else. The frontend renders every field the backend actually populates; there is no FE-side data loss
+to fix here (an earlier read of mine said otherwise — the schemas *require* these fields, which made
+them look populated; the SQL says they are not).
+
+**Acceptance criteria this makes unmeetable, whatever the frontend does:**
+- **Actors AC#3** (synthesis honesty — "the synthesis paragraph reflects only held perception
+  records"): there is no synthesis.
+- **Actors AC#4 / Locations AC#5 / Artifacts AC#3** (decay language — "Last known…", "remembered, not
+  verified"): `decay.stale` is hardcoded `false`, so the decay path can never render. The FE has the
+  language wired and waiting.
+- **Locations AC#2** (exactly one hierarchy expression, the "Part of" line — C-12): `part_of` is NULL,
+  so there is no hierarchy expression at all.
+- **Locations AC#3** (Known areas inside) and **AC#4** (Key Actors with context lines): both `[]`.
+- **Artifacts AC#2** (known/believed owner, holder, location, access) and **AC#3** (Carry State
+  derived, with `last_confirmed_tick`): all NULL, and there is no `/carrying` endpoint (§4).
+- **Timeline AC#4** (understanding visible as it evolved, v1→v2→v3): the payload carries no version
+  identity per record, only `perception_id`.
+- **Mockup parity** (Actors AC#10, Locations AC#8): the side panels in the mockups — Last known,
+  Known artifacts, Key actors, Known areas — have no data to render.
+
+Chunk 4's gate is *"all four PRDs' read-side ACs on seed"* (`implementation_playbook_superpowers.md:70`).
+**It cannot pass on the current SQL.** The frontend work is worth doing now regardless — the layout is
+where the data lands, and it renders each lens only when non-empty so nothing implies knowledge that
+is absent (B-1) — but the gate needs these lenses filled.
+
+Two cheap notes while you are in there: the knowledge grouping produces one group per page keyed by the
+target's own id, so the PRD/mockup topic groups ("The informant", "Dark Foxes connection") have no
+source; and `source` duplicates `epistemic_type` inside every item (`:71-72`), which the FE ignores.
+
+---
+
 ## 3. Needed for chunk 6's own gate — rung 3 of the journey design
 
 Chunk 6 is *"Play surface polish — scene canvas, participants strip, Aux Current+Known lenses,
