@@ -898,6 +898,24 @@ END $$;
 
 
 --
+-- Name: fn_area_polygon(jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_area_polygon(p_attrs jsonb) RETURNS polygon
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT CASE
+    WHEN jsonb_array_length(COALESCE(p_attrs->'area'->'points', '[]'::jsonb)) >= 3
+    THEN (
+      SELECT ('(' || string_agg('(' || (pt->>'x') || ',' || (pt->>'y') || ')', ',' ORDER BY ord) || ')')::polygon
+      FROM jsonb_array_elements(p_attrs->'area'->'points') WITH ORDINALITY AS t(pt, ord)
+    )
+    ELSE NULL
+  END;
+$$;
+
+
+--
 -- Name: fn_artifact_page(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1534,6 +1552,24 @@ CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_en
   JOIN canon_event ce ON ce.event_id = vp.source_event_id
   WHERE ce.event_type = 'world_genesis'
   ORDER BY vp.acquired_tick
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_place_at(uuid, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_place_at(p_world_id uuid, p_frame uuid, p_point jsonb) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT ls.entity_id
+  FROM location_state ls
+  WHERE ls.world_id = p_world_id
+    AND (ls.attrs->>'parent_location_id')::uuid = p_frame
+    AND fn_area_polygon(ls.attrs) IS NOT NULL
+    AND fn_area_polygon(ls.attrs) @> point((p_point->>'x')::float8, (p_point->>'y')::float8)
+  ORDER BY abs(area(fn_area_polygon(ls.attrs)::path)) ASC, ls.entity_id ASC
   LIMIT 1;
 $$;
 
@@ -3126,4 +3162,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260730100001'),
     ('20260805100001'),
     ('20260805100002'),
-    ('20260805100003');
+    ('20260805100003'),
+    ('20260807100001');
