@@ -63,6 +63,11 @@ func main() {
 		NewSceneHandler(pool, debug).(matcher),
 		// POST /worlds/{w}/beat — the only write path; everything it commits goes through apply_event (D-1).
 		NewBeatHandler(pool, debug, bridge).(matcher),
+		// POST /worlds/{w}/beats — the SAME beat, streamed as validated frames (design §4.8, rung3 Task 3).
+		// Deliberately NOT a replacement for /beat above: Task 5 deletes the singular endpoint; until then
+		// both exist side by side (beatRoute/beatsRoute are mutually exclusive by anchoring, so match
+		// order between them does not matter).
+		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
 	}}
 
 	mux := http.NewServeMux()

@@ -93,6 +93,18 @@ done
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^(TestGenWorldActorPayload|TestGenPlaceAuthorPayload)$' -count=1 -v . )
 
+# --- beat_frame/1: assembled by streaming POST /worlds/{w}/beats (core/api/beatsstream.go), one SSE
+# frame at a time — no fn_* this generator can call directly, same reasoning as scene/current above.
+# TestGenBeatFramePayloads (core/api/beatsstream_test.go) is the Go-side equivalent: gated on
+# BEAT_STREAM_PAYLOAD_DIR (skipped in the normal `go test ./...` suite), it drives the REAL
+# beatsStreamHandler.ServeHTTP — the identical call net/http itself makes — through a committed beat
+# (Player tells Mara about the note, the same fixture beathandler_test.go's happy path uses) and
+# writes each frame's RAW bytes (interpretation/narration/scene/journey/result) verbatim.
+( cd "$(dirname "$0")/../core/api" && \
+  BEAT_STREAM_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^TestGenBeatFramePayloads$' -count=1 -v . )
+
 # manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
 # (both Player and Jonas must appear) rather than trust the generator.
 printf '{"viewers":["%s","%s"]}\n' "$PLAYER" "$JONAS" > "$OUT/_manifest.json"
