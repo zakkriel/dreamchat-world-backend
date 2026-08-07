@@ -898,6 +898,22 @@ END $$;
 
 
 --
+-- Name: fn_area_around(jsonb, numeric); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_area_around(p_centre jsonb, p_radius numeric) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT jsonb_build_object('points', jsonb_agg(
+           jsonb_build_object(
+             'x', round(((p_centre->>'x')::numeric + p_radius * cosd(45 * g))::numeric, 3),
+             'y', round(((p_centre->>'y')::numeric + p_radius * sind(45 * g))::numeric, 3))
+           ORDER BY g))
+  FROM generate_series(0, 7) AS g;
+$$;
+
+
+--
 -- Name: fn_area_polygon(jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1284,6 +1300,22 @@ CREATE FUNCTION public.fn_entity_visible(p_world_id uuid, p_viewer_id uuid, p_en
     FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp     -- FILTER 1, unchanged
     JOIN perception_subject ps ON ps.perception_id = vp.perception_id
     WHERE ps.entity_id = p_entity_id);
+$$;
+
+
+--
+-- Name: fn_extent_class_metres(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_extent_class_metres(p_world_id uuid, p_class text) RETURNS numeric
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT COALESCE(
+    (SELECT radius_m FROM extent_class_metres WHERE world_id = p_world_id AND class = p_class),
+    CASE p_class  -- built-in fallback (retune per-world via the table) — never fails closed
+      WHEN 'intimate' THEN 5 WHEN 'small' THEN 50 WHEN 'medium' THEN 200
+      WHEN 'large' THEN 1000 WHEN 'vast' THEN 5000 ELSE 50 END
+  );
 $$;
 
 
@@ -2192,6 +2224,9 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
          (p_world_id, 'medium', 0.01, 3600, 0.70),
          (p_world_id, 'large', 0.01, 86400, 0.70) ON CONFLICT DO NOTHING;
   INSERT INTO world_actor_setting (world_id) VALUES (p_world_id) ON CONFLICT DO NOTHING;
+  INSERT INTO extent_class_metres (world_id, class, radius_m)
+  VALUES (p_world_id, 'intimate', 5), (p_world_id, 'small', 50), (p_world_id, 'medium', 200),
+         (p_world_id, 'large', 1000), (p_world_id, 'vast', 5000) ON CONFLICT DO NOTHING;
 $$;
 
 
@@ -2363,6 +2398,19 @@ CREATE TABLE public.event_participant (
     entity_kind text NOT NULL,
     role_qualifier text NOT NULL,
     CONSTRAINT event_participant_entity_kind_check CHECK ((entity_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text, 'faction'::text, 'group'::text])))
+);
+
+
+--
+-- Name: extent_class_metres; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.extent_class_metres (
+    world_id uuid NOT NULL,
+    class text NOT NULL,
+    radius_m numeric NOT NULL,
+    CONSTRAINT extent_class_metres_class_check CHECK ((class = ANY (ARRAY['intimate'::text, 'small'::text, 'medium'::text, 'large'::text, 'vast'::text]))),
+    CONSTRAINT extent_class_metres_radius_m_check CHECK ((radius_m > (0)::numeric))
 );
 
 
@@ -2631,6 +2679,14 @@ ALTER TABLE ONLY public.entity_registry
 
 ALTER TABLE ONLY public.event_participant
     ADD CONSTRAINT event_participant_pkey PRIMARY KEY (event_id, entity_id, role_qualifier);
+
+
+--
+-- Name: extent_class_metres extent_class_metres_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.extent_class_metres
+    ADD CONSTRAINT extent_class_metres_pkey PRIMARY KEY (world_id, class);
 
 
 --
@@ -3163,4 +3219,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260805100001'),
     ('20260805100002'),
     ('20260805100003'),
-    ('20260807100001');
+    ('20260807100001'),
+    ('20260807100002');
