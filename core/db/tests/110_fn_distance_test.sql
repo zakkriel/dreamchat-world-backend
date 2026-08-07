@@ -3,7 +3,7 @@ SELECT plan(6);
 
 -- Station F / §3 Space: nested coordinates + fn_distance. Self-contained fixture (fixed uuids, no seed
 -- dependency), mirroring the nested-frame model from FINAL-action-contracts.md §3:
---   district (root, coord {0,0}, extent 2000x2000)
+--   district (root, coord {0,0}, area 2000x2000)
 --     ├─ tavern  (child, coord {100,0} in district)
 --     └─ alley   (child, coord {900,0} in district)
 -- actor A stands inside the tavern at {2,0}; artifact "bar" sits inside the tavern at {14,0}.
@@ -17,10 +17,10 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
   ('fa000000-0000-0000-0000-0000000000a1', 'fa000000-ffff-0000-0000-000000000000', 'actor',    'A'),
   ('fa000000-0000-0000-0000-0000000000b1', 'fa000000-ffff-0000-0000-000000000000', 'artifact', 'bar');
 
--- district: root (no parent_location_id), sits at its own origin, extent bounds its children.
+-- district: root (no parent_location_id), sits at its own origin, area outline bounds its children.
 INSERT INTO location_state (entity_id, world_id, attrs) VALUES
   ('fa000000-0000-0000-0000-0000000000d1', 'fa000000-ffff-0000-0000-000000000000',
-   '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb);
+   '{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb);
 -- tavern + alley: children of district, each with a coordinate WITHIN the district frame.
 INSERT INTO location_state (entity_id, world_id, attrs) VALUES
   ('fa000000-0000-0000-0000-0000000000c1', 'fa000000-ffff-0000-0000-000000000000',

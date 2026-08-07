@@ -262,12 +262,15 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
 -- ── §3 SPATIAL LAYER (Station F Task 7) — the scene gets space, under the same scene-genesis event f9 ──
 -- Nested coordinates (FINAL-action-contracts.md §3): every location has a coordinate WITHIN its parent
 -- (attrs.coordinates) + a parent edge (attrs.parent_location_id, Tier-1 string); a parent carries an
--- attrs.extent bounding its children. Things inside a scene (actors + fixed features) carry a coordinate
--- in that scene's LOCAL frame. fn_distance measures any pair at their nearest common parent's frame.
+-- attrs.area outlining its children (an ordered ring of ≥3 points, founder ruling R12 — no {w,h} box).
+-- Things inside a scene (actors + fixed features) carry a coordinate in that scene's LOCAL frame.
+-- fn_distance measures any pair at their nearest common parent's frame; fn_place_at measures which
+-- child's area contains a point.
 -- Coordinates are a SANCTIONED hand-authored test artifact (§3); production mints them (Task 6). Each
 -- (entity, attribute_path) is written EXACTLY ONCE → replay-order-independent (Rider B, D-1). Tier-1 keys
 -- only for engine-read attrs (coordinates, parent_location_id, max_room, empty_weight, weight, size,
--- contained_by; extent is descriptive). seq 26+ continues f9's single monotonic seq space.
+-- contained_by, area — fn_place_at reads it, so it is engine-read, not descriptive). seq 26+ continues
+-- f9's single monotonic seq space.
 --
 -- Harbor Quarter frame (meters): tavern {200,200}; dock street {207,200} → 7 m ⇒ CEIL(7/1.4)=5 s, a SHORT
 -- STEP out the front door onto the harbor road (Task 11 seed tune, RULINGS-2026-07-30 §1: the playable
@@ -275,12 +278,12 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
 -- earlier {280,200} put it 80 m ⇒ 58 s away, an over-budget dead end. Dock Street stays a DISTINCT
 -- location behind the front-door portal — just a short step, not merged into the tavern); alley {200,240}
 -- → 40 m (out the back); cellar {205,205} → beneath the tavern (portal-locked anyway). The quarter's
--- 2000×2000 extent bounds them.
+-- 2000×2000 area (a four-corner outline) bounds them.
 INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
                             valid_from_tick, valid_from_seq) VALUES
- -- Harbor Quarter of Vael: the root parent (no parent edge), its own origin + the extent that bounds the rooms.
+ -- Harbor Quarter of Vael: the root parent (no parent edge), its own origin + the area outline that bounds the rooms.
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d0','location','attrs.coordinates',        '{"x":0,"y":0}'::jsonb,       40,26),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d0','location','attrs.extent',             '{"w":2000,"h":2000}'::jsonb, 40,27),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d0','location','attrs.area',               '{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}'::jsonb, 40,27),
  -- the four rooms: each a child of Harbor Quarter with a coordinate in the quarter frame.
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,28),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d1','location','attrs.coordinates',        '{"x":200,"y":200}'::jsonb,   40,29),

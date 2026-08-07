@@ -66,7 +66,7 @@ func seedTensionGeometry(t *testing.T, ctx context.Context) {
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO location_state (entity_id, world_id, attrs)
 		VALUES
-		  ($1, $6, '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+		  ($1, $6, '{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb),
 		  ($2, $6, jsonb_build_object('coordinates', jsonb_build_object('x',0,'y',0),  'parent_location_id', $1::text, 'tension', 'tense')),
 		  ($3, $6, jsonb_build_object('coordinates', jsonb_build_object('x',16,'y',0), 'parent_location_id', $1::text)),
 		  ($4, $6, jsonb_build_object('coordinates', jsonb_build_object('x',32,'y',0), 'parent_location_id', $1::text)),

@@ -42,7 +42,7 @@ func seedOrchestratorEntities(t *testing.T, ctx context.Context) {
 	_, err = pool.Exec(ctx, `
 		INSERT INTO location_state (entity_id, world_id, attrs)
 		VALUES
-		  ($4, $1, '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+		  ($4, $1, '{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb),
 		  ($2, $1, jsonb_build_object('coordinates', jsonb_build_object('x',0,'y',0), 'parent_location_id', $4::text)),
 		  ($3, $1, jsonb_build_object('coordinates', jsonb_build_object('x',7,'y',0), 'parent_location_id', $4::text))
 		ON CONFLICT (entity_id) DO NOTHING`,

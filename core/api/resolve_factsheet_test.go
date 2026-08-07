@@ -40,7 +40,7 @@ func TestAdjudicate_FeedsTruthSideFactSheet(t *testing.T) {
 		($1,$4,'location','The Common Room'),($2,$4,'actor','Kade'),($3,$4,'actor','Mara')`,
 		loc, kade, mara, world)
 	mustExec(`INSERT INTO location_state (entity_id, world_id, attrs)
-		VALUES ($1,$2,'{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb)`, loc, world)
+		VALUES ($1,$2,'{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb)`, loc, world)
 	// Kade at {0,0}, Mara at {2,0} in the SAME scene → fn_distance = 2 m, reachable trivially (same room,
 	// no portal). CEIL(2 / 1.4) = 2 s move duration. This is the design's "lean on Mara: same room,
 	// reachable, ~2 m" fact sheet, computed by the F contract functions.

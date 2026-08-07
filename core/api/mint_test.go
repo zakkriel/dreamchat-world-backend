@@ -85,22 +85,34 @@ func TestValidateMints_F_ValidMovementMint(t *testing.T) {
 	}
 }
 
-// (g) a coordinate outside the parent extent → violation (§3: a minted coordinate must lie within the
-// parent's extent). Envelope carries the parent's extent inline so validation stays DB-free.
-func TestValidateMints_G_CoordinateOutsideExtent(t *testing.T) {
-	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"22222222-2222-2222-2222-222222222222","coordinate":{"x":5000,"y":0},"parentExtent":{"w":2000,"h":2000}}`
+// (g) a coordinate outside the parent AREA → violation (§3: a minted coordinate must lie within its
+// parent). The envelope carries the parent's outline inline so validation stays DB-free.
+func TestValidateMints_G_CoordinateOutsideArea(t *testing.T) {
+	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"22222222-2222-2222-2222-222222222222","coordinate":{"x":5000,"y":0},"parentArea":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}`
 	v := validateMints([]json.RawMessage{mintRaw(m)}, seeded())
 	if len(v) == 0 {
-		t.Fatalf("(g) coordinate x:5000 outside extent w:2000 must violate; got pass")
+		t.Fatalf("(g) coordinate x:5000 outside a 2000x2000 outline must violate; got pass")
 	}
 }
 
-// (g2) a coordinate INSIDE the parent extent → pass.
-func TestValidateMints_G2_CoordinateInsideExtent(t *testing.T) {
-	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"22222222-2222-2222-2222-222222222222","coordinate":{"x":100,"y":50},"parentExtent":{"w":2000,"h":2000}}`
+// (g2) a coordinate INSIDE the parent area → pass.
+func TestValidateMints_G2_CoordinateInsideArea(t *testing.T) {
+	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"22222222-2222-2222-2222-222222222222","coordinate":{"x":100,"y":50},"parentArea":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}`
 	v := validateMints([]json.RawMessage{mintRaw(m)}, seeded())
 	if len(v) != 0 {
-		t.Fatalf("(g2) coordinate {100,50} inside extent {2000,2000} must PASS; got %v", v)
+		t.Fatalf("(g2) coordinate {100,50} inside the outline must PASS; got %v", v)
+	}
+}
+
+// (g3) a NON-RECTANGULAR outline is the reason this replaced the box: an L-shape must reject a point in
+// the notch that any bounding box would have accepted.
+func TestPointInOutline_LShapeRejectsTheNotch(t *testing.T) {
+	l := []mintCoord{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 10, Y: 4}, {X: 4, Y: 4}, {X: 4, Y: 10}, {X: 0, Y: 10}}
+	if pointInOutline(mintCoord{X: 8, Y: 8}, l) {
+		t.Fatalf("point {8,8} sits in the L's notch and must be OUTSIDE; a bounding box would wrongly accept it")
+	}
+	if !pointInOutline(mintCoord{X: 2, Y: 2}, l) {
+		t.Fatalf("point {2,2} is inside the L and must be accepted")
 	}
 }
 
@@ -126,7 +138,7 @@ func TestValidateMints_H2_TwoNodeCycle(t *testing.T) {
 // (h3) a parent pointing OUT of the slice (an existing committed location) is NOT a cycle → pass. The
 // committed hierarchy is kept acyclic by the SQL guard; the slice walk terminates safely at a foreign id.
 func TestValidateMints_H3_ParentOutsideSlice(t *testing.T) {
-	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"99999999-9999-9999-9999-999999999999","coordinate":{"x":1,"y":1},"parentExtent":{"w":10,"h":10}}`
+	m := `{"locationId":"11111111-1111-1111-1111-111111111111","parentLocationId":"99999999-9999-9999-9999-999999999999","coordinate":{"x":1,"y":1},"parentArea":{"points":[{"x":0,"y":0},{"x":10,"y":0},{"x":10,"y":10},{"x":0,"y":10}]}}`
 	v := validateMints([]json.RawMessage{mintRaw(m)}, seeded())
 	if len(v) != 0 {
 		t.Fatalf("(h3) parent outside the slice must PASS (not a cycle); got %v", v)

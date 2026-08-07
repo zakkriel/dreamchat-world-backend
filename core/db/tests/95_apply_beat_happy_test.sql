@@ -13,7 +13,7 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
 -- the same 5 this beat has always used for tavern→square, now honestly derived from distance/speed.
 INSERT INTO location_state (entity_id, world_id, attrs) VALUES
  ('e5ffffff-0000-0000-0000-0000000000d1','11111111-1111-1111-1111-111111111111',
-  '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+  '{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb),
  ('e5ffffff-0000-0000-0000-000000000010','11111111-1111-1111-1111-111111111111',
   '{"coordinates":{"x":0,"y":0},"parent_location_id":"e5ffffff-0000-0000-0000-0000000000d1"}'::jsonb),
  ('e5ffffff-0000-0000-0000-000000000011','11111111-1111-1111-1111-111111111111',

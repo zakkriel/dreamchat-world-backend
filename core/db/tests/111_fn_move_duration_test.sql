@@ -21,7 +21,7 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
 
 INSERT INTO location_state (entity_id, world_id, attrs) VALUES
   ('fb000000-0000-0000-0000-0000000000d1', 'fb000000-ffff-0000-0000-000000000000',
-   '{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb),
+   '{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb),
   ('fb000000-0000-0000-0000-0000000000c1', 'fb000000-ffff-0000-0000-000000000000',
    '{"coordinates":{"x":100,"y":0},"parent_location_id":"fb000000-0000-0000-0000-0000000000d1"}'::jsonb),
   ('fb000000-0000-0000-0000-0000000000c2', 'fb000000-ffff-0000-0000-000000000000',

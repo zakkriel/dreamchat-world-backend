@@ -18,7 +18,7 @@ import (
 //
 // ── Mint-kind discriminator (by JSON shape/fields) ──────────────────────────────────────────────────
 // The two movement-vocabulary shapes are fixed by §8; the artifact/place shape is derived from §3 (a
-// newly minted place carries its coordinate-in-parent, validated to lie within the parent's extent) and
+// newly minted place carries its coordinate-in-parent, validated to lie within the parent's area) and
 // §4 (size 1..10; a mundane container has max_room ≤ 4^(size-1)). The published ruling schema leaves
 // `mints` an open object array (no envelope), so nothing pre-constrains the discriminator — it is FIXED
 // and DOCUMENTED here:
@@ -33,10 +33,11 @@ import (
 //	none of the above                            → unknown shape → violation
 //
 // Envelope keys are camelCase, matching §8's worked examples (movementTypeId, baseSpeed, statusTypeId,
-// actionType, movementModifiers, modifierPercent). The coordinate/extent shapes follow the Station-F
-// plan: coordinate {x,y} meters in the parent's local frame; parentExtent {w,h} bounds. The parent's
-// extent is carried INLINE on the artifact mint so validation stays DB-free (the signature takes no DB
-// handle) — the resolve seat already holds the parent's extent in its facts slice.
+// actionType, movementModifiers, modifierPercent). The coordinate/area shapes follow the Station-F
+// plan: coordinate {x,y} meters in the parent's local frame; parentArea {points:[{x,y},…]} an ordered
+// outline (founder ruling R12 — no {w,h} box). The parent's outline is carried INLINE on the artifact
+// mint so validation stays DB-free (the signature takes no DB handle) — the resolve seat already holds
+// the parent's area in its facts slice.
 
 // mintModRow is one row of a modifier mint's movementModifiers array (§8).
 type mintModRow struct {
@@ -49,9 +50,30 @@ type mintCoord struct {
 	Y float64 `json:"y"`
 }
 
-type mintExtent struct {
-	W float64 `json:"w"`
-	H float64 `json:"h"`
+// mintArea is a place's outline — an ordered ring of points in its own frame. It replaces the retired
+// {w,h} box (founder ruling R12): the box could not describe a road, a shoreline, or anything else that
+// is not a rectangle, and a bounding box around such a place claims ground the place does not occupy.
+type mintArea struct {
+	Points []mintCoord `json:"points"`
+}
+
+// pointInOutline reports whether p lies inside the closed ring poly, by ray casting: count the edges a
+// ray cast in +x crosses; odd means inside. Points ON an edge are not guaranteed either way — a boundary
+// coordinate is a degenerate mint regardless, and the caller treats a false as a violation. Pure: no
+// database, no dependency, so mint validation stays DB-free as designed.
+func pointInOutline(p mintCoord, poly []mintCoord) bool {
+	if len(poly) < 3 {
+		return false
+	}
+	inside := false
+	for i, j := 0, len(poly)-1; i < len(poly); j, i = i, i+1 {
+		pi, pj := poly[i], poly[j]
+		if (pi.Y > p.Y) != (pj.Y > p.Y) &&
+			p.X < (pj.X-pi.X)*(p.Y-pi.Y)/(pj.Y-pi.Y)+pi.X {
+			inside = !inside
+		}
+	}
+	return inside
 }
 
 // mintEnvelope is the union of every mint kind's fields; a nil pointer means "field absent", which is
@@ -68,7 +90,7 @@ type mintEnvelope struct {
 	Size             *float64    `json:"size"`
 	MaxRoom          *float64    `json:"maxRoom"`
 	Coordinate       *mintCoord  `json:"coordinate"`
-	ParentExtent     *mintExtent `json:"parentExtent"`
+	ParentArea       *mintArea   `json:"parentArea"`
 	LocationID       *string     `json:"locationId"`
 	ParentLocationID *string     `json:"parentLocationId"`
 }
@@ -184,7 +206,7 @@ func mintKindOf(e mintEnvelope) string {
 }
 
 // validateArtifactMint enforces the §3/§4 artifact/place bounds: size 1..10; a mundane container's
-// max_room ≤ 4^(size-1); a coordinate within the parent's extent (when both are carried); and no
+// max_room ≤ 4^(size-1); a coordinate within the parent's area (when both are carried); and no
 // parent_location_id cycle (self-parent or a cycle among co-minted locations — carried-forward guard I
 // from the Task-1 review, the mint-write end; the SQL CTEs carry the defensive depth/cycle cap).
 func validateArtifactMint(i int, e mintEnvelope, parentOf map[string]string) []string {
@@ -215,13 +237,12 @@ func validateArtifactMint(i int, e mintEnvelope, parentOf map[string]string) []s
 		}
 	}
 
-	// coordinate within the parent's extent (§3). Validated only when BOTH are present (the extent is
-	// carried inline so this stays DB-free). Origin is the parent frame's (0,0); the box is [0,w]×[0,h].
-	if e.Coordinate != nil && e.ParentExtent != nil {
-		c, x := e.Coordinate, e.ParentExtent
-		if c.X < 0 || c.Y < 0 || c.X > x.W || c.Y > x.H {
+	// coordinate within the parent's AREA (§3). Validated only when BOTH are present (the outline is
+	// carried inline so this stays DB-free).
+	if e.Coordinate != nil && e.ParentArea != nil {
+		if !pointInOutline(*e.Coordinate, e.ParentArea.Points) {
 			out = append(out, fmt.Sprintf(
-				"mint %d: coordinate {%g,%g} outside parent extent {w:%g,h:%g}", i, c.X, c.Y, x.W, x.H))
+				"mint %d: coordinate {%g,%g} outside the parent's area", i, e.Coordinate.X, e.Coordinate.Y))
 		}
 	}
 

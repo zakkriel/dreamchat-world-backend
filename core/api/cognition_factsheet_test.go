@@ -46,7 +46,7 @@ func TestWorldFirst_FeedsPerceivedFactSheetToCognition(t *testing.T) {
 		($4,$7,'actor','Mara'),($5,$7,'artifact','crate'),($6,$7,'artifact','stone')`,
 		loc, k, j, m, crate, stone, world)
 	mustExec(`INSERT INTO location_state (entity_id, world_id, attrs)
-		VALUES ($1,$2,'{"coordinates":{"x":0,"y":0},"extent":{"w":2000,"h":2000}}'::jsonb)`, loc, world)
+		VALUES ($1,$2,'{"coordinates":{"x":0,"y":0},"area":{"points":[{"x":0,"y":0},{"x":2000,"y":0},{"x":2000,"y":2000},{"x":0,"y":2000}]}}'::jsonb)`, loc, world)
 	mustExec(`INSERT INTO movement_type (world_id, movement_type_id, base_speed_mps) VALUES ($1,'walk',1.4)`, world)
 	// K at {0,0}, M at {2,0}, J at {5,0} — all co-located at L (fn_actors_at reads attrs.location_id).
 	mustExec(`INSERT INTO actor_state (entity_id, world_id, attrs) VALUES

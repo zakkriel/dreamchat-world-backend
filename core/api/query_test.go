@@ -65,7 +65,7 @@ func setupQueryWorld(t *testing.T, ctx context.Context, pool *pgxpool.Pool) quer
 	// tavern: a root scene with a coordinate frame.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO location_state (entity_id, world_id, attrs) VALUES
-		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'extent',jsonb_build_object('w',2000,'h',2000)))`,
+		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'area',jsonb_build_object('points',jsonb_build_array(jsonb_build_object('x',0,'y',0),jsonb_build_object('x',2000,'y',0),jsonb_build_object('x',2000,'y',2000),jsonb_build_object('x',0,'y',2000)))))`,
 		id.World, id.Tavern); err != nil {
 		t.Fatalf("seed query location: %v", err)
 	}

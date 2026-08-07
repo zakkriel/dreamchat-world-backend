@@ -84,7 +84,7 @@ func setupStationFMoveWorld(t *testing.T, ctx context.Context, pool *pgxpool.Poo
 	// locations: quarter (root) + three rooms, each a child with a coordinate in the quarter frame.
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO location_state (entity_id, world_id, attrs) VALUES
-		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'extent',jsonb_build_object('w',2000,'h',2000))),
+		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'area',jsonb_build_object('points',jsonb_build_array(jsonb_build_object('x',0,'y',0),jsonb_build_object('x',2000,'y',0),jsonb_build_object('x',2000,'y',2000),jsonb_build_object('x',0,'y',2000))))),
 		 ($3,$1, jsonb_build_object('coordinates',jsonb_build_object('x',200,'y',200),'parent_location_id',$2::text,'tension','tense')),
 		 ($4,$1, jsonb_build_object('coordinates',jsonb_build_object('x',205,'y',205),'parent_location_id',$2::text)),
 		 ($5,$1, jsonb_build_object('coordinates',jsonb_build_object('x',220,'y',200),'parent_location_id',$2::text))`,
@@ -144,7 +144,7 @@ func setupStationFCarryWorld(t *testing.T, ctx context.Context, pool *pgxpool.Po
 
 	if _, err := pool.Exec(ctx, `
 		INSERT INTO location_state (entity_id, world_id, attrs) VALUES
-		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'extent',jsonb_build_object('w',2000,'h',2000))),
+		 ($2,$1, jsonb_build_object('coordinates',jsonb_build_object('x',0,'y',0),'area',jsonb_build_object('points',jsonb_build_array(jsonb_build_object('x',0,'y',0),jsonb_build_object('x',2000,'y',0),jsonb_build_object('x',2000,'y',2000),jsonb_build_object('x',0,'y',2000))))),
 		 ($3,$1, jsonb_build_object('coordinates',jsonb_build_object('x',200,'y',200),'parent_location_id',$2::text,'tension','tense')),
 		 ($4,$1, jsonb_build_object('coordinates',jsonb_build_object('x',210,'y',200),'parent_location_id',$2::text))`,
 		id.World, id.Quarter, id.Room, id.Street); err != nil {
