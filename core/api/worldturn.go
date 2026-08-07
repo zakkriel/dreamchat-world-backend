@@ -58,7 +58,7 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 		firedScheduled = append([]string(nil), outcome.Committed[committedBeforeLedger:]...)
 	}
 
-	if ledgerMag == "medium" || ledgerMag == "large" {
+	if eruptionCutsBeat(ledgerMag) {
 		// The beat is already ending on ledger-fired scheduled truth — SKIP the pressure roll entirely
 		// (ambiguity resolution #2a): rolling a fresh eruption on top of a beat that's already over
 		// would never be seen (the caller discards the rest of the chain on this magnitude). The trace
@@ -88,7 +88,8 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 	nextSeq := seq + ledgerSeq
 	var rolls []TraceRoll
 	firedTier := ""
-	for _, tier := range livingWorldTierOrder {
+	for i := len(livingWorldTiers) - 1; i >= 0; i-- { // reverse = large→medium→small (biggest first)
+		tier := livingWorldTiers[i]
 		lastEruption, lastErr := o.lastEruptionTick(ctx, worldID, tier)
 		if lastErr != nil {
 			return "", 0, fmt.Errorf("runWorldTurn: lastEruptionTick(%s): %w", tier, lastErr)
@@ -148,11 +149,32 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 	return firedTier, ledgerSeq + actorSeq, nil
 }
 
-// livingWorldTierOrder is the fixed order the composer rolls: large→medium→small — BIGGEST first, so
-// the first tier that fires in this scan is always the biggest magnitude that fired (design Unit 6:
-// "returns the biggest magnitude that fired"). Scanning small-first would let small's much higher
-// climb rate mask a rarer medium/large fire (whole-branch review, Fix 1).
-var livingWorldTierOrder = []string{"large", "medium", "small"}
+// livingWorldTiers is the SINGLE SOURCE OF TRUTH for the world's three magnitude tiers, ascending
+// (small < medium < large). Everything tier-ordered derives from it: magnitudeRank (rank by index),
+// eruptionCutsBeat (§5: medium/large cut the beat), and the composer's roll scan (BIGGEST-first = this
+// slice in REVERSE — design Unit 6 "returns the biggest magnitude that fired"; scanning small-first
+// would let small's much higher climb rate mask a rarer medium/large fire and suppress the §5 beat-cut,
+// whole-branch review Fix 1). A future tier is added HERE (and to the SQL CHECK constraints) — nothing
+// downstream hand-encodes the order or the cut threshold.
+var livingWorldTiers = []string{"small", "medium", "large"}
+
+// magnitudeRank maps a magnitude to its 1-based rank (small=1 … large=3), derived from livingWorldTiers,
+// so fireDuePending can track the LARGEST magnitude fired across a crossing. Unranked/empty ("") is 0,
+// below every real magnitude.
+var magnitudeRank = func() map[string]int {
+	m := make(map[string]int, len(livingWorldTiers))
+	for i, t := range livingWorldTiers {
+		m[t] = i + 1
+	}
+	return m
+}()
+
+// eruptionCutsBeat reports whether an eruption of this magnitude ends the beat (§5): medium/large cut,
+// small runs on. Keyed off the rank of "medium", so a new tier inserted in livingWorldTiers needs no
+// edit here.
+func eruptionCutsBeat(mag string) bool {
+	return magnitudeRank[mag] >= magnitudeRank["medium"]
+}
 
 // lastEruptionTick returns the last tick this tier fired for worldID — COALESCE(max(fired_tick), 0)
 // from the append-only world_eruption fire-log — 0 if the tier has never fired. This MUST be the same

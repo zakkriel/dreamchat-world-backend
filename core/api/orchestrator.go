@@ -435,7 +435,7 @@ func (o *Orchestrator) advanceWorldTurn(ctx context.Context, worldID, sceneID st
 	if wtErr != nil {
 		return curSeq, false, fmt.Errorf("world's turn: %w", wtErr)
 	}
-	return curSeq + seqUsed, firedMag == "medium" || firedMag == "large", nil
+	return curSeq + seqUsed, eruptionCutsBeat(firedMag), nil
 }
 
 // HeldOutcome is one pending held act read back from the held_outcome table: the NPC whose

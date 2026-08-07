@@ -16,9 +16,9 @@ type pendingPayload struct {
 	Attempt Attempt `json:"attempt"`
 }
 
-// magnitudeRank orders pending_event.magnitude small < medium < large so fireDuePending can track the
-// LARGEST magnitude fired across a crossing. Unranked/empty ("") sorts below every real magnitude.
-var magnitudeRank = map[string]int{"small": 1, "medium": 2, "large": 3}
+// magnitudeRank (the small<medium<large ranking fireDuePending uses at line ~197 to track the LARGEST
+// magnitude fired across a crossing) is defined once in worldturn.go, derived from livingWorldTiers —
+// the single source of truth for the tier hierarchy.
 
 // commitWorldPayload commits ONE world-sourced payload — an acting entity's Attempt, not yet canon —
 // through the SAME routing runChain's Stage 3 uses for a live attempt: the three passthrough types
