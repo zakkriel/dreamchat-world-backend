@@ -242,10 +242,13 @@ func TestRunWorldTurn_ForcedSmallFireContinuesChain(t *testing.T) {
 	if got := wtSpeakerEventCount(t, ctx, pool, out.Committed, dlKadeID); got != 2 {
 		t.Fatalf("Kade-spoken committed events = %d, want 2 (BOTH player attempts must land — the chain continued)", got)
 	}
-	// An EXTRA event — the forced eruption's World Actor intrusion (the fake always speaks as Mara,
-	// bridge_fakes.go) — also landed.
-	if got := wtSpeakerEventCount(t, ctx, pool, out.Committed, wtMaraID); got < 1 {
-		t.Fatalf("Mara-spoken committed events = %d, want >=1 (the forced small eruption's world-actor intrusion)", got)
+	// An EXTRA event — the forced eruption's World Actor intrusion — also landed. The speaker is
+	// whoever the fake finds STANDING IN THE SCENE (bridge_fakes.go reads the slice's presence list),
+	// not a hardcoded Mara as it once was, so this asserts the intrusion committed rather than who
+	// happened to voice it: total committed events exceed the player's own two.
+	if len(out.Committed) < 3 {
+		t.Fatalf("committed = %v (%d events), want >=3 — Kade's two attempts plus the forced small eruption's intrusion",
+			out.Committed, len(out.Committed))
 	}
 
 	// (d) the fire is recorded in the append-only fire-log.
@@ -261,6 +264,53 @@ func TestRunWorldTurn_ForcedSmallFireContinuesChain(t *testing.T) {
 	}
 	if eventID == "" {
 		t.Fatalf("world_eruption.event_id is empty")
+	}
+}
+
+// THE WEDGE (SPEC-030 follow-up). A world-actor proposal the gate REFUSES must not fail the beat.
+//
+// It used to. During a journey the world's turn runs in whatever scene the leg is passing through;
+// an intrusion authored by an actor standing somewhere else was correctly refused, and the refusal
+// came back as a plain error that failed the whole beat. Nothing committed, so the tick never
+// advanced — and because the pressure roll is a PURE function of (world, tick, lastEruption, tier),
+// the next attempt drew the identical fire and refused it identically. The journey could never
+// advance again. Reproduced live as 41 failures in 42 beats before the fix.
+//
+// So: force a fire, hand the seat a driver whose proposal cannot be accepted, and require that the
+// player's own attempts still land and the beat still completes. The eruption simply does not happen.
+func TestRunWorldTurn_RefusedIntrusionDoesNotFailTheBeat(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
+
+	orc := wtOrchestrator(pool)
+	// The beat runs in the tavern (that is where Kade stands), so an intrusion that lands on Dock
+	// Street is out of scope and the seat must refuse it. Refusing is the point of this test; what is
+	// under test is what happens NEXT.
+	orc.WorldActor = &misScopedWorldActorDriver{
+		actorID: wtMaraID,
+		destID:  "210c0000-0000-0000-0000-0000000000d2", // Dock Street — not the beat's scene
+	}
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	chain := []Attempt{
+		{Type: "Communicated", Stated: "Kade greets Mara over the bar", ListenerID: wtMaraID, Content: "morning, Mara"},
+		{Type: "Communicated", Stated: "Kade asks Mara for a second round", ListenerID: wtMaraID, Content: "another ale, please"},
+	}
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, chain, baseTick, nil)
+	if err != nil {
+		t.Fatalf("RunBeat failed on a REFUSED world-actor proposal: %v — a rejected proposal is the gate saying no (D-1), not a broken machine, and it must never fail the player's beat", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+
+	if out.HaltReason != "completed" {
+		t.Fatalf("HaltReason = %q, want completed — the beat must run on past a refused eruption", out.HaltReason)
+	}
+	// Both of the player's attempts still landed: the refusal cost the world its turn, not the player.
+	if got := wtSpeakerEventCount(t, ctx, pool, out.Committed, dlKadeID); got != 2 {
+		t.Fatalf("Kade-spoken committed events = %d, want 2 — the player's chain must survive a refused intrusion", got)
 	}
 }
 

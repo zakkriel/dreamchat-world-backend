@@ -576,3 +576,40 @@ So the Journey (shipped in #32) has no reachable path, and neither does walking 
   every leg (the minted waystations are unknown to the viewer), and `unresolved_candidates` carries
   bare ids the frontend cannot name. Both are label-surface work, tracked with the `display_label`
   continuity fix.
+
+---
+
+## SPEC-031 — Interruption is real but astronomically rare at playable ticks (a tuning call)
+The founder's Journey depends on the world interrupting a walk. Across the gate run (~14 legs, 4
+journeys) it never once did, which looked like a dormant path. It is not dormant — it is *arithmetic*.
+
+Only **medium and large** eruptions cut a beat (`eruptionCutsBeat`, worldturn.go); a `small` fire
+commits an event but never interrupts. And the chance climbs with elapsed in-world time since that
+tier last fired:
+
+```
+chance = LEAST(cap, climb_rate * ((now - last_fired) / climb_chunk_ticks) * intensity)
+```
+
+Seeded `world_actor_config` (all three tiers `climb_rate 0.01`, `cap 0.70`):
+
+| tier | `climb_chunk_ticks` | chance at tick 900 | cuts the beat? |
+|---|---|---|---|
+| small | 60 | ~15% | no |
+| medium | 3600 | ~0.25% | **yes** |
+| large | 86400 | ~0.01% | **yes** |
+
+A journey leg advances 60 ticks, and a fresh seed starts near tick 50. So over a whole playtest the
+interrupting tiers sit at a fraction of a percent per leg: **0-for-14 is the expected result**, and it
+would take on the order of four hundred legs for an even chance of one interruption. Nothing is
+broken; the numbers simply describe a world that interrupts a traveller about once a career.
+- **Evidence:** the formula above is `fn_pressure_chance`; the tier→cut rule is `eruptionCutsBeat`;
+  the config values are the seeded rows. Measured live, `small` fires often enough to be seen on most
+  journeys once its chance passes ~10%.
+- **The lever is data, not code.** `world_actor_config.climb_chunk_ticks` for `medium` is the single
+  number that decides how present interruption feels. Dropping it from 3600 to ~300 puts medium at
+  ~3% per leg — roughly one interruption per two journeys.
+- **Owner:** the founder. This is a felt-experience judgement ("how often should the world get in your
+  way?"), not an engineering one, and the right way to answer it is to play at a candidate value.
+  **No value is changed here** — the numbers are laid out so the choice can be made on evidence.
+- **Firing trigger:** fired — raised by the frontend's gate run and answered with the arithmetic above.
