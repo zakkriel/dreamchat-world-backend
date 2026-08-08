@@ -18,6 +18,8 @@ DreamChat is a persistent AI RPG world platform. **The world is the product; thi
 3. `/docs/30_architecture/canon_engine/` — **FROZEN build contract (v4.1).** Start at its `00_INDEX.md`. The Master DDL (doc 03) is the only core schema. Never propose changes to this set; if implementation reveals a genuine problem, the output is a *proposed new ADR superseding by number in doc 02* — never a code workaround.
 4. `/docs/30_architecture/mvp_slice_and_bridge.md` — API contract + slice plan.
 5. `/docs/30_architecture/implementation_playbook_superpowers.md` — the chunk ladder we are executing.
+6. `/docs/superpowers/handovers/2026-08-08-three-repo-integration-handover.md` — **where the system actually is.** What shipped, what is deliberately unbuilt, the standing cross-repo contracts, and the mistakes that cost time. Earlier handovers carry supersession banners; read this one first.
+7. `/docs/runbooks/full-stack-from-zero.md` — bringing up all four processes (DB, backend, image platform, frontend) with exact verified commands, plus the battery order that actually works and why.
 
 ## Iron rules (non-negotiable; full versions in the register)
 - **Canon events are immutable; nothing mutates canon directly.** LLMs and modules *propose*; the deterministic validation gate decides (ADR-001/009, D-1).

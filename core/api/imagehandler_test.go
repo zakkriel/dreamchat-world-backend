@@ -13,7 +13,12 @@ import (
 // identity→asset mapping persisted on OUR side, because the asset row does not carry it.
 func TestFillPortraits_PersistsTheAssetTheAssetRowDoesNotCarry(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup, not defer: Go runs defers BEFORE registered cleanups, so `defer pool.Close()`
+	// alongside a t.Cleanup that deletes rows closes the pool first and the delete silently fails
+	// against a dead connection. Registering the close FIRST makes LIFO run it LAST, after every
+	// row-cleanup. (ledger_test.go documents the same ordering rule; two "Test World" rows leaked
+	// into the shared directory before this was fixed.)
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f1", "5a5e0000-0000-0000-0000-0000000000a1"
@@ -84,7 +89,7 @@ func TestFillPortraits_PersistsTheAssetTheAssetRowDoesNotCarry(t *testing.T) {
 // itself and the next run does not poll a job that will never move.
 func TestFillPortraits_FailureIsRecordedAndNotLeftInFlight(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f2", "5a5e0000-0000-0000-0000-0000000000a2"
@@ -140,7 +145,7 @@ func TestFillPortraits_FailureIsRecordedAndNotLeftInFlight(t *testing.T) {
 // the reference never carries a presigned URL, only an id and a path back to this service.
 func TestImageRef_NullUntilReadyThenIdAndPathNeverAUrl(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f3", "5a5e0000-0000-0000-0000-0000000000a3"
@@ -191,7 +196,7 @@ func TestImageRef_NullUntilReadyThenIdAndPathNeverAUrl(t *testing.T) {
 // The read surface hands back a FRESH credential per request and refuses to be cached.
 func TestImageHandler_RedirectsToAFreshUrlAndForbidsCaching(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	f := newFakePlatform()
 	h := NewImageHandler(pool, testImageClient(t, f), true)
@@ -215,7 +220,7 @@ func TestImageHandler_RedirectsToAFreshUrlAndForbidsCaching(t *testing.T) {
 // runs without images, and that has to stay true.
 func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	h := NewImageHandler(pool, nil, true)
 
 	rec := httptest.NewRecorder()
@@ -238,7 +243,7 @@ func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
 // field is a breaking change however additive it looks.
 func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, id.World) })
@@ -308,7 +313,7 @@ func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
 // A busy room must not cost one query per participant for a field that is usually null.
 func TestImageRefsFor_ResolvesTheWholeRosterInOneQuery(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	worldID := "5a5e0000-0000-0000-0000-0000000000f6"

@@ -1,5 +1,13 @@
 # NEEDS — what the frontend needs from the backend (2026-08-07)
 
+> **MOSTLY DELIVERED (2026-08-08) — see `2026-08-08-three-repo-integration-handover.md`.**
+> §1 SPEC-028 (world management), §2 SPEC-021 (CORS) and SPEC-019 (theme tokens), §2.5 SPEC-029
+> (Compendium lenses) and §3 (`scene/current`, `POST /beats`, continue) have all landed. Two
+> corrections to what is written below: §5's claim that the beat envelope has no published schema was
+> already stale — the wire shape is `beat_frame`, which IS published and payload-covered (now
+> `beat_frame/2`) — and `beathandler.go:265-286` no longer contains a response envelope at all.
+> §4 (`GET /carrying`) remains outstanding. Kept as the record of what the frontend asked for.
+
 **Author:** frontend review pass, `dreamchat-frontend` @ `main` (PR #5 merged: design system,
 atmospheric chrome, play surface, runtime `schema_version` validation).
 **Purpose:** one list of backend-side gaps that block frontend work, each with the code evidence and

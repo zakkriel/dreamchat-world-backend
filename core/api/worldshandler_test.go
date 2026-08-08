@@ -31,7 +31,12 @@ func worldsPost(t *testing.T, h http.Handler, body string) *httptest.ResponseRec
 // twenty-seven tables, so the frontend could route on a world but never let anyone choose one.
 func TestWorlds_DirectoryListsTheSeededWorldsWithTheirLook(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup, not defer: Go runs defers BEFORE registered cleanups, so `defer pool.Close()`
+	// alongside a t.Cleanup that deletes rows closes the pool first and the delete silently fails
+	// against a dead connection. Registering the close FIRST makes LIFO run it LAST, after every
+	// row-cleanup. (ledger_test.go documents the same ordering rule; two "Test World" rows leaked
+	// into the shared directory before this was fixed.)
+	t.Cleanup(func() { pool.Close() })
 
 	rec := worldsGet(t, NewWorldsHandler(pool, true))
 	if rec.Code != http.StatusOK {
@@ -83,7 +88,7 @@ func TestWorlds_DirectoryListsTheSeededWorldsWithTheirLook(t *testing.T) {
 // is INSIDE a world may ride this surface — no scene, no tick, no entities, no counts.
 func TestWorlds_DirectoryCarriesNoWorldState(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	// Checked STRUCTURALLY, on the key set, not by scanning values for suspicious words: a world may
 	// legitimately be NAMED after a character ("Mara 0A Fixture"), and a substring scan would call
@@ -119,7 +124,7 @@ func TestWorlds_DirectoryCarriesNoWorldState(t *testing.T) {
 // world that exists, is listed, and is NOT yet playable, because nothing has been authored into it.
 func TestWorlds_CreateMakesARealButUninhabitedWorld(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	h := NewWorldsHandler(pool, true)
 
@@ -169,7 +174,7 @@ func TestWorlds_CreateMakesARealButUninhabitedWorld(t *testing.T) {
 // to keep working; a backend that 400s on a word it has not heard of is the thing that breaks.
 func TestWorlds_CreateAcceptsUnknownThemeVocabulary(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 
 	rec := worldsPost(t, NewWorldsHandler(pool, true),
 		`{"display_name":"Test World — Future Mood","theme":{"schema_version":"world_theme/1","accent":"#112233","mood":"thunderhead","ornament":"lattice"}}`)
@@ -190,7 +195,7 @@ func TestWorlds_CreateAcceptsUnknownThemeVocabulary(t *testing.T) {
 // The floors that ARE enforced return a reason, not a constraint violation surfacing as a 500.
 func TestWorlds_CreateRejectsWhatStorageWouldReject(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	h := NewWorldsHandler(pool, true)
 
 	for _, tc := range []struct{ name, body string }{

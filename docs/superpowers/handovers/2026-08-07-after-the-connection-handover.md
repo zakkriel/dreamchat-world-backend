@@ -1,5 +1,13 @@
 # HANDOVER — after the Journey and the connection (2026-08-07)
 
+> **SUPERSEDED (2026-08-08) — read `2026-08-08-three-repo-integration-handover.md` first.**
+> Its §1 and §3 are no longer true: the two things this document names as blocking a real
+> playthrough (nobody is `Player`; every seat defaults to Anthropic) are resolved, the founder's
+> worked example is drivable end to end, and the frontend renders it. One claim below was wrong when
+> written — §3.2's "scene state, journeys, continue, frames and the trace are all real" of the fake
+> bridge. The frames were; the world was not, because the decompose seat was built with an empty
+> table and committed nothing (fixed in #38). Kept as the record of where that session ended.
+
 **For the agent picking this up.** The five-step program the founder approved this session is **built, merged, and green on trunk**. This document says what that means, what is genuinely left, and the two specific things standing between today and the founder actually playing the world. Read the two "before you touch anything" items in §6 before running a command — the database and the branch ruleset both bite.
 
 ---
