@@ -113,8 +113,8 @@ WITH slice AS (
 SELECT ok(
   (SELECT j->'scene'->>'id' FROM slice) = '210c0000-0000-0000-0000-0000000000d1'
   AND (SELECT j->'scene'->>'name' FROM slice) = 'The Drowned Lantern'
-  AND (SELECT jsonb_array_length(j->'locations') FROM slice) = 5,
-  '(e) scene = the tavern''s own canonical location object; locations carries all 5 seeded locations');
+  AND (SELECT jsonb_array_length(j->'locations') FROM slice) = 6,
+  '(e) scene = the tavern''s own canonical location object; locations carries all 6 seeded locations');
 
 SELECT * FROM finish();
 ROLLBACK;
