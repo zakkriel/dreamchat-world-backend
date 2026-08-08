@@ -554,14 +554,25 @@ So the Journey (shipped in #32) has no reachable path, and neither does walking 
   - **Deliberately not added:** the absent-but-known set (`fn_entity_visible`). It *would* now yield
     cleanly, but for the seeded viewer it contains only the room he is in, so it would ship as an
     unexercised code path. It belongs with the long-range ruling below.
-- **STILL OPEN — the Journey gate cannot be driven, and it is world content, not engine.** A journey
-  starts only from an **over-budget** `ActorMoved`. The Drowned Lantern's tension is `tense` →
-  **30 s budget** (`tensionBudgetSeconds`), and the farthest room reachable from it is the Alley at
-  **29 s** (`fn_move_duration_actor`); Dock Street is 5 s and the Cellar 6 s. **Every destination in
-  the world fits inside one beat**, so nothing can start a journey — the four rooms cluster within 40
-  units while the Harbor Quarter frame that holds them is 2000×2000 and otherwise empty. Exercising
-  the founder's worked example (walk out, get interrupted, restate, arrive) needs **one connected
-  destination further than ~41 units from the tavern**. That is a place in his fiction with a name he
-  owns, so it is not invented here.
-- **Firing trigger:** movement half is delivered; the remaining half fires the moment a distant place
-  is authored into the seed.
+- **RESOLVED (2026-08-08) — the Journey is drivable.** The remaining half was world content, and the
+  founder named it: **the Harbormaster's Office**, off Dock Street. Two seed changes, no engine work:
+  - the office sits at `{627,200}`, **420 m** from Dock Street ⇒ `CEIL(420/1.4)` = **300 s** of
+    walking, against the road's budget — five times over, so the walk cannot be swallowed by one beat.
+  - **Dock Street had no tension at all**, and a missing tension reads as `none` ⇒ an *infinite*
+    budget, which would have made any distance fit. It is now `normal` ⇒ 60 s. This was the quieter
+    half of the blocker and would have defeated the office on its own.
+
+  Driven end to end on a fresh seed: `go to Dock Street` (5 s, instant) → `go to the Harbormaster's
+  Office` opens a journey (`kind: travel`, `legs_total: 5`, `interruptible: true`, `halt_reason:
+  journey_leg`) → four `POST /beats/continue` presses walk legs 2…5 → `status: arrived`,
+  `halt_reason: journey_arrived`, and the scene reports the viewer at the Harbormaster's Office.
+- **The UNRESOLVED tie is now reachable in play.** A second hooded figure sits at the same table with
+  the *same descriptor*, so Kade cannot tell them apart and `fn_display_name` renders both as "a
+  hooded figure". `ask a hooded figure about the note` now decomposes to `UNRESOLVED` over two ids
+  and halts `unresolved` — previously every candidate in the room resolved uniquely and that path was
+  dead. Its id is `…aa`, not the next free `…a5`: pgTAP's `104_world_slice_test` mints `…a5` itself
+  and `entity_registry`'s PK is global, so seed and tests share one id space.
+- **Observed while driving, folded into the label pass:** the journey block's `where_label` is null on
+  every leg (the minted waystations are unknown to the viewer), and `unresolved_candidates` carries
+  bare ids the frontend cannot name. Both are label-surface work, tracked with the `display_label`
+  continuity fix.

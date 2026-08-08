@@ -68,15 +68,28 @@ INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) V
  ('2ac70000-0000-0000-0000-0000000000a2','22222222-2222-2222-2222-222222222222','actor',   'Mara'),
  ('2ac70000-0000-0000-0000-0000000000a3','22222222-2222-2222-2222-222222222222','actor',   'Jonas'),
  ('2ac70000-0000-0000-0000-0000000000a4','22222222-2222-2222-2222-222222222222','actor',   'Hooded Woman'),
+ -- A SECOND hooded figure at the same table. Kade has no name for either, so fn_display_name renders
+ -- both as the identical descriptor 'a hooded figure' — which is the point: "ask the hooded figure
+ -- about the note" now names two people equally well, and decompose must refuse to guess (UNRESOLVED)
+ -- instead of silently picking one. Until this, every candidate in the room resolved uniquely and the
+ -- UNRESOLVED path could not be reached in play at all. Id is …aa, not the next free …a5: pgTAP's
+ -- 104_world_slice_test mints …a5 itself, and entity_registry's PK is global, so the seed and the
+ -- tests share one id space. Anything added here needs a suffix no test already claims.
+ ('2ac70000-0000-0000-0000-0000000000aa','22222222-2222-2222-2222-222222222222','actor',   'Hooded Companion'),
  ('210c0000-0000-0000-0000-0000000000d0','22222222-2222-2222-2222-222222222222','location','Harbor Quarter of Vael'),
  ('210c0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','location','The Drowned Lantern'),
  ('210c0000-0000-0000-0000-0000000000d2','22222222-2222-2222-2222-222222222222','location','Dock Street'),
  ('210c0000-0000-0000-0000-0000000000d3','22222222-2222-2222-2222-222222222222','location','Alley'),
  ('210c0000-0000-0000-0000-0000000000d4','22222222-2222-2222-2222-222222222222','location','Cellar'),
+ -- SPEC-030 (founder-named, 2026-08-08): the Harbormaster's Office, off Dock Street and far enough up
+ -- the quarter that walking there cannot fit in one beat — the first destination in this world that
+ -- starts a JOURNEY rather than an instant arrival. See the geometry note in the spatial block.
+ ('210c0000-0000-0000-0000-0000000000d5','22222222-2222-2222-2222-222222222222','location','Harbormaster''s Office'),
  ('2a7f0000-0000-0000-0000-0000000000b1','22222222-2222-2222-2222-222222222222','artifact','Sealed Note (gray wax)'),
  ('2a7f0000-0000-0000-0000-0000000000c1','22222222-2222-2222-2222-222222222222','artifact','Front Door'),
  ('2a7f0000-0000-0000-0000-0000000000c2','22222222-2222-2222-2222-222222222222','artifact','Back Door'),
  ('2a7f0000-0000-0000-0000-0000000000c3','22222222-2222-2222-2222-222222222222','artifact','Cellar Hatch'),
+ ('2a7f0000-0000-0000-0000-0000000000c4','22222222-2222-2222-2222-222222222222','artifact','Office Door'),
  ('2a7f0000-0000-0000-0000-0000000000d1','22222222-2222-2222-2222-222222222222','artifact','Cellar Key'),
  ('2a7f0000-0000-0000-0000-0000000000f1','22222222-2222-2222-2222-222222222222','artifact','the bar'),
  ('2a7f0000-0000-0000-0000-0000000000f2','22222222-2222-2222-2222-222222222222','artifact','Ballast Crate'),
@@ -416,5 +429,42 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a3','actor','attrs.descriptor', to_jsonb('the muscle by the bar'::text),         40,24),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000a4','actor','attrs.descriptor', to_jsonb('a hooded figure'::text),               40,25),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000fa','2ac70000-0000-0000-0000-0000000000a1','actor','attrs.descriptor', to_jsonb('a young stranger, dark-haired'::text), 50,1);
+
+-- ── THE WAY OUT OF TOWN (SPEC-030, founder-named 2026-08-08) — the first JOURNEY in this world ──
+-- Everything in the quarter used to sit inside one beat: the tavern's tension is 'tense' → a 30 s
+-- budget, and its farthest neighbour (the alley) is 40 m ⇒ 29 s. Every destination fit, so no move
+-- could ever go over budget and the Journey shipped in #32 was unreachable by any client.
+--
+-- Two things were needed, and neither is engine work:
+--
+--  1. A DESTINATION FAR ENOUGH. The Harbormaster's Office sits off Dock Street at {627,200} — 420 m
+--     from the road at {207,200} ⇒ CEIL(420/1.4) = 300 s of walking (the same 1.4 m/s the rest of
+--     this seed is tuned against). That is five times the origin's budget, so the walk cannot be
+--     swallowed by one beat: it becomes a journey with legs the world can interrupt.
+--  2. A FINITE BUDGET TO EXCEED. Dock Street carried no tension at all, and a missing tension reads
+--     as 'none' ⇒ an INFINITE budget (tensionBudgetSeconds), which means no move from the road could
+--     ever be over budget however far it went. It is now 'normal' ⇒ 60 s: an open harbour road is
+--     not tense, but it is not timeless either.
+--
+-- So the founder's worked example plays: step out the front door onto Dock Street (5 s, instant),
+-- then walk for the office (300 s vs a 60 s budget) → journey → interruption → restate → arrival.
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
+                            valid_from_tick, valid_from_seq) VALUES
+ -- Dock Street gains a finite beat budget (see note 2 above).
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d2','location','attrs.tension',            to_jsonb('normal'::text),      40,51),
+ -- The Harbormaster's Office: a child of the quarter, up the road from the docks.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d5','location','attrs.parent_location_id', to_jsonb('210c0000-0000-0000-0000-0000000000d0'::text), 40,52),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d5','location','attrs.coordinates',        '{"x":627,"y":200}'::jsonb,    40,53),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d5','location','attrs.tension',            to_jsonb('normal'::text),      40,54),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','210c0000-0000-0000-0000-0000000000d5','location','attrs.description',        to_jsonb('A ledger-room above the wharf; tide charts, a brass scale, and the harbourmaster''s long window over the water.'::text), 40,55),
+ -- Office Door: OPEN and unlocked, dock street↔office. The way is clear; the DISTANCE is the obstacle.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c4','artifact','attrs.open',               to_jsonb(true),                40,56),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c4','artifact','attrs.locked',             to_jsonb(false),               40,57),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000c4','artifact','attrs.connects',           jsonb_build_array('210c0000-0000-0000-0000-0000000000d2','210c0000-0000-0000-0000-0000000000d5'), 40,58),
+ -- The second hooded figure: same table, same descriptor as the first, so Kade cannot tell them apart
+ -- and "the hooded figure" names both. This is what makes UNRESOLVED reachable in play.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.location_id',        to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,59),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.coordinates',        '{"x":2,"y":1}'::jsonb,        40,60),
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.descriptor',         to_jsonb('a hooded figure'::text), 40,61);
 
 COMMIT;
