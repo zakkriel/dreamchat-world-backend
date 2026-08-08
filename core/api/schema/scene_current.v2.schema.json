@@ -1,0 +1,205 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "scene_current/2",
+  "title": "scene_current/2 — where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "place",
+    "participants",
+    "now",
+    "journey",
+    "current"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "scene_current/2"
+    },
+    "place": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "label",
+        "description",
+        "tone"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "label": {
+          "type": "string"
+        },
+        "description": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "tone": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "participants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "label",
+          "kind",
+          "image"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "type": "string"
+          },
+          "kind": {
+            "const": "actor"
+          },
+          "image": {
+            "description": "Image reference, or null when there is no picture yet — the ordinary state, and what the frontend's placeholder silhouette is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "schema_version",
+                  "asset_id",
+                  "path"
+                ],
+                "properties": {
+                  "schema_version": {
+                    "const": "image_ref/1"
+                  },
+                  "asset_id": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "path": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "now": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "tick",
+        "display_label"
+      ],
+      "properties": {
+        "tick": {
+          "type": "integer"
+        },
+        "display_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "journey": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "#/$defs/journey_block"
+        }
+      ]
+    },
+    "current": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "$defs": {
+    "journey_block": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "active",
+        "kind",
+        "goal_label",
+        "where_label",
+        "progress",
+        "legs_done",
+        "legs_total",
+        "interruptible",
+        "status"
+      ],
+      "properties": {
+        "active": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "travel",
+            "wait",
+            "watch"
+          ]
+        },
+        "goal_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "where_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "legs_done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "legs_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interruptible": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "arrived",
+            "ended"
+          ]
+        }
+      }
+    }
+  }
+}

@@ -157,8 +157,8 @@ func TestSceneCurrent_ShowsWhereYouAreAndWhoIsPresent(t *testing.T) {
 		t.Fatalf("decode: %v\nbody: %s", err, rec.Body.String())
 	}
 
-	if scene.SchemaVersion != "scene_current/1" {
-		t.Fatalf("schema_version = %q, want scene_current/1", scene.SchemaVersion)
+	if scene.SchemaVersion != "scene_current/2" {
+		t.Fatalf("schema_version = %q, want scene_current/2", scene.SchemaVersion)
 	}
 
 	// place: the Viewer's OWN name for it (world_genesis perception) — never the canonical secret.
@@ -274,7 +274,7 @@ func TestSceneCurrent_LeaksNoCanon(t *testing.T) {
 // fn_actor_page etc. Skipped in the normal suite; ci/gen_payloads.sh runs it explicitly (with
 // SCENE_PAYLOAD_DIR set) against the seeded FIXTURE world (worldID/playerID/jonasID, viewer_test.go)
 // so `make schema-contract` has a REAL payload — produced by the real ServeHTTP, the same call
-// net/http itself would make — to validate against schema/scene_current.v1.schema.json.
+// net/http itself would make — to validate against schema/scene_current.v2.schema.json.
 func TestGenSceneCurrentPayloads(t *testing.T) {
 	dir := os.Getenv("SCENE_PAYLOAD_DIR")
 	if dir == "" {

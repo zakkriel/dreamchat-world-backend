@@ -746,7 +746,7 @@ CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_
     AS $$
   SELECT CASE WHEN NOT fn_entity_visible(p_world_id, p_viewer_id, p_actor_id) THEN NULL
   ELSE json_build_object(
-    'schema_version', 'actor_page/1',
+    'schema_version', 'actor_page/2',
     'world_id',  p_world_id,
     'viewer_id', p_viewer_id,
     'actor', json_build_object(
@@ -758,7 +758,18 @@ CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_
       'last_known_status',          fn_compendium_latest_fact(p_world_id, p_viewer_id, p_actor_id),
       'known_artifacts',            fn_compendium_related_entities(p_world_id, p_viewer_id, p_actor_id, ARRAY['artifact']),
       'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_actor_id),
-      'inline_links',               fn_compendium_related_entities(p_world_id, p_viewer_id, p_actor_id, ARRAY['actor','location','artifact'])
+      'inline_links',               fn_compendium_related_entities(p_world_id, p_viewer_id, p_actor_id, ARRAY['actor','location','artifact']),
+      -- NULL until a portrait exists. Never a presigned URL: fn_image_ref emits an asset id and a
+      -- path back to this service, which mints a fresh short-lived URL per read, so a payload can be
+      -- cached or logged without carrying a credential that expires in fifteen minutes.
+      --
+      -- NOT perception-scoped, and that is a real decision. A portrait is of the ENTITY, not of the
+      -- viewer's opinion of it: two viewers who know an actor by different names still see the same
+      -- face, exactly as they would in the room. The wall governs what a viewer KNOWS — names,
+      -- facts, synthesis — and this page already renders every one of those through the viewer's own
+      -- perception. A picture of a person standing in front of you is not a secret (B-1 unaffected;
+      -- the existence gate above still decides whether this page may be seen at all).
+      'image',                      fn_image_ref(p_world_id, 'actor', p_actor_id)
     )
   ) END;
 $$;
@@ -3767,4 +3778,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260808100002'),
     ('20260808100003'),
     ('20260808100004'),
-    ('20260808100005');
+    ('20260808100005'),
+    ('20260808100006');

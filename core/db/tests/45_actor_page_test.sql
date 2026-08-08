@@ -10,7 +10,7 @@ SELECT is(
 SELECT is(
   fn_actor_page('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
                 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')->>'schema_version',
-  'actor_page/1', 'payload carries schema_version actor_page/1');
+  'actor_page/2', 'payload carries schema_version actor_page/2');
 -- (3) current_synthesis is a deterministic composition of the viewer's OWN held perceptions
 --     (SPEC-029). Asserting the exact text, not merely NOT NULL: "not null" would still pass if the
 --     lens leaked canon, invented prose, or rendered a raw tick as a display label (B-5) — all three

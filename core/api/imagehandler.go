@@ -160,8 +160,10 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 	// service rather than to a player — no perception boundary is crossed (B-1 governs what reaches
 	// the FRONTEND, and a portrait's prompt never does).
 	rows, err := pool.Query(ctx, `
-		SELECT er.entity_id::text, er.canonical_name
+		SELECT er.entity_id::text, er.canonical_name,
+		       coalesce(a.attrs->>'descriptor', '')
 		  FROM entity_registry er
+		  LEFT JOIN actor_state a ON a.entity_id = er.entity_id AND a.world_id = er.world_id
 		  LEFT JOIN image_slot s
 		    ON s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
 		 WHERE er.world_id = $1 AND er.entity_kind = 'actor'
@@ -171,11 +173,11 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 	if err != nil {
 		return out, err
 	}
-	type target struct{ id, name string }
+	type target struct{ id, name, descriptor string }
 	var targets []target
 	for rows.Next() {
 		var t target
-		if err := rows.Scan(&t.id, &t.name); err != nil {
+		if err := rows.Scan(&t.id, &t.name, &t.descriptor); err != nil {
 			rows.Close()
 			return out, err
 		}
@@ -187,7 +189,17 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 	}
 
 	for _, t := range targets {
-		identityID, err := client.upsertIdentity(ctx, "character", t.id, worldID, t.name, styleID, nil)
+		// canonical_visual_traits is REQUIRED on upsert (a 400 the quickstart's prose does not flag,
+		// found on the first live handshake). The honest source is the entity's own Tier-2 descriptor
+		// — literally "what a stranger sees" — so the portrait is conditioned on what the world
+		// already says the thing looks like, rather than on traits invented at the boundary. An actor
+		// with no descriptor falls back to its name, which is thin but true; nothing is fabricated.
+		appearance := t.descriptor
+		if appearance == "" {
+			appearance = t.name
+		}
+		identityID, err := client.upsertIdentity(ctx, "character", t.id, worldID, t.name, styleID,
+			map[string]string{"appearance": appearance})
 		if err != nil {
 			out.Failed++
 			recordSlotError(ctx, pool, worldID, t.id, err.Error())
@@ -199,7 +211,17 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		// on retry is a different body under the same key and returns 409 idempotency_conflict. This
 		// is the trap their own verification run hit, and the reason both values live in the row.
 		issuedAt := time.Now().UTC()
-		key := "portrait-" + worldID + "-" + t.id
+		// The key CARRIES the timestamp. Their key is bound to a hash of the whole body, so a stable
+		// key plus a fresh issued_at is a different body under the same key: 409 idempotency_conflict.
+		// A deterministic key looked right and was wrong — the first live run hit it on the second
+		// attempt for the same slot, which no fake caught because the fake was always handed a pinned
+		// envelope. Their doc states both remedies: pin one issued_at per logical request, OR derive a
+		// new key whenever the body changes. This does both — the pair is stored so an in-flight retry
+		// replays byte-identically, and a genuinely NEW attempt gets a new key rather than colliding.
+		//
+		// Nothing is lost by not deduplicating across attempts: reuse is the platform's default, so a
+		// repeat request is a zero-cost cache hit returning the same asset.
+		key := "portrait-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
 		env := newGovEnvelope(issuedAt, "character_portrait")
 
 		jobID, err := client.requestGeneration(ctx, identityID, key, env)
@@ -265,4 +287,37 @@ func recordSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerID, 
 		worldID, ownerID, msg); err != nil {
 		log.Printf("images: recording slot error for %s: %v", ownerID, err)
 	}
+}
+
+// imageRefsFor resolves image references for a whole set of entities in one round trip. A scene read
+// asks for every present actor at once, and most of them will have no picture: doing that one query
+// per participant would turn a single read into a dozen for a field that is usually null.
+//
+// Entities with no slot are simply absent from the returned map, and a missing key yields a nil
+// json.RawMessage, which marshals as `null` — the ordinary "no picture yet" the frontend expects.
+func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind string, ownerIDs []string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(ownerIDs))
+	if len(ownerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT owner_id::text, fn_image_ref($1::uuid, $2, owner_id)::text
+		  FROM image_slot
+		 WHERE world_id = $1 AND owner_kind = $2 AND owner_id = ANY($3::uuid[]) AND asset_id IS NOT NULL`,
+		worldID, ownerKind, ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var ref *string
+		if err := rows.Scan(&id, &ref); err != nil {
+			return nil, err
+		}
+		if ref != nil {
+			out[id] = json.RawMessage(*ref)
+		}
+	}
+	return out, rows.Err()
 }

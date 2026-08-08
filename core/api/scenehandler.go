@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -12,9 +12,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v1.schema.json,
+// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v2.schema.json,
 // core/api/schema/ — the frontend repo generates its types from that directory).
-const sceneCurrentSchemaVersion = "scene_current/1"
+//
+// v2 (2026-08-08): participants carry `image`. The payload is additionalProperties:false and the
+// frontend pins this string exactly, so an added field is a breaking change however additive it
+// looks — the version moving IS the notification. Clean cutover, no alias.
+const sceneCurrentSchemaVersion = "scene_current/2"
 
 var sceneCurrentRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/scene/current$`)
 
@@ -35,6 +39,11 @@ type sceneParticipant struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Kind  string `json:"kind"` // always "actor" — the closed vocabulary this endpoint ships (kind exists for the schema's own sake, not because a second value exists yet)
+	// Image is the participant's portrait reference, or nil when there is no picture yet — the
+	// ordinary state, and the one the frontend's placeholder silhouette is built for. It carries an
+	// asset id and a path back to this service, NEVER a presigned URL: those expire in ~15 minutes,
+	// so a payload embedding one would be a payload that rots in any cache or log.
+	Image json.RawMessage `json:"image"`
 }
 
 // sceneNow is the moment, expressed as tick (ordering) + display_label (rendering) — wall-clock
@@ -45,7 +54,7 @@ type sceneNow struct {
 	DisplayLabel *string `json:"display_label"`
 }
 
-// sceneView is the scene_current/1 projection: perception-bound, schema_version-stamped, no canon
+// sceneView is the scene_current/2 projection: perception-bound, schema_version-stamped, no canon
 // row crosses (B-1, I-3, D-7). Journey is the rung3 Task 2 block (journey.go's journeyBlock), or nil
 // when the viewer holds no active journey — never an empty/placeholder value for "not travelling".
 type sceneView struct {
@@ -155,11 +164,21 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 	}
 
 	participants := make([]sceneParticipant, 0, len(present))
+	actorIDs := make([]string, 0, len(present))
 	for _, id := range present {
 		if kindByID[id] != "actor" {
 			continue // characters only (UX doctrine §2.2) — drops perceived artifacts narrateRoster's own filter lets through
 		}
-		participants = append(participants, sceneParticipant{ID: id, Label: labelFor[id], Kind: "actor"})
+		actorIDs = append(actorIDs, id)
+	}
+	// One query for the whole roster rather than one per participant: a busy room would otherwise
+	// turn a single scene read into a dozen round trips for a field that is usually null.
+	images, err := imageRefsFor(ctx, pool, worldID, "actor", actorIDs)
+	if err != nil {
+		return sceneView{}, fmt.Errorf("buildScene: image refs: %w", err)
+	}
+	for _, id := range actorIDs {
+		participants = append(participants, sceneParticipant{ID: id, Label: labelFor[id], Kind: "actor", Image: images[id]})
 	}
 
 	var tick int64

@@ -4,41 +4,98 @@
   "title": "beat_frame/2 — one SSE frame of POST /worlds/{w}/beats (design §4.8, rung3 Task 3)",
   "type": "object",
   "oneOf": [
-    { "$ref": "#/$defs/interpretation_frame" },
-    { "$ref": "#/$defs/narration_frame" },
-    { "$ref": "#/$defs/scene_frame" },
-    { "$ref": "#/$defs/journey_frame" },
-    { "$ref": "#/$defs/result_frame" },
-    { "$ref": "#/$defs/error_frame" },
-    { "$ref": "#/$defs/trace_frame" }
+    {
+      "$ref": "#/$defs/interpretation_frame"
+    },
+    {
+      "$ref": "#/$defs/narration_frame"
+    },
+    {
+      "$ref": "#/$defs/scene_frame"
+    },
+    {
+      "$ref": "#/$defs/journey_frame"
+    },
+    {
+      "$ref": "#/$defs/result_frame"
+    },
+    {
+      "$ref": "#/$defs/error_frame"
+    },
+    {
+      "$ref": "#/$defs/trace_frame"
+    }
   ],
   "$defs": {
     "interpretation_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "chain"],
+      "required": [
+        "schema_version",
+        "kind",
+        "chain"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "interpretation" },
-        "chain": { "type": "array", "items": { "$ref": "#/$defs/attempt" } }
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "interpretation"
+        },
+        "chain": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/attempt"
+          }
+        }
       }
     },
     "narration_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "message"],
+      "required": [
+        "schema_version",
+        "kind",
+        "message"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "narration" },
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "narration"
+        },
         "message": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["speaker_id", "speaker_label", "kind", "text"],
+          "required": [
+            "speaker_id",
+            "speaker_label",
+            "kind",
+            "text"
+          ],
           "properties": {
-            "speaker_id": { "type": ["string", "null"], "format": "uuid" },
-            "speaker_label": { "type": "string" },
-            "kind": { "enum": ["narration", "speech", "action"] },
-            "text": { "type": "string", "minLength": 1 }
+            "speaker_id": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "uuid"
+            },
+            "speaker_label": {
+              "type": "string"
+            },
+            "kind": {
+              "enum": [
+                "narration",
+                "speech",
+                "action"
+              ]
+            },
+            "text": {
+              "type": "string",
+              "minLength": 1
+            }
           }
         }
       }
@@ -46,24 +103,46 @@
     "scene_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "scene"],
+      "required": [
+        "schema_version",
+        "kind",
+        "scene"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "scene" },
-        "scene": { "$ref": "#/$defs/scene_current" }
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "scene"
+        },
+        "scene": {
+          "$ref": "#/$defs/scene_current"
+        }
       }
     },
     "journey_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "journey"],
+      "required": [
+        "schema_version",
+        "kind",
+        "journey"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "journey" },
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "journey"
+        },
         "journey": {
           "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/journey_block" }
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/journey_block"
+            }
           ]
         }
       }
@@ -71,31 +150,68 @@
     "result_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "result"],
+      "required": [
+        "schema_version",
+        "kind",
+        "result"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "result" },
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "result"
+        },
         "result": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["committed", "halt_reason", "ticks_advanced", "unresolved_candidates", "telegraphs"],
+          "required": [
+            "committed",
+            "halt_reason",
+            "ticks_advanced",
+            "unresolved_candidates",
+            "telegraphs"
+          ],
           "properties": {
-            "committed":             { "type": "array", "items": { "type": "string" } },
-            "halt_reason":           { "type": "string" },
-            "ticks_advanced":        { "type": "integer" },
+            "committed": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "halt_reason": {
+              "type": "string"
+            },
+            "ticks_advanced": {
+              "type": "integer"
+            },
             "unresolved_candidates": {
               "type": "array",
               "items": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": ["id", "label"],
+                "required": [
+                  "id",
+                  "label"
+                ],
                 "properties": {
-                  "id":    { "type": "string", "format": "uuid" },
-                  "label": { "type": "string", "minLength": 1 }
+                  "id": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1
+                  }
                 }
               }
             },
-            "telegraphs":            { "type": "array", "items": { "type": "string" } }
+            "telegraphs": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
           }
         }
       }
@@ -103,171 +219,1026 @@
     "error_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "message"],
+      "required": [
+        "schema_version",
+        "kind",
+        "message"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "error" },
-        "message": { "type": "string", "minLength": 1 }
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "error"
+        },
+        "message": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "trace_frame": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "kind", "reasoning_log"],
+      "required": [
+        "schema_version",
+        "kind",
+        "reasoning_log"
+      ],
       "properties": {
-        "schema_version": { "const": "beat_frame/2" },
-        "kind": { "const": "trace" },
-        "reasoning_log": { "$ref": "#/$defs/beat_trace" }
+        "schema_version": {
+          "const": "beat_frame/2"
+        },
+        "kind": {
+          "const": "trace"
+        },
+        "reasoning_log": {
+          "$ref": "#/$defs/beat_trace"
+        }
       }
     },
-
     "beat_trace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["decompose", "halt_reason", "committed"],
+      "required": [
+        "decompose",
+        "halt_reason",
+        "committed"
+      ],
       "properties": {
-        "decompose":   { "type": "array", "items": { "$ref": "#/$defs/trace_element" } },
-        "world_first": { "type": "array", "items": { "$ref": "#/$defs/trace_decision" } },
-        "attempts":    { "type": "array", "items": { "$ref": "#/$defs/trace_attempt" } },
-        "rulings":     { "type": "array", "items": { "$ref": "#/$defs/trace_ruling" } },
-        "queries":     { "type": "array", "items": { "$ref": "#/$defs/trace_query" } },
-        "world_turn":  { "type": "array", "items": { "$ref": "#/$defs/trace_world_turn" } },
-        "halt_reason": { "type": "string" },
-        "committed":   { "type": "array", "items": { "type": "string" } }
+        "decompose": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_element"
+          }
+        },
+        "world_first": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_decision"
+          }
+        },
+        "attempts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_attempt"
+          }
+        },
+        "rulings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_ruling"
+          }
+        },
+        "queries": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_query"
+          }
+        },
+        "world_turn": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/trace_world_turn"
+          }
+        },
+        "halt_reason": {
+          "type": "string"
+        },
+        "committed": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "trace_element": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "properties": {
-        "type":   { "type": "string" },
-        "stated": { "type": "string" },
-        "ids":    { "type": "array", "items": { "type": "string", "format": "uuid" } }
+        "type": {
+          "type": "string"
+        },
+        "stated": {
+          "type": "string"
+        },
+        "ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        }
       }
     },
     "trace_decision": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["actor_id", "decision"],
+      "required": [
+        "actor_id",
+        "decision"
+      ],
       "properties": {
-        "actor_id": { "type": "string", "format": "uuid" },
-        "decision": { "enum": ["none", "commit", "telegraph"] },
-        "stated":   { "type": "string" }
+        "actor_id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "decision": {
+          "enum": [
+            "none",
+            "commit",
+            "telegraph"
+          ]
+        },
+        "stated": {
+          "type": "string"
+        }
       }
     },
     "trace_attempt": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["type"],
+      "required": [
+        "type"
+      ],
       "properties": {
-        "type":                     { "type": "string" },
-        "stated":                   { "type": "string" },
-        "fact_sheet":               {},
-        "move_duration_s":          { "type": "integer" },
-        "budget_remaining_before":  { "type": "integer" },
-        "budget_remaining_after":   { "type": "integer" },
-        "fit":                      { "type": "boolean" }
+        "type": {
+          "type": "string"
+        },
+        "stated": {
+          "type": "string"
+        },
+        "fact_sheet": {},
+        "move_duration_s": {
+          "type": "integer"
+        },
+        "budget_remaining_before": {
+          "type": "integer"
+        },
+        "budget_remaining_after": {
+          "type": "integer"
+        },
+        "fit": {
+          "type": "boolean"
+        }
       }
     },
     "trace_ruling": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["reasoning", "therefore"],
+      "required": [
+        "reasoning",
+        "therefore"
+      ],
       "properties": {
-        "actor_ids": { "type": "array", "items": { "type": "string", "format": "uuid" } },
+        "actor_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "format": "uuid"
+          }
+        },
         "fact_sheet": {},
-        "reasoning": { "type": "string" },
-        "therefore": { "type": "string" },
-        "outcome":   { "type": "string" }
+        "reasoning": {
+          "type": "string"
+        },
+        "therefore": {
+          "type": "string"
+        },
+        "outcome": {
+          "type": "string"
+        }
       }
     },
     "trace_query": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["stated"],
+      "required": [
+        "stated"
+      ],
       "properties": {
-        "stated":     { "type": "string" },
+        "stated": {
+          "type": "string"
+        },
         "fact_sheet": {}
       }
     },
     "trace_world_turn": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["clock_delta_s", "rolls"],
+      "required": [
+        "clock_delta_s",
+        "rolls"
+      ],
       "properties": {
-        "clock_delta_s":   { "type": "integer" },
-        "fired_scheduled": { "type": "array", "items": { "type": "string" } },
-        "rolls":           { "type": ["array", "null"], "items": { "$ref": "#/$defs/trace_roll" } },
-        "eruption":        { "$ref": "#/$defs/trace_element" }
+        "clock_delta_s": {
+          "type": "integer"
+        },
+        "fired_scheduled": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rolls": {
+          "type": [
+            "array",
+            "null"
+          ],
+          "items": {
+            "$ref": "#/$defs/trace_roll"
+          }
+        },
+        "eruption": {
+          "$ref": "#/$defs/trace_element"
+        }
       }
     },
     "trace_roll": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tier", "chance", "roll", "fired"],
+      "required": [
+        "tier",
+        "chance",
+        "roll",
+        "fired"
+      ],
       "properties": {
-        "tier":   { "type": "string" },
-        "chance": { "type": "number" },
-        "roll":   { "type": "number" },
-        "fired":  { "type": "boolean" }
+        "tier": {
+          "type": "string"
+        },
+        "chance": {
+          "type": "number"
+        },
+        "roll": {
+          "type": "number"
+        },
+        "fired": {
+          "type": "boolean"
+        }
       }
     },
-
     "attempt": {
       "type": "object",
       "oneOf": [
-        {"properties": {"type": {"const": "ActorMoved"}, "stated": {"type": "string", "minLength": 1}, "to_target_id": {"type": "string", "format": "uuid"}}, "required": ["type", "stated", "to_target_id"], "additionalProperties": false},
-        {"properties": {"type": {"const": "Communicated"}, "stated": {"type": "string", "minLength": 1}, "listener_id": {"type": "string", "format": "uuid"}, "content": {"type": "string", "minLength": 1}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated", "listener_id", "content"], "additionalProperties": false},
-        {"properties": {"type": {"const": "ObjectRelocated"}, "stated": {"type": "string", "minLength": 1}, "object_id": {"type": "string", "format": "uuid"}, "dest_kind": {"enum": ["actor", "location", "container"]}, "dest_id": {"type": "string", "format": "uuid"}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated", "object_id", "dest_kind", "dest_id"], "additionalProperties": false},
-        {"properties": {"type": {"const": "OwnershipAccessChanged"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}, "grantee_id": {"type": "string", "format": "uuid"}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
-        {"properties": {"type": {"const": "EntityCreated"}, "stated": {"type": "string", "minLength": 1}, "component_ids": {"type": "array", "items": {"type": "string", "format": "uuid"}}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated"], "additionalProperties": false},
-        {"properties": {"type": {"const": "EntityDestroyed"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
-        {"properties": {"type": {"const": "AttributeChanged"}, "stated": {"type": "string", "minLength": 1}, "target_id": {"type": "string", "format": "uuid"}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}, "sustain": {"type":"object","oneOf":[
-          {"properties":{"kind":{"const":"for"},"seconds":{"type":"integer","minimum":1}},"required":["kind","seconds"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_at"},"entity_id":{"type":"string","format":"uuid"},"place_id":{"type":"string","format":"uuid"}},"required":["kind","entity_id","place_id"],"additionalProperties":false},
-          {"properties":{"kind":{"const":"until_attr"},"entity_id":{"type":"string","format":"uuid"},"attr":{"type":"string","minLength":1},"value":{"type":"string"}},"required":["kind","entity_id","attr","value"],"additionalProperties":false}
-        ]}}, "required": ["type", "stated", "target_id"], "additionalProperties": false},
-        {"properties": {"type": {"const": "UNRESOLVED"}, "stated": {"type": "string", "minLength": 1}, "reference": {"type": "string", "minLength": 1}, "candidate_ids": {"type": "array", "minItems": 2, "items": {"type": "string", "format": "uuid"}}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}}, "required": ["type", "stated", "reference", "candidate_ids"], "additionalProperties": false},
-        {"properties": {"type": {"const": "QUERY"}, "stated": {"type": "string", "minLength": 1}, "query_target_ids": {"type": "array", "minItems": 1, "items": {"type": "string", "format": "uuid"}}, "duration_class": {"type": "string", "enum": ["instant","short","medium","long","extremely_long"]}}, "required": ["type", "stated", "query_target_ids"], "additionalProperties": false}
+        {
+          "properties": {
+            "type": {
+              "const": "ActorMoved"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "to_target_id": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "to_target_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "Communicated"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "listener_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "content": {
+              "type": "string",
+              "minLength": 1
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "listener_id",
+            "content"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "ObjectRelocated"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "object_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "dest_kind": {
+              "enum": [
+                "actor",
+                "location",
+                "container"
+              ]
+            },
+            "dest_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "object_id",
+            "dest_kind",
+            "dest_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "OwnershipAccessChanged"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "grantee_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "target_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "EntityCreated"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "component_ids": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "EntityDestroyed"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "target_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "AttributeChanged"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "target_id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            },
+            "sustain": {
+              "type": "object",
+              "oneOf": [
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "for"
+                    },
+                    "seconds": {
+                      "type": "integer",
+                      "minimum": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "seconds"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_at"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "place_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "place_id"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "properties": {
+                    "kind": {
+                      "const": "until_attr"
+                    },
+                    "entity_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "attr": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "entity_id",
+                    "attr",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "target_id"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "UNRESOLVED"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "reference": {
+              "type": "string",
+              "minLength": 1
+            },
+            "candidate_ids": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "reference",
+            "candidate_ids"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "properties": {
+            "type": {
+              "const": "QUERY"
+            },
+            "stated": {
+              "type": "string",
+              "minLength": 1
+            },
+            "query_target_ids": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "type": "string",
+                "format": "uuid"
+              }
+            },
+            "duration_class": {
+              "type": "string",
+              "enum": [
+                "instant",
+                "short",
+                "medium",
+                "long",
+                "extremely_long"
+              ]
+            }
+          },
+          "required": [
+            "type",
+            "stated",
+            "query_target_ids"
+          ],
+          "additionalProperties": false
+        }
       ]
     },
-
     "scene_current": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "place", "participants", "now", "journey", "current"],
+      "required": [
+        "schema_version",
+        "place",
+        "participants",
+        "now",
+        "journey",
+        "current"
+      ],
       "properties": {
-        "schema_version": { "const": "scene_current/1" },
+        "schema_version": {
+          "const": "scene_current/2"
+        },
         "place": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["id", "label", "description", "tone"],
+          "required": [
+            "id",
+            "label",
+            "description",
+            "tone"
+          ],
           "properties": {
-            "id":          { "type": "string", "format": "uuid" },
-            "label":       { "type": "string" },
-            "description": { "type": ["string", "null"] },
-            "tone":        { "type": ["string", "null"] }
+            "id": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "label": {
+              "type": "string"
+            },
+            "description": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "tone": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
         "participants": {
@@ -275,50 +1246,153 @@
           "items": {
             "type": "object",
             "additionalProperties": false,
-            "required": ["id", "label", "kind"],
+            "required": [
+              "id",
+              "label",
+              "kind",
+              "image"
+            ],
             "properties": {
-              "id":    { "type": "string", "format": "uuid" },
-              "label": { "type": "string" },
-              "kind":  { "const": "actor" }
+              "id": {
+                "type": "string",
+                "format": "uuid"
+              },
+              "label": {
+                "type": "string"
+              },
+              "kind": {
+                "const": "actor"
+              },
+              "image": {
+                "description": "Image reference or null. Mirrors scene_current/2's participant image; see that schema. The nested scene payload carries its OWN schema_version, which is how a scene change is announced without moving beat_frame's.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schema_version",
+                      "asset_id",
+                      "path"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "image_ref/1"
+                      },
+                      "asset_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  }
+                ]
+              }
             }
           }
         },
         "now": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["tick", "display_label"],
+          "required": [
+            "tick",
+            "display_label"
+          ],
           "properties": {
-            "tick":          { "type": "integer" },
-            "display_label": { "type": ["string", "null"] }
+            "tick": {
+              "type": "integer"
+            },
+            "display_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
           }
         },
         "journey": {
           "oneOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/journey_block" }
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/journey_block"
+            }
           ]
         },
         "current": {
           "type": "array",
-          "items": { "type": "string" }
+          "items": {
+            "type": "string"
+          }
         }
       }
     },
-
     "journey_block": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["active", "kind", "goal_label", "where_label", "progress", "legs_done", "legs_total", "interruptible", "status"],
+      "required": [
+        "active",
+        "kind",
+        "goal_label",
+        "where_label",
+        "progress",
+        "legs_done",
+        "legs_total",
+        "interruptible",
+        "status"
+      ],
       "properties": {
-        "active":        { "type": "boolean" },
-        "kind":          { "enum": ["travel", "wait", "watch"] },
-        "goal_label":    { "type": ["string", "null"] },
-        "where_label":   { "type": ["string", "null"] },
-        "progress":      { "type": "number", "minimum": 0, "maximum": 1 },
-        "legs_done":     { "type": "integer", "minimum": 0 },
-        "legs_total":    { "type": "integer", "minimum": 0 },
-        "interruptible": { "type": "boolean" },
-        "status":        { "enum": ["active", "arrived", "ended"] }
+        "active": {
+          "type": "boolean"
+        },
+        "kind": {
+          "enum": [
+            "travel",
+            "wait",
+            "watch"
+          ]
+        },
+        "goal_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "where_label": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "progress": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "legs_done": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "legs_total": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "interruptible": {
+          "type": "boolean"
+        },
+        "status": {
+          "enum": [
+            "active",
+            "arrived",
+            "ended"
+          ]
+        }
       }
     }
   }
