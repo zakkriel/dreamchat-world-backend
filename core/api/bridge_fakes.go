@@ -379,7 +379,7 @@ func devIntentChain(input string, cands []Candidate) []Attempt {
 	case "speak":
 		want = []string{"actor"}
 	}
-	matched := matchDevCandidates(lower, cands, want...)
+	matched, matchedForm := matchDevCandidates(lower, cands, want...)
 	switch {
 	case len(matched) == 0:
 		return chain
@@ -388,8 +388,15 @@ func devIntentChain(input string, cands []Candidate) []Attempt {
 		for _, c := range matched {
 			ids = append(ids, c.ID)
 		}
+		// `reference` is the PLAYER'S OWN AMBIGUOUS PHRASE — the words that named more than one
+		// thing — not any candidate's label. The field exists so the world can say "I don't know who
+		// you meant by X" in the player's own words; naming a candidate there would answer the
+		// question the frame is asking. It briefly carried matched[0].Name, which was invisible while
+		// labels equalled the player's phrasing and became obviously wrong the moment labels gained
+		// disambiguating detail ("a hooded figure by the ballast crate" was never anything the player
+		// typed). `stated` still carries the whole utterance; this is the span inside it that tied.
 		return append(chain, Attempt{
-			Type: "UNRESOLVED", Stated: input, Reference: matched[0].Name, CandidateIDs: ids,
+			Type: "UNRESOLVED", Stated: input, Reference: playerPhrase(input, lower, matchedForm), CandidateIDs: ids,
 		})
 	}
 
@@ -443,8 +450,11 @@ func devSpokenContent(input string) string {
 //     first (the specific answer wins, and wins by being longer), then at its base — the text before
 //     " by ". Without this the detail would make the ask unanswerable in the opposite direction: the
 //     player could pick one, but could no longer ask the vague question that raises the choice.
-func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) []Candidate {
+// Returns the winning candidates AND the form that matched them, so the caller can recover the
+// player's own words for an UNRESOLVED `reference`.
+func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) ([]Candidate, string) {
 	var best []Candidate
+	bestForm := ""
 	bestLen := 0
 	for _, c := range cands {
 		if len(kinds) > 0 && !slices.Contains(kinds, c.Kind) {
@@ -463,14 +473,39 @@ func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) [
 			}
 			switch {
 			case len(name) > bestLen:
-				best, bestLen = []Candidate{c}, len(name)
+				best, bestForm, bestLen = []Candidate{c}, name, len(name)
 			case len(name) == bestLen && (len(best) == 0 || !slices.ContainsFunc(best, func(b Candidate) bool { return b.ID == c.ID })):
 				best = append(best, c)
 			}
 			break // the longest form that matched is this candidate's best showing
 		}
 	}
-	return best
+	return best, bestForm
+}
+
+// playerPhrase recovers the player's OWN words for the span that matched, so an UNRESOLVED can quote
+// them back ("not sure who you meant by the hooded figure") instead of quoting a label the player
+// never typed. It locates the matched form in the lowercased input and slices the ORIGINAL at those
+// offsets, so the player's capitalisation survives, then reaches back over a leading article —
+// matching strips "a "/"the " to compare, and "the hooded figure" is what was actually said.
+// Falls back to the matched form if anything does not line up; never returns empty, since
+// beat_chain/2 requires a non-empty reference.
+func playerPhrase(input, lowerInput, matchedForm string) string {
+	if matchedForm == "" {
+		return input
+	}
+	i := strings.Index(lowerInput, matchedForm)
+	if i < 0 || i+len(matchedForm) > len(input) {
+		return matchedForm
+	}
+	start := i
+	for _, art := range []string{"the ", "an ", "a "} {
+		if start >= len(art) && lowerInput[start-len(art):start] == art {
+			start -= len(art)
+			break
+		}
+	}
+	return strings.TrimSpace(input[start : i+len(matchedForm)])
 }
 
 // devMatchable lowercases a label and drops a leading article, so "a hooded figure" and

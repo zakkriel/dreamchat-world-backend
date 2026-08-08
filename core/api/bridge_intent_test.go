@@ -305,3 +305,40 @@ func TestFakeIntent_LeadingArticleIsNotPartOfTheReference(t *testing.T) {
 		t.Fatalf(`chain = %+v, want "a hooded figure" bound from "the hooded figure"`, chain)
 	}
 }
+
+// UNRESOLVED.reference is the PLAYER'S OWN ambiguous phrase, not a candidate's label. The frame
+// exists so the world can ask "who did you mean by X?" in the player's words; putting a candidate's
+// name there answers the very question it is asking. This regressed the moment labels gained
+// disambiguating detail — "a hooded figure by the ballast crate" was never something anyone typed.
+func TestFakeIntent_UnresolvedReferenceQuotesThePlayerNotTheCandidate(t *testing.T) {
+	chain := devChainWith(t, "ask the hooded figure about the note", devTwinCandidates)
+
+	if len(chain) != 1 || chain[0].Type != "UNRESOLVED" {
+		t.Fatalf("chain = %+v, want one UNRESOLVED", chain)
+	}
+	if chain[0].Reference != "the hooded figure" {
+		t.Fatalf("reference = %q, want the player's own phrase %q", chain[0].Reference, "the hooded figure")
+	}
+	for _, c := range devTwinCandidates {
+		if chain[0].Reference == c.Name {
+			t.Fatalf("reference is a candidate label (%q) — that answers the question the frame is asking", c.Name)
+		}
+	}
+	// stated still carries the whole utterance; reference is the span inside it that tied.
+	if chain[0].Stated != "ask the hooded figure about the note" {
+		t.Fatalf("stated = %q, want the full utterance", chain[0].Stated)
+	}
+}
+
+// The player's own capitalisation survives — reference is quoted back to them, so it should read as
+// what they typed.
+func TestFakeIntent_UnresolvedReferenceKeepsThePlayersCasing(t *testing.T) {
+	chain := devChainWith(t, "Ask The Hooded Figure about the note", devTwinCandidates)
+
+	if len(chain) != 1 || chain[0].Type != "UNRESOLVED" {
+		t.Fatalf("chain = %+v, want one UNRESOLVED", chain)
+	}
+	if chain[0].Reference != "The Hooded Figure" {
+		t.Fatalf("reference = %q, want the player's own casing", chain[0].Reference)
+	}
+}
