@@ -341,3 +341,93 @@ func TestImageRefsFor_ResolvesTheWholeRosterInOneQuery(t *testing.T) {
 		t.Fatalf("empty roster: %v / %v", empty, err)
 	}
 }
+
+// A slot can outlive the asset it names — the platform's storage is a separate system, and a reset
+// on its side is exactly how that happens. When the platform says the asset is gone, the reference
+// must go with it, because nothing else in the system can notice: the projection read never calls
+// the platform, and the fill query skips any slot that already names an asset. Left in place, one
+// vanished asset is a permanently broken picture in the frontend that no re-trigger can repair.
+func TestImageHandler_AVanishedAssetIsForgottenSoTheWorldCanHeal(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f7", "5a5e0000-0000-0000-0000-0000000000a7"
+	const gone = "asset_vanished_from_the_platform"
+	_, _ = pool.Exec(ctx, `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, visual_identity_id, asset_id)
+		VALUES ($1::uuid, 'actor', $2::uuid, 'vi_kept', $3)`, worldID, actorID, gone); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.forgottenAssets = map[string]bool{gone: true}
+	h := NewImageHandler(pool, testImageClient(t, f), true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/worlds/"+worldID+"/images/"+gone, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 — the picture really is gone", rec.Code)
+	}
+
+	var assetID *string
+	var identity string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id, visual_identity_id FROM image_slot WHERE world_id=$1::uuid AND owner_id=$2::uuid`,
+		worldID, actorID).Scan(&assetID, &identity); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID != nil {
+		t.Fatalf("asset_id = %q, want NULL — the slot still points at an asset the platform lost, so "+
+			"the projection keeps reporting a picture the browser cannot fetch and no trigger can fix it", *assetID)
+	}
+	// The identity is not the asset. Keeping it is what makes the regenerated portrait the same
+	// character rather than a new stranger.
+	if identity != "vi_kept" {
+		t.Fatalf("visual_identity_id = %q, want it kept across the loss", identity)
+	}
+}
+
+// The mirror image, and the reason this cannot simply clear on any error: a platform having a bad
+// minute must never cost the world a good portrait.
+func TestImageHandler_ATransientFailureKeepsTheReference(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f8", "5a5e0000-0000-0000-0000-0000000000a8"
+	const good = "asset_perfectly_fine"
+	_, _ = pool.Exec(ctx, `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+	})
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id)
+		VALUES ($1::uuid, 'actor', $2::uuid, $3)`, worldID, actorID, good); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.assetFailStatus = http.StatusInternalServerError
+	h := NewImageHandler(pool, testImageClient(t, f), true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/worlds/"+worldID+"/images/"+good, nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404 for this read", rec.Code)
+	}
+
+	var assetID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id FROM image_slot WHERE world_id=$1::uuid AND owner_id=$2::uuid`,
+		worldID, actorID).Scan(&assetID); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID == nil || *assetID != good {
+		t.Fatalf("asset_id was discarded over a 500 — a blip must not cost the world a good portrait")
+	}
+}

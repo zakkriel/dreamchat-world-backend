@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"regexp"
@@ -66,7 +67,7 @@ func (h *imageHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	assetID := m[2]
+	worldID, assetID := m[1], m[2]
 	if h.client == nil {
 		// No platform configured is an ordinary state, not a fault: the world runs without images.
 		http.Error(w, "image platform not configured", http.StatusNotFound)
@@ -76,6 +77,20 @@ func (h *imageHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 
 	url, err := h.client.assetURL(r.Context(), assetID, tier)
 	if err != nil || url == "" {
+		// A definitive 404 means the slot has outlived its asset, and this is the only place that can
+		// ever notice: the projection read deliberately never calls the platform, so a stale reference
+		// is invisible on the read path, and the fill query skips any slot that already names an asset
+		// — so no re-trigger can heal it either. Left alone, one vanished asset is a permanently broken
+		// picture recoverable only by hand. Forgetting it here lets the world heal itself: the next
+		// read reports `image: null`, which is the frontend's ordinary "no picture yet" placeholder,
+		// and the next portrait trigger refills the slot.
+		var apiErr *imageAPIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			h.forgetAsset(r.Context(), worldID, assetID)
+		}
+		// Anything else — a 5xx, a timeout, a rate limit — is the platform having a bad minute. The
+		// asset is presumed fine and the reference is kept; discarding a good portrait over a blip
+		// would be a self-inflicted outage.
 		log.Printf("images: asset %s: %v", assetID, err)
 		http.Error(w, "image unavailable", http.StatusNotFound)
 		return
@@ -84,6 +99,20 @@ func (h *imageHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 	// signed URL to the next reader; the picture itself is cached by object storage, not by us.
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, url, http.StatusFound)
+}
+
+// forgetAsset drops a reference the platform no longer honours, returning the slot to the state it
+// had before its first portrait: empty, refillable, and honest about having no picture. The visual
+// identity is deliberately kept — an identity is not an asset, and the fill path re-upserts it
+// anyway, so keeping it preserves the actor's appearance across a regeneration.
+func (h *imageHandler) forgetAsset(ctx context.Context, worldID, assetID string) {
+	if _, err := h.pool.Exec(ctx, `
+		UPDATE image_slot
+		   SET asset_id = NULL, job_id = NULL, last_error = $3, updated_at = now()
+		 WHERE world_id = $1::uuid AND asset_id = $2`,
+		worldID, assetID, "asset missing at platform"); err != nil {
+		log.Printf("images: forget asset %s: %v", assetID, err)
+	}
 }
 
 type portraitsResult struct {
