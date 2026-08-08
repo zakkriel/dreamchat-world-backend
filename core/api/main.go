@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -73,9 +74,23 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)
 
+	// SPEC-021 — CORS. Wraps the mux (not the router) so preflights are answered before routing;
+	// refuses to boot on a malformed allowlist rather than serving an API the frontend cannot reach.
+	corsAllowed, corsBad := corsOrigins()
+	if len(corsBad) > 0 {
+		log.Fatalf("%s: %v is not a usable origin — list exact origins like http://localhost:5173 (no wildcard, no path)",
+			corsOriginsEnv, corsBad)
+	}
+	handler := withCORS(mux, corsAllowed)
+
 	addr := ":8080"
+	if len(corsAllowed) == 0 {
+		log.Printf("CORS: disabled (%s unset) — browsers on other origins cannot call this API", corsOriginsEnv)
+	} else {
+		log.Printf("CORS: allowing %d origin(s): %s", len(corsAllowed), strings.Join(corsAllowed, ", "))
+	}
 	log.Printf("dreamchat world backend (read-only compendium API) on %s (debug=%v)", addr, debug)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
 // defaultSeatConfig routes each LLM seat (D-13). Production default = Claude via the Anthropic API
