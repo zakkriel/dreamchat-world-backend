@@ -276,3 +276,73 @@ func TestJourney_LegMintsAWaystationTheTravellerCanStandOn(t *testing.T) {
 		t.Fatalf("no open way from Dock Street onto the new waystation (exists=%v permits=%v)", back, backPermits)
 	}
 }
+
+// The interrupting beat still says where you were going. When a beat-cutting eruption stops a
+// journey the row ends, so the block goes active:false / status:"ended" — but goal_label and
+// where_label are still projected, and the frontend needs them: "restate" is the next step of the
+// founder's worked example, and a player cannot restate a destination the screen has forgotten.
+//
+// Pinned because it is a contract the play surface now depends on and nothing else would catch its
+// loss: an interrupted journey is a terminal row, and journeyBlock's own activeJourney lookup
+// (status='active') returns nil for it — the labels survive only because the beat stream projects
+// the in-memory journey instead. A refactor that dropped that preference would blank the line and
+// break no other test.
+func TestJourney_InterruptedBlockStillNamesTheDestination(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const dockStreetID = "210c0000-0000-0000-0000-0000000000d2"
+	const officeID = "210c0000-0000-0000-0000-0000000000d5"
+
+	orc := wtOrchestrator(pool)
+	orc.PlaceAuthor = NewFakePlaceAuthorDriver()
+
+	var wasAt string
+	if err := pool.QueryRow(ctx,
+		`SELECT attrs->>'location_id' FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
+		dlWorldID, dlKadeID).Scan(&wasAt); err != nil {
+		t.Fatalf("read traveller location: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE actor_state SET attrs=jsonb_set(attrs,'{location_id}',to_jsonb($1::text))
+		  WHERE world_id=$2 AND entity_id=$3`, dockStreetID, dlWorldID, dlKadeID); err != nil {
+		t.Fatalf("place the traveller: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`UPDATE actor_state SET attrs=jsonb_set(attrs,'{location_id}',to_jsonb($1::text))
+			  WHERE world_id=$2 AND entity_id=$3`, wasAt, dlWorldID, dlKadeID)
+	})
+
+	// medium cuts the beat (eruptionCutsBeat); small never does.
+	wtForceTierFires(t, ctx, pool, dlWorldID, "medium")
+
+	tick := wtBaseTick(t, ctx, pool)
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, Attempt{
+		Type: "ActorMoved", Stated: "I walk for the Harbormaster's Office", ToTargetID: officeID}, tick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM journey WHERE journey_id=$1`, j.ID) })
+
+	var out BeatOutcome
+	if err := orc.runJourneyLeg(ctx, j, &out, nil); err != nil {
+		t.Fatalf("runJourneyLeg: %v", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+
+	if out.HaltReason != "journey_interrupted" {
+		t.Fatalf("HaltReason = %q, want journey_interrupted — the leg was not cut, so this proves nothing", out.HaltReason)
+	}
+	blk, err := orc.projectJourneyBlock(ctx, dlWorldID, dlKadeID, out.Journey)
+	if err != nil {
+		t.Fatalf("projectJourneyBlock: %v", err)
+	}
+	if blk.Active || blk.Status != "ended" {
+		t.Fatalf("block = %+v, want an ended, inactive journey", blk)
+	}
+	if blk.GoalLabel == nil || *blk.GoalLabel != "Harbormaster's Office" {
+		t.Fatalf("goal_label = %v, want the destination the traveller can restate", blk.GoalLabel)
+	}
+}
