@@ -93,7 +93,7 @@ done
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^(TestGenWorldActorPayload|TestGenPlaceAuthorPayload)$' -count=1 -v . )
 
-# --- beat_frame/1: assembled by streaming POST /worlds/{w}/beats (core/api/beatsstream.go), one SSE
+# --- beat_frame/2: assembled by streaming POST /worlds/{w}/beats (core/api/beatsstream.go), one SSE
 # frame at a time — no fn_* this generator can call directly, same reasoning as scene/current above.
 # TestGenBeatFramePayloads (core/api/beatsstream_test.go) is the Go-side equivalent: gated on
 # BEAT_STREAM_PAYLOAD_DIR (skipped in the normal `go test ./...` suite), it drives the REAL

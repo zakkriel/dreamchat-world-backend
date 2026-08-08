@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -154,5 +155,72 @@ func TestBuildScene_NamesTheRoomYouAreInNotTheOneNextDoor(t *testing.T) {
 		if p.ID == id.Stranger {
 			t.Fatal("the stranger next door appeared in the participants strip")
 		}
+	}
+}
+
+// beat_frame/2 — unresolved_candidates carries {id, label}, not bare ids. v1 shipped ids alone, so
+// the frontend could not name what it was asking about and would not invent a name (B-1/D-7): the
+// "which did you mean?" affordance could never render. The ask was unanswerable because it was
+// unsayable.
+func TestLabelCandidates_NamesEachOneInTheViewersOwnWords(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupSceneWorld(t, ctx, pool)
+
+	got, err := labelCandidates(ctx, pool, id.World, id.Viewer, []string{id.Companion, id.Place})
+	if err != nil {
+		t.Fatalf("labelCandidates: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d candidates, want 2: %+v", len(got), got)
+	}
+	// Engine order is preserved — the frontend keys disambiguation on list position.
+	if got[0].ID != id.Companion || got[1].ID != id.Place {
+		t.Fatalf("order not preserved: %+v", got)
+	}
+	// The viewer knows the Companion only by descriptor, never the canonical registry secret.
+	if got[0].Label != "a weary road companion" {
+		t.Fatalf("label = %q, want the viewer's own descriptor", got[0].Label)
+	}
+	if got[1].Label != "The Rusty Anchor" {
+		t.Fatalf("label = %q, want the viewer's own name for the place", got[1].Label)
+	}
+}
+
+// The wall, on this surface too: the list may never surface a canonical name the viewer does not
+// hold. Asking "which did you mean?" must not answer a question the player never got to ask.
+func TestLabelCandidates_NeverLeaksACanonicalName(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupSceneWorld(t, ctx, pool)
+
+	got, err := labelCandidates(ctx, pool, id.World, id.Viewer, []string{id.Companion, id.Place})
+	if err != nil {
+		t.Fatalf("labelCandidates: %v", err)
+	}
+	for _, c := range got {
+		if strings.Contains(c.Label, "SECRET") {
+			t.Fatalf("candidate %s leaked a canonical name: %q", c.ID, c.Label)
+		}
+	}
+}
+
+// No candidates must serialise as [] and never null — the frontend renders the list unconditionally.
+func TestLabelCandidates_EmptyIsAnEmptyList(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	got, err := labelCandidates(ctx, pool, "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000", nil)
+	if err != nil {
+		t.Fatalf("labelCandidates: %v", err)
+	}
+	if got == nil {
+		t.Fatal("labelCandidates returned nil; the payload would carry null instead of []")
+	}
+	if len(got) != 0 {
+		t.Fatalf("got %+v, want empty", got)
 	}
 }
