@@ -126,17 +126,36 @@ func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (strin
 	return "[]", nil
 }
 
-// fakeWorldActorDriver: a deterministic stand-in for the World Actor seat (Living World / Task 8). Every
-// other seat's fake stays a passive "[]" stub because nothing calls WorldActor.Generate yet ANYWHERE
-// except Task 8's own direct tests (the seat is not wired into the beat — Task 9 does that); this one is
-// forceable, so a test can drive runWorldActor to a real, size-appropriate eruption. It always authors a
-// Communicated attributed to Mara (the seeded play world's tavern keeper, 2ac70000-…-a2), addressed to
-// Jonas (…-a3) — both seeded at the Drowned Lantern (seed_drowned_lantern.sql) — matching
-// world_actor.v1.schema.json. Hardcoding these seeded ids is safe: the fake is wired into every OTHER
-// package test's Orchestrator too (dozens of call sites), but none of them ever exercises
-// WorldActor.Generate — only worldactor_test.go calls runWorldActor directly, against the real seeded
-// play world these ids belong to. Still errors when req.Schema == nil (the structured-output floor every
-// other fake enforces).
+// fakeWorldActorDriver: a deterministic stand-in for the World Actor seat (Living World / Task 8).
+//
+// It used to author a FIXED intrusion — Mara speaking to Jonas, two ids hardcoded from
+// seed_drowned_lantern.sql — justified by "none of them ever exercises WorldActor.Generate … only
+// worldactor_test.go calls runWorldActor directly, against the real seeded play world these ids
+// belong to". SPEC-030 made that false: the world's turn runs once per JOURNEY LEG, in whatever
+// scene the leg is passing through. Mara is in the tavern, the leg is on the road, and the seat's
+// scene check correctly refused the intrusion — which failed the beat, and because the roll is a
+// pure function of (world, tick, lastEruption, tier) and a failed beat commits nothing, the very
+// next attempt rolled the SAME fire and failed identically. A deterministic livelock: the journey
+// could never advance again. That is the third time a fake hardcoding seeded ids has outlived its
+// own justification (see the two cases in the 2026-08-07 handover §5).
+//
+// So it now reads the scene it was actually handed. The prompt carries fn_world_slice verbatim
+// (worldactorprompt.go), which contains `scene.id` and a `presence` list of {actor, location} — the
+// same truth the seat's own scope check consults. Two lawful shapes exist (worldactor.go), and this
+// picks whichever the scene admits, preferring the first:
+//
+//   1. THE PRESENCE-BOUNDARY MOVE — an actor who is NOT here walks in (`ActorMoved` whose target is
+//      the scene). Always lawful by construction, and it is the shape that matters for a journey:
+//      the traveller is alone on the road, and the world's answer is that someone arrives. That IS
+//      the interruption the Journey design is built around.
+//   2. Otherwise, if two or more actors are already here, one speaks to another — the old behaviour,
+//      but with ids read from the scene instead of assumed.
+//
+// Actors are ordered by id so the choice is deterministic (replay-safe, like every other fake here).
+// Shape 2 picks from the END of that order, which in the seeded world means the two hooded figures
+// rather than Kade: the slice does not mark which actor is the player, so a dev stand-in cannot know
+// for certain — it can only avoid the id that happens to sort first. A live model is told.
+//
 // FAKE: CI stand-in for an undelivered live model. The DESIGN has no LLM-free path (POST-COMPACTION-RULINGS); this fake is scaffolding, not a design statement.
 type fakeWorldActorDriver struct{ name string }
 
@@ -145,22 +164,84 @@ func NewFakeWorldActorDriver() Driver { return &fakeWorldActorDriver{name: "fake
 func (f *fakeWorldActorDriver) Name() string                { return f.name }
 func (f *fakeWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
 
-// fakeWorldActorMaraID/fakeWorldActorJonasID are the seeded play-world actors (seed_drowned_lantern.sql)
-// this fake always attributes its authored intrusion to/at — both placed at the Drowned Lantern tavern.
-const (
-	fakeWorldActorMaraID  = "2ac70000-0000-0000-0000-0000000000a2"
-	fakeWorldActorJonasID = "2ac70000-0000-0000-0000-0000000000a3"
-)
+// worldSlicePresence is the slice shape this fake reads back: where the intrusion must land, and who
+// is standing where. Mirrors worldSliceScene (worldactorprompt.go) plus the presence roster.
+type worldSlicePresence struct {
+	Scene struct {
+		ID string `json:"id"`
+	} `json:"scene"`
+	Presence []struct {
+		Actor    string `json:"actor"`
+		Location string `json:"location"`
+	} `json:"presence"`
+}
 
 func (f *fakeWorldActorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: world-actor driver used without a schema", f.name)
 	}
-	return fmt.Sprintf(
-		`{"actor_id":%s,"attempt":{"type":"Communicated","stated":"a commotion breaks out at the bar",`+
-			`"listener_id":%s,"content":"Oi — mind yourself!"}}`,
-		jsonStr(fakeWorldActorMaraID), jsonStr(fakeWorldActorJonasID),
-	), nil
+	scene, here, elsewhere := parseWorldActorScene(req.Prompt)
+	switch {
+	case scene == "":
+		return "", fmt.Errorf("%s: no scene in the world slice — cannot author an intrusion that lands anywhere", f.name)
+
+	// 1. Two who are already here; one speaks to the other. Preferred because it always COMMITS:
+	//    speaker and listener are co-located by construction, so the premise check cannot refuse it.
+	case len(here) >= 2:
+		return fmt.Sprintf(
+			`{"actor_id":%s,"attempt":{"type":"Communicated","stated":"a commotion breaks out nearby",`+
+				`"listener_id":%s,"content":"Oi — mind yourself!"}}`,
+			jsonStr(here[len(here)-1]), jsonStr(here[len(here)-2]),
+		), nil
+
+	// 2. Nobody here to speak, so the world sends someone: the presence-boundary move. In scope by
+	//    construction (the target IS the scene), but it may still be REFUSED at commit, because the
+	//    world does not get to cheat the accessibility floor — an NPC cannot walk to somewhere no
+	//    portal reaches (D-1, no trusted fast path). On a journey's minted waystation that is the
+	//    normal outcome: nobody can lawfully arrive, so the world does not erupt and the beat carries
+	//    on. The slice carries no portal data, so a dev stand-in cannot pre-check reachability — and
+	//    should not, since letting the gate answer is the whole design.
+	case len(elsewhere) > 0:
+		return fmt.Sprintf(
+			`{"actor_id":%s,"attempt":{"type":"ActorMoved","stated":"someone comes up the road and stops where you are","to_target_id":%s}}`,
+			jsonStr(elsewhere[len(elsewhere)-1]), jsonStr(scene),
+		), nil
+
+	default:
+		return "", fmt.Errorf("%s: scene %s has nobody who could act and nobody who could arrive", f.name, scene)
+	}
+}
+
+// parseWorldActorScene reads the scene id and splits every actor in the world slice into those
+// standing IN the scene and those standing anywhere else, each ordered by id for determinism.
+func parseWorldActorScene(prompt string) (scene string, here, elsewhere []string) {
+	start := strings.Index(prompt, "{")
+	if start < 0 {
+		return "", nil, nil
+	}
+	// The slice is the first JSON object in the prompt; decode from its opening brace and let the
+	// stream decoder stop at the matching close, ignoring the human-readable tail after it.
+	var parsed worldSlicePresence
+	if err := json.NewDecoder(strings.NewReader(prompt[start:])).Decode(&parsed); err != nil {
+		return "", nil, nil
+	}
+	scene = parsed.Scene.ID
+	if scene == "" {
+		return "", nil, nil
+	}
+	for _, p := range parsed.Presence {
+		if p.Actor == "" {
+			continue
+		}
+		if p.Location == scene {
+			here = append(here, p.Actor)
+		} else {
+			elsewhere = append(elsewhere, p.Actor)
+		}
+	}
+	slices.Sort(here)
+	slices.Sort(elsewhere)
+	return scene, here, elsewhere
 }
 
 // fakePlaceAuthorDriver: a deterministic stand-in for the place_author seat (Journey rung 2, Task 8).

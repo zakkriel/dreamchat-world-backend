@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 
 	"github.com/jackc/pgx/v5"
 )
@@ -141,6 +143,18 @@ func (o *Orchestrator) runWorldTurn(ctx context.Context, worldID, scene string, 
 		return execErr
 	}
 	eventID, actorSeq, actorErr := o.runWorldActor(ctx, worldID, scene, firedTier, tickAfter, nextSeq, logEruption, outcome, trace)
+	if errors.Is(actorErr, errIntrusionRejected) {
+		// The gate refused the proposal (D-1). The world simply does not erupt this turn: nothing is
+		// committed, no fire-log row is written, so the tier's pressure stays undrained and it will get
+		// another chance next turn — with a DIFFERENT roll, because the beat now succeeds and the tick
+		// advances. Failing the beat here instead is what turned one bad proposal into a permanent,
+		// deterministic livelock; see errIntrusionRejected.
+		log.Printf("world turn: %s eruption refused, no intrusion this turn: %v", firedTier, actorErr)
+		if trace != nil {
+			trace.appendWorldTurn(TraceWorldTurn{ClockDeltaS: tickAfter - tickBefore, Fired: firedScheduled, Rolls: rolls})
+		}
+		return ledgerMag, ledgerSeq, nil
+	}
 	if actorErr != nil {
 		return "", 0, fmt.Errorf("runWorldTurn: runWorldActor(%s): %w", firedTier, actorErr)
 	}

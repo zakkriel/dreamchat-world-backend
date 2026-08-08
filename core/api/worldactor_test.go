@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -146,23 +148,55 @@ func TestBuildWorldActorPrompt_CarriesRulesAndSlice(t *testing.T) {
 	}
 }
 
-// Deferral B: v1 scope is that the intrusion manifests AT the scene the composer passed. The fake
-// authors an intrusion by a tavern resident; pointing the composer at Dock Street must be refused at
-// runtime, not merely discouraged by the prompt.
+// misScopedWorldActorDriver authors an intrusion that lands somewhere OTHER than the scene it was
+// handed: an ActorMoved whose destination is `destID`. Point destID at any location that is not the
+// scene under test and the seat's v1 scope check must refuse it.
+//
+// The tests below need that on purpose. They used to get it for free, because the generic fake had
+// two tavern ids hardcoded and simply did not know where it was; once that fake learned to read the
+// scene from the slice, the only way to still exercise the ENGINE's runtime check is to force the bad
+// input deliberately. A test for a guard should supply the thing the guard guards against, never rely
+// on some other component being naive enough to supply it by accident.
+//
+// The move shape is chosen over a speech shape because it is refused on the DESTINATION, which the
+// test controls outright — a speech shape would be refused on the speaker's location, which depends
+// on where the seed happens to have put people.
+type misScopedWorldActorDriver struct{ actorID, destID string }
+
+func (d *misScopedWorldActorDriver) Name() string                { return "mis-scoped-world-actor" }
+func (d *misScopedWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (d *misScopedWorldActorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("mis-scoped-world-actor: used without a schema")
+	}
+	return `{"actor_id":"` + d.actorID + `","attempt":{"type":"ActorMoved",` +
+		`"stated":"something stirs somewhere the player is not","to_target_id":"` + d.destID + `"}}`, nil
+}
+
+// Deferral B: v1 scope is that the intrusion manifests AT the scene the composer passed. An intrusion
+// authored by someone standing somewhere else must be REFUSED at runtime, not merely discouraged by
+// the prompt — and refused means "the world does not erupt", never "the beat fails" (SPEC-030's
+// deterministic livelock: see errIntrusionRejected).
 func TestRunWorldActor_RefusesToActOutsideTheScene(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
-	const dockStreetID = "210c0000-0000-0000-0000-0000000000d2"
+	const dockStreetID = "210c0000-0000-0000-0000-0000000000d2" // the scene under test
+	const tavernID = "210c0000-0000-0000-0000-0000000000d1"     // where the authored move lands instead
+	const maraID = "2ac70000-0000-0000-0000-0000000000a2"
 
 	orc := wtOrchestrator(pool)
+	orc.WorldActor = &misScopedWorldActorDriver{actorID: maraID, destID: tavernID}
 	tick := wtBaseTick(t, ctx, pool)
 
 	var out BeatOutcome
 	eventID, seqUsed, err := orc.runWorldActor(ctx, dlWorldID, dockStreetID, "small", tick, 0, nil, &out, nil)
 	if err == nil {
 		t.Fatalf("authored intrusion from outside the scene was accepted: eventID=%q seqUsed=%d", eventID, seqUsed)
+	}
+	if !errors.Is(err, errIntrusionRejected) {
+		t.Fatalf("err = %v, want it to wrap errIntrusionRejected — a refused proposal is the gate saying no, not a broken machine, and the caller must be able to tell the difference", err)
 	}
 	if len(out.Committed) != 0 {
 		t.Fatalf("outcome.Committed = %v, want empty — a refused intrusion must commit nothing", out.Committed)
