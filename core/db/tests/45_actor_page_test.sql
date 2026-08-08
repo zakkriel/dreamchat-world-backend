@@ -11,12 +11,15 @@ SELECT is(
   fn_actor_page('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
                 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')->>'schema_version',
   'actor_page/1', 'payload carries schema_version actor_page/1');
--- (3) current_synthesis is null in 0A (no LLM; honest emptiness — Change 2).
---     ->> on a JSON null yields SQL NULL (json has no '=' operator, so test via ->> IS NULL).
-SELECT ok(
-  (fn_actor_page('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-                 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')->'actor'->>'current_synthesis') IS NULL,
-  'current_synthesis is null in 0A');
+-- (3) current_synthesis is a deterministic composition of the viewer's OWN held perceptions
+--     (SPEC-029). Asserting the exact text, not merely NOT NULL: "not null" would still pass if the
+--     lens leaked canon, invented prose, or rendered a raw tick as a display label (B-5) — all three
+--     of which this pins out. Newest-first, newline-joined, no ordinals, no time label.
+SELECT is(
+  fn_actor_page('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
+                'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')->'actor'->>'current_synthesis',
+  E'I told Mara the mayor keeps a hidden ledger\nMara listened intently and seemed unsettled',
+  'current_synthesis composes only the held perceptions, newest first, with no invented label');
 -- (4) NO relationship fields anywhere in the payload (B-3/B-4, AC#7/#8)
 SELECT ok(
   fn_actor_page('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
