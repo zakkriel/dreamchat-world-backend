@@ -37,6 +37,16 @@ type Candidate struct {
 //go:embed prompts/decompose.txt
 var decomposeSystemHeader string
 
+// The decompose prompt's section markers. They are constants because the DEV decompose stand-in
+// (fakeIntentDriver, bridge_fakes.go) parses this prompt back into candidates and the player's raw
+// words: if the marker text lived only as a literal in the writer below, a reword here would
+// silently turn the dev seat inert instead of failing loudly — the exact shape of the two defects
+// recorded in the 2026-08-07 handover §5.
+const (
+	decomposeCandidatesMarker  = "\nCANDIDATES (bind ids ONLY from this list):\n"
+	decomposePlayerInputMarker = "\nPLAYER INPUT:\n"
+)
+
 // buildDecomposePrompt assembles the decompose prompt at the SEAT BOUNDARY — the perception payload's
 // lines and candidate whitelist become the model's world HERE, since the driver drops req.Payload
 // (D-13 keeps provider shaping in the driver; seat semantics stay at the call site). Layout is
@@ -56,7 +66,7 @@ func buildDecomposePrompt(payload PerceptionPayload, playerText string) string {
 	}
 
 	// CANDIDATES — the ONLY ids a bound attempt may reference. One per line: id  name  (kind).
-	sb.WriteString("\nCANDIDATES (bind ids ONLY from this list):\n")
+	sb.WriteString(decomposeCandidatesMarker)
 	for _, c := range payload.Candidates {
 		sb.WriteString(c.ID)
 		sb.WriteString("  ")
@@ -67,7 +77,7 @@ func buildDecomposePrompt(payload PerceptionPayload, playerText string) string {
 	}
 
 	// PLAYER INPUT — the mutable tail: the raw words to decompose, LAST so the whole prefix stays cacheable.
-	sb.WriteString("\nPLAYER INPUT:\n")
+	sb.WriteString(decomposePlayerInputMarker)
 	sb.WriteString(playerText)
 	return sb.String()
 }

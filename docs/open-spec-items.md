@@ -493,3 +493,45 @@ AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version ident
   last-known, containment, co-location, carry state — plus a real `decay.stale`, or an explicit
   founder ruling that chunk 4's gate is deferred and why.
 - **Firing trigger:** fired — the FE Compendium surfaces are built and waiting on data.
+
+---
+
+## BE-discovered contract gap (integration verification pass, 2026-08-07)
+
+## SPEC-030 — No movement can be expressed through the beat API
+`ActorMoved` can only ever target **the room the actor is already standing in**, so no player-stated
+movement — a step through a door or a journey across the city — is reachable from any client.
+
+The decompose seat may bind ids **only** from the candidate whitelist, and that whitelist is
+assembled from *present* perception alone (`core/api/beathandler.go` `payload`): actors at the
+viewer's location, the viewer's current location, and artifacts matched by
+`attrs->>'location_id' = <here>` or `attrs->>'contained_by' = <viewer>`. Two independent
+consequences, both verified against the seeded Drowned Lantern:
+
+1. **No remote location is ever a candidate.** Exactly one location — the current one — is added.
+   The play world has five (Alley, Cellar, Dock Street, Harbor Quarter of Vael, The Drowned Lantern)
+   and four of them cannot be named in a beat. The code records the cause in its own comment: the
+   "one-hop-known absent entities" set is *"a separate follow-up"* needing
+   perception/knowledge-subject-link machinery *"that does not yet exist cleanly"*.
+2. **Portals are not co-located artifacts.** Front Door, Back Door and Cellar Hatch carry
+   `{"open":…,"locked":…,"connects":[locA,locB]}` and **no `location_id`**, so the co-located-artifact
+   query never returns them either. The doors of the room you are standing in are invisible to
+   decompose.
+
+So the Journey (shipped in #32) has no reachable path, and neither does walking through a door.
+- **Evidence:** the candidate query run by hand as Kade in the tavern returns exactly three artifacts
+  — `Sealed Note (gray wax)`, `the bar`, `Ballast Crate` — and no door. The three portal rows carry
+  `connects` and no `location_id`. The Journey's own tests build their chains in Go and seed their own
+  far geometry (`core/api/journey_beat_test.go` passes `ToTargetID` directly); nothing exercises
+  movement through `POST /worlds/{w}/beats`. Hand-driving `go through the Back Door` against the
+  running server returns an empty chain, `committed: []`.
+- **Source:** backend integration verification pass, 2026-08-07 (three-repo integration).
+- **Owner:** unassigned — it reopens a question the Journey design (rung 2) left implicit.
+  **Cross-repo:** BE (this repo). The FE renders the journey block already and needs no change.
+- **Expected outcome:** a ruling on how a player names somewhere they are not standing, and on how a
+  portal becomes nameable from the rooms it connects — the known-but-absent candidate set, a portal
+  lens over `connects`, a stated-destination shape the place author can bind, or an explicit deferral
+  saying stated movement waits for the spatial engine. **No mechanism is proposed here** (anti-drift,
+  `implementation_playbook_superpowers.md:90`): the gap is documented, not invented around.
+- **Firing trigger:** fired — movement is unreachable by any client, and the founder's own worked
+  example for the Journey gate (walk out, get interrupted, restate, arrive) cannot be driven.

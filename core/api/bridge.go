@@ -181,6 +181,24 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return newOpenAICompatDriver(dc)
 	case "fake-structured":
 		return NewFakeStructuredDriver("fake-structured:"+dc.Model, nil), nil
+	// fake-intent is the DEV decompose seat: fake-structured built HERE gets a nil table, so it can
+	// only ever answer "[]" — a server that streams a correct frame sequence and commits nothing.
+	// Tests keep using fake-structured with their own scripted tables; a human or a frontend driving
+	// the server by hand gets a chain bound to the real candidate whitelist instead.
+	case "fake-intent":
+		return NewFakeIntentDriver(), nil
+	// fake-resolve and fake-cognition close the SAME hole the two cases below closed for the world
+	// actor and place author: their dedicated fakes existed but were reachable only by tests binding
+	// drivers directly, so DREAMCHAT_BRIDGE=fake pointed resolve and both cognition seats at the
+	// chain-shaped generic fake. Resolve is reached by ADJUDICATED attempts — everything outside the
+	// passthrough three (applyNPCDecisions, orchestrator.go) — so an NPC decision or a World Actor
+	// intrusion of any other type would hand it "[]" where a ruling/2 belongs. Cognition's own fake
+	// also answers "[]", so that seat was accidentally right rather than actually bound; it is wired
+	// here so the next person reading the config sees seven seats and seven matching stand-ins.
+	case "fake-resolve":
+		return NewFakeResolveDriver(), nil
+	case "fake-cognition":
+		return NewFakeCognitionDriver(), nil
 	case "fake-text":
 		return NewFakeTextDriver("fake-text:" + dc.Model), nil
 	// Two seats have a NON-CHAIN output shape, so the generic structured fake (which returns a chain
