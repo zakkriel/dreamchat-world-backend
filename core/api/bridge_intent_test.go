@@ -238,3 +238,70 @@ func TestParseDecomposeCandidates_RoundTripsTheWriter(t *testing.T) {
 		t.Fatalf("player input = %q, want the raw words", input)
 	}
 }
+
+// Disambiguated labels have to survive the round trip the player actually makes: ask vaguely, be
+// offered the detail, then answer with it. Both halves must work or the ask is unanswerable in one
+// direction or the other.
+var devTwinCandidates = []Candidate{
+	{ID: "2ac70000-0000-0000-0000-0000000000a4", Name: "a hooded figure by the ballast crate", Kind: "actor"},
+	{ID: "2ac70000-0000-0000-0000-0000000000aa", Name: "a hooded figure by the bar", Kind: "actor"},
+}
+
+func devChainWith(t *testing.T, input string, cands []Candidate) []Attempt {
+	t.Helper()
+	raw, err := NewFakeIntentDriver().Generate(context.Background(), GenRequest{
+		Prompt: buildDecomposePrompt(PerceptionPayload{Candidates: cands}, input),
+		Schema: json.RawMessage(beatChainV2SchemaJSON),
+	})
+	if err != nil {
+		t.Fatalf("Generate(%q): %v", input, err)
+	}
+	chain, err := DecodeAndValidateChainV2(raw)
+	if err != nil {
+		t.Fatalf("Generate(%q) produced a chain the engine rejects: %v\nraw: %s", input, err, raw)
+	}
+	return chain
+}
+
+// The VAGUE ask still raises the choice. Detail exists so the player CAN be specific, not so they
+// must be: "the hooded figure" must still name both and produce UNRESOLVED.
+func TestFakeIntent_VagueAskStillTiesAcrossDetailedLabels(t *testing.T) {
+	chain := devChainWith(t, "ask the hooded figure about the note", devTwinCandidates)
+
+	if len(chain) != 1 || chain[0].Type != "UNRESOLVED" {
+		t.Fatalf("chain = %+v, want one UNRESOLVED — the vague ask must still raise the choice", chain)
+	}
+	if len(chain[0].CandidateIDs) != 2 {
+		t.Fatalf("candidate_ids = %v, want both figures", chain[0].CandidateIDs)
+	}
+}
+
+// And the SPECIFIC answer binds the one the player picked — the detail they were shown is the detail
+// they can say back. Without this the whole ruling is decorative.
+func TestFakeIntent_DetailedAnswerBindsTheRightOne(t *testing.T) {
+	chain := devChainWith(t, "ask the hooded figure by the bar about the note", devTwinCandidates)
+
+	if len(chain) != 1 || chain[0].Type != "Communicated" {
+		t.Fatalf("chain = %+v, want one Communicated — the specific answer must bind", chain)
+	}
+	if chain[0].ListenerID != "2ac70000-0000-0000-0000-0000000000aa" {
+		t.Fatalf("listener_id = %q, want the figure AT THE BAR", chain[0].ListenerID)
+	}
+}
+
+// Labels are authored as descriptors ("a hooded figure") but players type "the hooded figure".
+// Requiring the article to match made the most natural sentence in the game bind nothing.
+func TestFakeIntent_LeadingArticleIsNotPartOfTheReference(t *testing.T) {
+	chain := devChainWith(t, "ask the keeper about the tide", []Candidate{
+		{ID: "2ac70000-0000-0000-0000-0000000000a2", Name: "the keeper", Kind: "actor"},
+	})
+	if len(chain) != 1 || chain[0].ListenerID != "2ac70000-0000-0000-0000-0000000000a2" {
+		t.Fatalf("chain = %+v, want the keeper bound", chain)
+	}
+	chain = devChainWith(t, "ask the hooded figure about the tide", []Candidate{
+		{ID: "2ac70000-0000-0000-0000-0000000000a4", Name: "a hooded figure", Kind: "actor"},
+	})
+	if len(chain) != 1 || chain[0].ListenerID != "2ac70000-0000-0000-0000-0000000000a4" {
+		t.Fatalf(`chain = %+v, want "a hooded figure" bound from "the hooded figure"`, chain)
+	}
+}

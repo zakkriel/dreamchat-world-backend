@@ -99,39 +99,80 @@ type resultBlock struct {
 	Telegraphs           []string              `json:"telegraphs"`
 }
 
-// labelCandidates renders each unresolved id with the VIEWER's own name for it, via fn_display_name
-// — the identical labelling path the candidate whitelist, the narrate roster and scene/current all
-// use. It never reaches for the canonical registry name a viewer may not know (§3 naming reach), so
-// the "which did you mean?" list cannot leak a name the ask itself proves the player does not have.
+// labelCandidates renders each unresolved id the way the VIEWER would name it, through
+// fn_display_names_distinct — the same set-aware path the candidate whitelist uses, so the words the
+// player is offered here are exactly the words they can say back.
 //
+// Set-aware matters most on THIS surface: an unresolved list is by definition a group of things one
+// phrase named equally well, so it is the likeliest place for two labels to collide. Where perceived
+// detail can separate them it is added ("… by the bar"); where it genuinely cannot, both entries read
+// the same, which is the honest answer and the founder's explicit ruling — see
+// fn_display_names_distinct's own note.
+//
+// It never reaches for a canonical registry name the viewer may not know (§3 naming reach), so the
+// "which did you mean?" list cannot leak a name the ask itself proves the player does not have.
 // Returns a non-nil empty slice for no candidates, so the payload carries `[]` and never `null`.
-// One round trip for the whole list; unresolved sets are two or three entries by construction
-// (beat_chain/2 requires at least two, and a tie of more than a handful is not a real scene).
 func labelCandidates(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string, ids []string) ([]unresolvedCandidate, error) {
 	out := make([]unresolvedCandidate, 0, len(ids))
 	if len(ids) == 0 {
 		return out, nil
 	}
-	rows, err := pool.Query(ctx,
-		`SELECT id, fn_display_name($1::uuid, $2::uuid, id)
-		   FROM unnest($3::uuid[]) WITH ORDINALITY AS t(id, ord)
-		  ORDER BY t.ord`, // preserve the engine's order: the frontend keys disambiguation on position
-		worldID, viewerID, ids)
+	labels, err := distinctLabels(ctx, pool, worldID, viewerID, ids)
 	if err != nil {
 		return nil, fmt.Errorf("labelCandidates: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var c unresolvedCandidate
-		if err := rows.Scan(&c.ID, &c.Label); err != nil {
-			return nil, fmt.Errorf("labelCandidates: scan: %w", err)
-		}
-		out = append(out, c)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("labelCandidates: %w", err)
+	for _, id := range ids {
+		out = append(out, unresolvedCandidate{ID: id, Label: labels[id]})
 	}
 	return out, nil
+}
+
+// distinctLabels is the one call site for fn_display_names_distinct: ids in, viewer-facing labels out,
+// collisions already broken by perceived detail. Keyed by id rather than returned as a slice so both
+// callers (the unresolved list, and the candidate whitelist's in-place relabel) can use it without
+// either depending on the other's ordering.
+func distinctLabels(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string, ids []string) (map[string]string, error) {
+	labels := make(map[string]string, len(ids))
+	rows, err := pool.Query(ctx,
+		`SELECT entity_id, label FROM fn_display_names_distinct($1::uuid, $2::uuid, $3::uuid[])`,
+		worldID, viewerID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("fn_display_names_distinct: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id, label string
+		if err := rows.Scan(&id, &label); err != nil {
+			return nil, fmt.Errorf("fn_display_names_distinct: scan: %w", err)
+		}
+		labels[id] = label
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("fn_display_names_distinct: %w", err)
+	}
+	return labels, nil
+}
+
+// relabelDistinct rewrites a candidate slice's labels in place. Only labels that COLLIDE change; a
+// candidate whose name was already unique comes back byte-identical.
+func relabelDistinct(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string, cands []Candidate) error {
+	if len(cands) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(cands))
+	for _, c := range cands {
+		ids = append(ids, c.ID)
+	}
+	labels, err := distinctLabels(ctx, pool, worldID, viewerID, ids)
+	if err != nil {
+		return fmt.Errorf("relabelDistinct: %w", err)
+	}
+	for i := range cands {
+		if l, ok := labels[cands[i].ID]; ok && l != "" {
+			cands[i].Name = l
+		}
+	}
+	return nil
 }
 
 type resultFrame struct {

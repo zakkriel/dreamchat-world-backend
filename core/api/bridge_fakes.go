@@ -430,6 +430,19 @@ func devSpokenContent(input string) string {
 // specific reference ("the back door" over "the door"). More than one survivor means the words
 // genuinely do not distinguish two entities — the caller turns that into UNRESOLVED instead of
 // guessing. kinds filters the candidate block; empty kinds means any kind.
+//
+// Two accommodations for how people and labels actually read, both needed once labels started
+// carrying disambiguating detail (fn_display_names_distinct):
+//
+//   • A LEADING ARTICLE is ignored on the candidate side. Labels are authored as descriptors —
+//     "a hooded figure" — while players type "ask THE hooded figure". Requiring the article to match
+//     made the most natural sentence in the game bind nothing at all.
+//   • The BASE of a detailed label matches too. "a hooded figure by the bar" is offered so the player
+//     CAN be specific, but they will usually start vague; "the hooded figure" must still name both
+//     and produce the UNRESOLVED that invites them to be specific. So each label is tried whole
+//     first (the specific answer wins, and wins by being longer), then at its base — the text before
+//     " by ". Without this the detail would make the ask unanswerable in the opposite direction: the
+//     player could pick one, but could no longer ask the vague question that raises the choice.
 func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) []Candidate {
 	var best []Candidate
 	bestLen := 0
@@ -437,19 +450,39 @@ func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) [
 		if len(kinds) > 0 && !slices.Contains(kinds, c.Kind) {
 			continue
 		}
-		name := strings.ToLower(strings.TrimSpace(c.Name))
-		// Two characters is the floor: a one-letter label would match almost any sentence.
-		if len(name) < 2 || !strings.Contains(lowerInput, name) {
-			continue
+		full := devMatchable(c.Name)
+		base, _, hasDetail := strings.Cut(full, " by ")
+		forms := []string{full}
+		if hasDetail {
+			forms = append(forms, base)
 		}
-		switch {
-		case len(name) > bestLen:
-			best, bestLen = []Candidate{c}, len(name)
-		case len(name) == bestLen && c.ID != best[0].ID:
-			best = append(best, c)
+		for _, name := range forms {
+			// Two characters is the floor: a one-letter label would match almost any sentence.
+			if len(name) < 2 || !strings.Contains(lowerInput, name) {
+				continue
+			}
+			switch {
+			case len(name) > bestLen:
+				best, bestLen = []Candidate{c}, len(name)
+			case len(name) == bestLen && (len(best) == 0 || !slices.ContainsFunc(best, func(b Candidate) bool { return b.ID == c.ID })):
+				best = append(best, c)
+			}
+			break // the longest form that matched is this candidate's best showing
 		}
 	}
 	return best
+}
+
+// devMatchable lowercases a label and drops a leading article, so "a hooded figure" and
+// "the hooded figure" are the same reference to a stand-in that matches on substrings.
+func devMatchable(name string) string {
+	n := strings.ToLower(strings.TrimSpace(name))
+	for _, art := range []string{"a ", "an ", "the "} {
+		if strings.HasPrefix(n, art) {
+			return strings.TrimPrefix(n, art)
+		}
+	}
+	return n
 }
 
 // parseDecomposeCandidates reads the candidate whitelist back out of an assembled decompose prompt.
