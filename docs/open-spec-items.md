@@ -432,3 +432,51 @@ Feeds **fan-out → full vs act-only**.
   when built.
 - **Firing trigger:** when `Communicated` fan-out / comprehension-gated reception lands beyond the
   reachability-only thin slice.
+
+---
+
+## FE-discovered contract gap (chunk-6 frontend review, 2026-08-07)
+
+## SPEC-028 — World management API (list / choose / create a world)
+SPEC-022 requires world id to be **runtime state, multi-world from the start**, but nothing can answer
+*which* worlds exist: the router registers exactly eight handlers — three page, three index, one
+timeline, one beat (`core/api/main.go:54-64`) — and viewer identity resolves server-side to the world's
+single actor named `'Player'` (`core/api/viewer.go:16-27`, "Auth/session out of scope this chunk").
+So the FE can make the world id *flow* (URL-supplied, no compile-time constant) but cannot let anyone
+**select** a world, and a world picker would require inventing an endpoint (forbidden —
+`implementation_playbook_superpowers.md:90`). Minimum shape: **`GET /worlds`** returning the worlds the
+caller may see (`id`, display label, and the SPEC-019 theme tokens), perception-bound like every other
+payload — an unreachable world is **absent, not redacted** (B-1, I-3) — plus `schema_version` (D-4);
+**world-scoped viewer resolution** to replace the single-`'Player'` default (pairs with the B1/auth
+stub, `MASTER_INDEX.md:124`); and a **ruling** on whether `POST /worlds` exists or world creation is
+declared seed/tooling-only for now (`MASTER_INDEX.md:125` lists B2 — World creation — as a planned
+stub). A world list is a directory, not canon: no world *state* on this surface.
+- **Source:** frontend review pass, `dreamchat-frontend` @ `main`; full context in
+  `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §1.
+- **Owner:** Chunk 6 (pairs with SPEC-019/020/021/022). **Cross-repo:** BE (this repo) + FE.
+- **Expected outcome:** a `GET /worlds` directory payload + a world-scoped viewer seam + a recorded
+  ruling on world creation. No engine/DDL change; no perception-boundary change.
+- **Firing trigger:** fired — the FE shell is being built now and ships a URL-supplied world id with a
+  dev default as the documented stub until this lands.
+
+## SPEC-029 — Compendium projection lenses are stubs (chunk-4 gate blocker)
+Every page endpoint returns its full contract shape while almost every field inside it is a literal
+stub in `core/db/migrations/20260615090001_compendium_read_functions.sql`: `perceived_role`,
+`current_synthesis`, `last_known_status`, `part_of`, `perceived_type`, `last_known_location` and
+`current_holder_owner_access` ship `NULL` (`:100-102`, `:123-125`, `:146-149`); `known_artifacts`,
+`inline_links`, `known_areas_inside` and `key_actors` ship `[]` (`:103`, `:105`, `:126-127`, `:129`,
+`:151`); `collected_knowledge_groups` is always exactly one group keyed by the target's own id
+(`:78-82`); and `decay.stale` is the literal `false` (`:70`, `:181`), so the decay language the PRDs
+require can never render. A real Actor page today is an id, a perceived name, and one flat knowledge
+list. This is not an FE gap — the frontend renders every field that is populated and renders each lens
+only when non-empty, so absence never implies knowledge (B-1).
+Unmeetable while the stubs stand: **Actors AC#3, AC#4, AC#10**; **Locations AC#2, AC#3, AC#4, AC#5,
+AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version identity in the payload).
+- **Source:** frontend review pass while building the Compendium pages onto the design system; full
+  table in `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §2.5.
+- **Owner:** reopens Chunk 4 (its gate is "all four PRDs' read-side ACs on seed",
+  `implementation_playbook_superpowers.md:70`). **Cross-repo:** BE (this repo).
+- **Expected outcome:** the deferred lenses computed from perception — synthesis, role/type,
+  last-known, containment, co-location, carry state — plus a real `decay.stale`, or an explicit
+  founder ruling that chunk 4's gate is deferred and why.
+- **Firing trigger:** fired — the FE Compendium surfaces are built and waiting on data.
