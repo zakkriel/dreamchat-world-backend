@@ -2184,6 +2184,27 @@ $$;
 
 
 --
+-- Name: fn_world_directory(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_world_directory() RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT json_build_object(
+    'schema_version', 'world_directory/1',
+    'worlds', COALESCE((
+      SELECT json_agg(json_build_object(
+               'id',            w.world_id,
+               'display_name',  w.display_name,
+               'theme',         w.theme,
+               'playable',      w.player_entity_id IS NOT NULL
+             ) ORDER BY w.display_name, w.world_id)
+        FROM world w), '[]'::json)
+  );
+$$;
+
+
+--
 -- Name: fn_world_now(uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2951,6 +2972,21 @@ CREATE TABLE public.watch_horizon (
 
 
 --
+-- Name: world; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world (
+    world_id uuid NOT NULL,
+    display_name text NOT NULL,
+    theme jsonb DEFAULT '{"mood": "nocturne", "accent": "#c9a227", "ornament": "filigree", "schema_version": "world_theme/1"}'::jsonb NOT NULL,
+    player_entity_id uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
+    CONSTRAINT world_theme_check CHECK ((((theme ->> 'schema_version'::text) = 'world_theme/1'::text) AND ((theme ->> 'accent'::text) ~ '^#[0-9a-fA-F]{6}$'::text) AND (length(COALESCE((theme ->> 'mood'::text), ''::text)) > 0) AND (length(COALESCE((theme ->> 'ornament'::text), ''::text)) > 0)))
+);
+
+
+--
 -- Name: world_actor_config; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3236,6 +3272,14 @@ ALTER TABLE ONLY public.world_actor_setting
 
 ALTER TABLE ONLY public.world_eruption
     ADD CONSTRAINT world_eruption_pkey PRIMARY KEY (eruption_id);
+
+
+--
+-- Name: world world_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world
+    ADD CONSTRAINT world_pkey PRIMARY KEY (world_id);
 
 
 --
@@ -3661,4 +3705,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260808090001'),
     ('20260808100001'),
     ('20260808100002'),
-    ('20260808100003');
+    ('20260808100003'),
+    ('20260808100004');

@@ -205,4 +205,14 @@ INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
  ('dca70000-0000-0000-0000-000000000b01','a4000000-0000-0000-0000-0000000000a1','11111111-1111-1111-1111-111111111111'),
  ('dca70000-0000-0000-0000-000000000c01','dddddddd-dddd-dddd-dddd-dddddddddddd','11111111-1111-1111-1111-111111111111');
 
+-- SPEC-028 directory entry. A world says who it is and who you are in it; the player here really is
+-- the actor named 'Player', which is what ResolveViewer's 0A convention was built around. Muted
+-- palette on purpose — this is the deterministic test fixture, and it should not look like the world
+-- anyone plays.
+INSERT INTO world (world_id, display_name, theme, player_entity_id) VALUES
+ ('11111111-1111-1111-1111-111111111111', 'Mara 0A Fixture',
+  '{"schema_version":"world_theme/1","accent":"#7a8b99","mood":"mist","ornament":"none"}'::jsonb,
+  'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
+ON CONFLICT (world_id) DO NOTHING;
+
 COMMIT;

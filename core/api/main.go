@@ -69,10 +69,17 @@ func main() {
 		// delivering the beat as a stream of validated frames (design §4.8, rung3 Task 3); continue
 		// skips decompose entirely — an empty chain against an active journey IS the continue press.
 		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
+		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
+		// /worlds/{id}, because it is what you call when you do not have an id yet.
+		NewWorldsHandler(pool, debug).(matcher),
 	}}
 
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)
+	// "/worlds" without the trailing slash is a DIFFERENT ServeMux pattern: with only "/worlds/"
+	// registered, the bare collection path 301s to the trailing-slash form, and a POST does not
+	// survive that redirect intact. Both spellings route to the same handler.
+	mux.Handle("/worlds", rt)
 
 	// SPEC-021 — CORS. Wraps the mux (not the router) so preflights are answered before routing;
 	// refuses to boot on a malformed allowlist rather than serving an API the frontend cannot reach.

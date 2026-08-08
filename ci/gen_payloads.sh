@@ -106,6 +106,16 @@ done
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^TestGenBeatFramePayloads$' -count=1 -v . )
 
+# --- world_directory/1 + world_created/1 (SPEC-028): GET /worlds is fn-backed, but POST /worlds is a
+# Go response envelope, and both should be exercised through the REAL handler rather than half here
+# and half in SQL. TestGenWorldPayloads (core/api/worldshandler_test.go) drives both via httptest,
+# gated on WORLD_PAYLOAD_DIR, and deletes the world it creates so the directory payload keeps listing
+# exactly the seeded worlds instead of accumulating one fixture per CI run.
+( cd "$(dirname "$0")/../core/api" && \
+  WORLD_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^TestGenWorldPayloads$' -count=1 -v . )
+
 # manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
 # (both Player and Jonas must appear) rather than trust the generator.
 printf '{"viewers":["%s","%s"]}\n' "$PLAYER" "$JONAS" > "$OUT/_manifest.json"
