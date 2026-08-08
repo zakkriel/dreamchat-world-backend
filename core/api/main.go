@@ -72,6 +72,11 @@ func main() {
 		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
 		NewWorldsHandler(pool, debug).(matcher),
+		// Images (SPEC-033): GET /worlds/{w}/images/{asset_id} redirects to a freshly minted
+		// presigned URL; POST /worlds/{w}/images/portraits is the explicit, bounded trigger.
+		// imageClient is nil when the platform is not configured, and that is an ordinary state —
+		// the world runs, images simply stay absent.
+		NewImageHandler(pool, newImageClientFromEnv(), debug).(matcher),
 	}}
 
 	mux := http.NewServeMux()

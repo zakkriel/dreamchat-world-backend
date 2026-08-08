@@ -1644,6 +1644,25 @@ $$;
 
 
 --
+-- Name: fn_image_ref(uuid, text, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_image_ref(p_world_id uuid, p_owner_kind text, p_owner_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE WHEN s.asset_id IS NULL THEN NULL
+              ELSE json_build_object(
+                     'schema_version', 'image_ref/1',
+                     'asset_id',       s.asset_id,
+                     'path',           '/worlds/' || p_world_id::text || '/images/' || s.asset_id
+                   )
+         END
+    FROM image_slot s
+   WHERE s.world_id = p_world_id AND s.owner_kind = p_owner_kind AND s.owner_id = p_owner_id;
+$$;
+
+
+--
 -- Name: fn_isolated_npcs(uuid, uuid[], uuid[], uuid[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2788,6 +2807,25 @@ CREATE TABLE public.held_outcome (
 
 
 --
+-- Name: image_slot; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.image_slot (
+    world_id uuid NOT NULL,
+    owner_kind text NOT NULL,
+    owner_id uuid NOT NULL,
+    visual_identity_id text,
+    asset_id text,
+    job_id text,
+    idempotency_key text,
+    issued_at timestamp with time zone,
+    last_error text,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT image_slot_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text])))
+);
+
+
+--
 -- Name: journey; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3123,6 +3161,14 @@ ALTER TABLE ONLY public.held_outcome
 
 
 --
+-- Name: image_slot image_slot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.image_slot
+    ADD CONSTRAINT image_slot_pkey PRIMARY KEY (world_id, owner_kind, owner_id);
+
+
+--
 -- Name: journey_legs_band journey_legs_band_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3358,6 +3404,20 @@ CREATE INDEX idx_er_scene ON public.entity_registry USING btree (world_id, curre
 --
 
 CREATE INDEX idx_held_outcome_pending ON public.held_outcome USING btree (world_id) WHERE (status = 'pending'::text);
+
+
+--
+-- Name: idx_image_slot_in_flight; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_image_slot_in_flight ON public.image_slot USING btree (world_id) WHERE (job_id IS NOT NULL);
+
+
+--
+-- Name: idx_image_slot_unfilled; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_image_slot_unfilled ON public.image_slot USING btree (world_id) WHERE ((asset_id IS NULL) AND (job_id IS NULL));
 
 
 --
@@ -3706,4 +3766,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260808100001'),
     ('20260808100002'),
     ('20260808100003'),
-    ('20260808100004');
+    ('20260808100004'),
+    ('20260808100005');

@@ -1,0 +1,234 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// fillPortraits is the whole loop: style, identity, generation with a pinned envelope, poll, and the
+// identity→asset mapping persisted on OUR side, because the asset row does not carry it.
+func TestFillPortraits_PersistsTheAssetTheAssetRowDoesNotCarry(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f1", "5a5e0000-0000-0000-0000-0000000000a1"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Portrait Subject') ON CONFLICT DO NOTHING`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	// Clear at the START as well as the end. This suite shares one database by design, so a previous
+	// run that died mid-test leaves rows behind, and a test that only tidies up on exit inherits them
+	// and fails for a reason that has nothing to do with the code.
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1 AND entity_id<>$2`, worldID, actorID)
+	}
+	clear()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	})
+
+	f := newFakePlatform()
+	c := testImageClient(t, f)
+
+	res, err := fillPortraits(ctx, pool, c, worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want one requested and one completed", res)
+	}
+
+	var assetID, identityID string
+	var jobID, lastErr *string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id, visual_identity_id, job_id, last_error FROM image_slot
+		  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2`, worldID, actorID).
+		Scan(&assetID, &identityID, &jobID, &lastErr); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID != "asset_cf63b1d2e6150906" {
+		t.Fatalf("asset_id = %q — the mapping the platform cannot answer for us was not stored", assetID)
+	}
+	if identityID != "vi_c40c1fc21b057d27" {
+		t.Fatalf("visual_identity_id = %q", identityID)
+	}
+	// job_id is cleared on a terminal status: a settled job must never be polled again.
+	if jobID != nil {
+		t.Fatalf("job_id = %v, want NULL once the job settled", *jobID)
+	}
+	if lastErr != nil {
+		t.Fatalf("last_error = %v, want NULL on success", *lastErr)
+	}
+
+	// Re-running skips the filled slot rather than paying for a second job. Reuse would make a repeat
+	// harmless and free, but "harmless" is not a reason to ask.
+	before := f.generationCalls
+	res2, err := fillPortraits(ctx, pool, c, worldID, 5)
+	if err != nil {
+		t.Fatalf("second fillPortraits: %v", err)
+	}
+	if res2.Requested != 0 || f.generationCalls != before {
+		t.Fatalf("a filled slot was re-requested: %+v (generation calls %d→%d)", res2, before, f.generationCalls)
+	}
+}
+
+// A failed job leaves the reason on the slot and clears job_id, so a blank portrait can explain
+// itself and the next run does not poll a job that will never move.
+func TestFillPortraits_FailureIsRecordedAndNotLeftInFlight(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f2", "5a5e0000-0000-0000-0000-0000000000a2"
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Doomed Subject') ON CONFLICT DO NOTHING`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	// Clear at the START as well as the end. This suite shares one database by design, so a previous
+	// run that died mid-test leaves rows behind, and a test that only tidies up on exit inherits them
+	// and fails for a reason that has nothing to do with the code.
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1 AND entity_id<>$2`, worldID, actorID)
+	}
+	clear()
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	})
+
+	f := newFakePlatform()
+	f.failJob = true
+	c := testImageClient(t, f)
+
+	res, err := fillPortraits(ctx, pool, c, worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Failed != 1 {
+		t.Fatalf("result = %+v, want one failure", res)
+	}
+	var assetID, jobID *string
+	var lastErr string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id, job_id, coalesce(last_error,'') FROM image_slot
+		  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2`, worldID, actorID).
+		Scan(&assetID, &jobID, &lastErr); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID != nil {
+		t.Fatalf("asset_id = %v, want NULL after a failed job", *assetID)
+	}
+	if jobID != nil {
+		t.Fatalf("job_id = %v, want NULL — a dead job must not be polled forever", *jobID)
+	}
+	if lastErr == "" {
+		t.Fatal("last_error is empty; a blank portrait should be able to explain itself")
+	}
+}
+
+// fn_image_ref is what the frontend will read. NULL is the ORDINARY state — "no picture yet" — and
+// the reference never carries a presigned URL, only an id and a path back to this service.
+func TestImageRef_NullUntilReadyThenIdAndPathNeverAUrl(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f3", "5a5e0000-0000-0000-0000-0000000000a3"
+	_, _ = pool.Exec(ctx, `DELETE FROM image_slot WHERE world_id=$1`, worldID) // residue-proof, see above
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID) })
+
+	var raw *string
+	if err := pool.QueryRow(ctx, `SELECT fn_image_ref($1,'actor',$2)::text`, worldID, actorID).Scan(&raw); err != nil {
+		t.Fatalf("fn_image_ref: %v", err)
+	}
+	if raw != nil {
+		t.Fatalf("image ref = %v, want NULL before anything is generated", *raw)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id) VALUES ($1,'actor',$2,'asset_cf63b1d2e6150906')`,
+		worldID, actorID); err != nil {
+		t.Fatalf("insert slot: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT fn_image_ref($1,'actor',$2)::text`, worldID, actorID).Scan(&raw); err != nil {
+		t.Fatalf("fn_image_ref: %v", err)
+	}
+	if raw == nil {
+		t.Fatal("image ref is NULL after an asset landed")
+	}
+	var ref struct {
+		SchemaVersion string `json:"schema_version"`
+		AssetID       string `json:"asset_id"`
+		Path          string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(*raw), &ref); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if ref.SchemaVersion != "image_ref/1" || ref.AssetID != "asset_cf63b1d2e6150906" {
+		t.Fatalf("ref = %+v", ref)
+	}
+	if ref.Path != "/worlds/"+worldID+"/images/asset_cf63b1d2e6150906" {
+		t.Fatalf("path = %q, want a path back at this service", ref.Path)
+	}
+	// The invariant that makes the reference storable: no presigned URL, ever.
+	for _, forbidden := range []string{"X-Amz", "http://", "https://", "download_url", "expires"} {
+		if strings.Contains(*raw, forbidden) {
+			t.Fatalf("image ref carries %q — presigned URLs expire and must never be persisted:\n%s", forbidden, *raw)
+		}
+	}
+}
+
+// The read surface hands back a FRESH credential per request and refuses to be cached.
+func TestImageHandler_RedirectsToAFreshUrlAndForbidsCaching(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+
+	f := newFakePlatform()
+	h := NewImageHandler(pool, testImageClient(t, f), true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/worlds/5a5e0000-0000-0000-0000-0000000000f4/images/asset_cf63b1d2e6150906", nil))
+
+	if rec.Code != http.StatusFound {
+		t.Fatalf("status = %d, want 302: %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); !strings.Contains(loc, "X-Amz-Signature") {
+		t.Fatalf("Location = %q, want a freshly presigned URL", loc)
+	}
+	if cc := rec.Header().Get("Cache-Control"); cc != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store — the target is a short-lived credential", cc)
+	}
+}
+
+// With no platform configured the surfaces answer plainly instead of erroring obscurely: the world
+// runs without images, and that has to stay true.
+func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	h := NewImageHandler(pool, nil, true)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+		"/worlds/5a5e0000-0000-0000-0000-0000000000f5/images/asset_x", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("asset read status = %d, want 404", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/worlds/5a5e0000-0000-0000-0000-0000000000f5/images/portraits", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("portraits status = %d, want 503", rec.Code)
+	}
+}
