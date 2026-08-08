@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -73,9 +74,23 @@ func main() {
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)
 
+	// SPEC-021 — CORS. Wraps the mux (not the router) so preflights are answered before routing;
+	// refuses to boot on a malformed allowlist rather than serving an API the frontend cannot reach.
+	corsAllowed, corsBad := corsOrigins()
+	if len(corsBad) > 0 {
+		log.Fatalf("%s: %v is not a usable origin — list exact origins like http://localhost:5173 (no wildcard, no path)",
+			corsOriginsEnv, corsBad)
+	}
+	handler := withCORS(mux, corsAllowed)
+
 	addr := ":8080"
+	if len(corsAllowed) == 0 {
+		log.Printf("CORS: disabled (%s unset) — browsers on other origins cannot call this API", corsOriginsEnv)
+	} else {
+		log.Printf("CORS: allowing %d origin(s): %s", len(corsAllowed), strings.Join(corsAllowed, ", "))
+	}
 	log.Printf("dreamchat world backend (read-only compendium API) on %s (debug=%v)", addr, debug)
-	log.Fatal(http.ListenAndServe(addr, mux))
+	log.Fatal(http.ListenAndServe(addr, handler))
 }
 
 // defaultSeatConfig routes each LLM seat (D-13). Production default = Claude via the Anthropic API
@@ -89,12 +104,18 @@ func main() {
 // DeepInfra/DeepSeek/OpenRouter). All other seats are unaffected (D-13).
 func defaultSeatConfig() SeatConfig {
 	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
+		// Every seat gets the stand-in SHAPED LIKE ITS OWN OUTPUT. Three of these used to be
+		// "fake-structured", which the factory builds with a nil scripted table: decompose could only
+		// answer "[]", so the server streamed a correct frame sequence and committed nothing —
+		// hand-driving three beats left canon_event at its seed rows — and resolve was never reached
+		// to notice it had a chain-shaped stand-in bound. Keyless dev now binds ids from the real
+		// candidate whitelist and commits, and the first adjudicated attempt reaches a ruling.
 		return SeatConfig{
-			"decompose":          {Provider: "fake-structured", Model: "dev"},
+			"decompose":          {Provider: "fake-intent", Model: "dev"},
 			"narrate":            {Provider: "fake-text", Model: "dev"},
-			"resolve":            {Provider: "fake-structured", Model: "dev"},
-			"cognition_batch":    {Provider: "fake-structured", Model: "dev"},
-			"cognition_isolated": {Provider: "fake-structured", Model: "dev"},
+			"resolve":            {Provider: "fake-resolve", Model: "dev"},
+			"cognition_batch":    {Provider: "fake-cognition", Model: "dev"},
+			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
 			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
 			"place_author":       {Provider: "fake-place-author", Model: "dev"},
 		}
