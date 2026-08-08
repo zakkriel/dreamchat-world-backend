@@ -611,5 +611,44 @@ broken; the numbers simply describe a world that interrupts a traveller about on
   ~3% per leg — roughly one interruption per two journeys.
 - **Owner:** the founder. This is a felt-experience judgement ("how often should the world get in your
   way?"), not an engineering one, and the right way to answer it is to play at a candidate value.
-  **No value is changed here** — the numbers are laid out so the choice can be made on evidence.
-- **Firing trigger:** fired — raised by the frontend's gate run and answered with the arithmetic above.
+- **RULED AND LANDED (2026-08-08):** founder set `medium` to **300** (migration
+  `20260808100001_interruption_tuning.sql`). Both halves were needed — `seed_world_defaults` so new
+  worlds are born with it, and an `UPDATE` for the already-seeded play world, because the defaults
+  insert `ON CONFLICT DO NOTHING` and would otherwise have left the only world anyone plays untouched.
+  A tuning change that lands green and changes nothing is the failure mode here.
+  **Measured after:** `medium` fires twice in 40 journey legs (it effectively never did before), and a
+  `small` eruption commits in the tavern. The dial works. **But see SPEC-032 — firing is not the same
+  as manifesting, and on a journey it still does not manifest.**
+- **Firing trigger:** fired — raised by the frontend's gate run, answered with the arithmetic, ruled
+  by the founder, landed. He re-tunes from here by playing.
+
+---
+
+## SPEC-032 — The World Actor's presence-boundary power does not work
+**This, not the odds, is why nobody has ever seen an interruption on a journey.**
+
+The World Actor has two lawful shapes (`runWorldActor`), and the design names the second as this
+seat's *unique* power: *"an ActorMoved whose target resolves to `scene` — the presence-boundary move,
+this seat's unique power to pull a non-present NPC INTO the scene."* On a journey leg the traveller is
+alone at a freshly minted waystation, so it is the ONLY shape available — nobody is there to speak.
+
+It is refused every time. `commitWorldPayload` routes the authored move through the same
+`apply_event` accessibility floor as any other actor's move, and that floor requires a **direct**
+portal (open ∧ ¬locked) from the mover's current location to the destination. An NPC in the tavern
+has no direct portal to a waystation on the road — and never will, since waystations are minted as
+the journey walks. So the world reliably decides to erupt, authors the only intrusion it can, and the
+gate reliably refuses it.
+- **Evidence (measured 2026-08-08, after the SPEC-031 tuning):** 10 journeys / 40 legs produced two
+  `medium` fires and zero manifestations — every one logged
+  `intrusion rejected: authored intrusion did not commit (gate_reject)`. In the tavern, where other
+  actors are present and the "someone here speaks" shape is available, an eruption commits normally.
+  The difference is entirely whether a lawful shape exists in that scene.
+- **The tension is real and is a ruling, not a bug fix.** Either the presence-boundary move genuinely
+  is a power the accessibility floor does not gate — in which case the world can place an NPC
+  anywhere, and "no trusted fast path" (D-1) needs a stated exception with its own bound — or it is
+  not a power at all and the design sentence above is wrong, in which case interruption on the road
+  needs some other mechanism entirely (NPCs positioned along routes, or an intrusion shape that
+  needs no second actor). **No mechanism is proposed here** (anti-drift): the gap is documented.
+- **Owner:** founder ruling required. **Cross-repo:** BE only; the FE already renders whatever arrives.
+- **Firing trigger:** fired — the SPEC-031 tuning landed and proved the dial works while the felt
+  experience did not change, which isolates this as the actual blocker.
