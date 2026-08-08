@@ -179,3 +179,100 @@ func TestRunBeat_ImpossibleMoveStillHaltsTurnBudget(t *testing.T) {
 		t.Fatalf("journey rows = %d, want 0 — the impossible move must not start a journey", journeyCount)
 	}
 }
+
+// SPEC-032. A journey leg that fires the world's turn while the traveller is nowhere known mints a
+// waystation, wires it into the road, and STEPS THE TRAVELLER ONTO IT — which is what finally gives
+// journey.where_label something to say.
+//
+// The from→place portal used to be built only when no direct origin→goal connection existed. That
+// guard conflated "is there already a way to the goal?" (R4's bar check, answered earlier) with "can
+// the traveller stand where they are?" (always yes). Seeding the Harbormaster's Office behind an open
+// door from Dock Street made the guard true for the first time, and every eruption on that road began
+// minting a waystation wired only to the GOAL, then failing to move the traveller onto it:
+// gate_reject, a hard error that killed the beat. It is also why where_label was permanently null.
+//
+// Runs against the real seeded road, because the defect only appears when origin and goal are already
+// connected — a fixture that forgot to connect them would pass against the broken code.
+func TestJourney_LegMintsAWaystationTheTravellerCanStandOn(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const dockStreetID = "210c0000-0000-0000-0000-0000000000d2"
+	const officeID = "210c0000-0000-0000-0000-0000000000d5"
+
+	// Precondition the bug depended on: origin and goal are ALREADY directly connected.
+	orc := wtOrchestrator(pool)
+	exists, permits, err := orc.connectionBetween(ctx, dlWorldID, dockStreetID, officeID)
+	if err != nil {
+		t.Fatalf("connectionBetween: %v", err)
+	}
+	if !exists || !permits {
+		t.Fatalf("precondition: expected an open door Dock Street↔Office (exists=%v permits=%v)", exists, permits)
+	}
+
+	// Stand the traveller on Dock Street and force every turn to fire, so the leg takes the
+	// place-authoring path deterministically instead of waiting on the odds.
+	var wasAt string
+	if err := pool.QueryRow(ctx,
+		`SELECT attrs->>'location_id' FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
+		dlWorldID, dlKadeID).Scan(&wasAt); err != nil {
+		t.Fatalf("read traveller's starting location: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`UPDATE actor_state SET attrs = jsonb_set(attrs,'{location_id}', to_jsonb($1::text))
+		  WHERE world_id=$2 AND entity_id=$3`, dockStreetID, dlWorldID, dlKadeID); err != nil {
+		t.Fatalf("place the traveller: %v", err)
+	}
+	// Put him back: this suite shares one fixture world, and a test that walks the traveller onto a
+	// waystation and leaves him there changes the scene every later test reads.
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`UPDATE actor_state SET attrs = jsonb_set(attrs,'{location_id}', to_jsonb($1::text))
+			  WHERE world_id=$2 AND entity_id=$3`, wasAt, dlWorldID, dlKadeID)
+	})
+	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
+	// wtOrchestrator leaves PlaceAuthor nil — nothing else in this package reaches the minting path.
+	orc.PlaceAuthor = NewFakePlaceAuthorDriver()
+
+	tick := wtBaseTick(t, ctx, pool)
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, Attempt{
+		Type: "ActorMoved", Stated: "I walk for the Harbormaster's Office", ToTargetID: officeID,
+	}, tick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM journey WHERE journey_id=$1`, j.ID)
+	})
+
+	var out BeatOutcome
+	if err := orc.runJourneyLeg(ctx, j, &out, nil); err != nil {
+		t.Fatalf("runJourneyLeg failed: %v — a leg that mints a waystation must be able to put the traveller on it", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, out.Committed) })
+
+	if j.StageID == "" {
+		t.Fatal("no stage_id after a firing leg — nothing was minted, so where_label has nothing to report")
+	}
+
+	// The traveller is actually standing on it, not merely near it.
+	var loc string
+	if err := pool.QueryRow(ctx,
+		`SELECT attrs->>'location_id' FROM actor_state WHERE world_id=$1 AND entity_id=$2`,
+		dlWorldID, dlKadeID).Scan(&loc); err != nil {
+		t.Fatalf("read traveller location: %v", err)
+	}
+	if loc != j.StageID {
+		t.Fatalf("traveller is at %s but the minted waystation is %s — they were stranded off the road they walked onto", loc, j.StageID)
+	}
+
+	// And the way behind them exists, which is what the move required.
+	back, backPermits, err := orc.connectionBetween(ctx, dlWorldID, dockStreetID, j.StageID)
+	if err != nil {
+		t.Fatalf("connectionBetween(from, waystation): %v", err)
+	}
+	if !back || !backPermits {
+		t.Fatalf("no open way from Dock Street onto the new waystation (exists=%v permits=%v)", back, backPermits)
+	}
+}

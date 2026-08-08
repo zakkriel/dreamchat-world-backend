@@ -158,11 +158,23 @@ func (o *Orchestrator) authorPlaceForLeg(ctx context.Context, j *Journey, fromID
 	}
 	placeID = resolvedPlaceID
 
-	if !exists {
-		seq, err = o.ensurePortal(ctx, j.WorldID, j.ActorID, fromID, placeID, tick, seq, outcome)
-		if err != nil {
-			return false, fmt.Errorf("authorPlaceForLeg: portal (from): %w", err)
-		}
+	// The way BEHIND you is not optional. This used to be gated on `!exists` — "only bridge from→place
+	// if there was no direct from→goal connection" — which conflated two different questions:
+	//
+	//   * "is there already a way from here to the goal?"  → R4's bar check, answered above, which
+	//     returns `barred` for a shut or locked one and never routes around it.
+	//   * "can the traveller stand on the stretch of road they just walked onto?" → ALWAYS yes. They
+	//     are already there; the place is minted BECAUSE they are there.
+	//
+	// With the guard, a journey whose destination happened to be directly connected to its origin
+	// minted the waystation, wired it only to the GOAL, and then failed to move the traveller onto it
+	// — gate_reject, a hard error that killed the beat. Latent until the Harbormaster's Office was
+	// seeded behind an open door from Dock Street, which made `exists` true for the first time and
+	// turned every eruption on that road into a dead beat. It is also why no waystation ever survived
+	// a leg, and therefore why journey.where_label was permanently null.
+	seq, err = o.ensurePortal(ctx, j.WorldID, j.ActorID, fromID, placeID, tick, seq, outcome)
+	if err != nil {
+		return false, fmt.Errorf("authorPlaceForLeg: portal (from): %w", err)
 	}
 	seq, err = o.ensurePortal(ctx, j.WorldID, j.ActorID, placeID, j.GoalTarget, tick, seq, outcome)
 	if err != nil {
