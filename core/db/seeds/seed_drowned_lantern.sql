@@ -464,7 +464,20 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  -- The second hooded figure: same table, same descriptor as the first, so Kade cannot tell them apart
  -- and "the hooded figure" names both. This is what makes UNRESOLVED reachable in play.
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.location_id',        to_jsonb('210c0000-0000-0000-0000-0000000000d1'::text), 40,59),
- ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.coordinates',        '{"x":2,"y":1}'::jsonb,        40,60),
+ -- At the BAR, not the corner table: the two hooded figures wear the same descriptor, so the only way
+ -- a player can tell them apart is where each one is standing. Standing them beside DIFFERENT things
+ -- is what gives fn_display_names_distinct something true to say ("by the bar" vs "by the ballast
+ -- crate"); put them side by side and the honest answer becomes "you cannot tell", which is a real
+ -- outcome but a poor one to ship as the only one the seeded world can produce.
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.coordinates',        '{"x":5,"y":9}'::jsonb,        40,60),
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2ac70000-0000-0000-0000-0000000000aa','actor',   'attrs.descriptor',         to_jsonb('a hooded figure'::text), 40,61);
+
+-- A descriptor for the ballast crate. It had none, so fn_display_name fell through to the canonical
+-- registry name and a disambiguated label read "a hooded figure by the Ballast Crate" — a database
+-- row wearing a sentence. Every OTHER thing a viewer can be told about carries a descriptor (§ the
+-- DESCRIPTOR fallbacks block above); this closes the gap now that anchors are player-visible text.
+INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path, new_value,
+                            valid_from_tick, valid_from_seq) VALUES
+ ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.descriptor', to_jsonb('the ballast crate'::text), 40,62);
 
 COMMIT;

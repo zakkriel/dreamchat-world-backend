@@ -394,5 +394,19 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 		wayRows.Close()
 	}
 
+	// One last pass over the assembled whitelist: where two candidates wear the SAME label, give each
+	// the perceived detail that tells them apart (founder ruling, 2026-08-08 — fn_display_names_distinct).
+	// It happens HERE, once, over the whole set, because a collision is a property of the group and no
+	// per-entity query can see it. Labels that do not collide come back byte-identical, so nothing but
+	// the ambiguous case changes.
+	//
+	// The candidate whitelist has to carry the detail, not just the frontend's "which did you mean?"
+	// list: this is the vocabulary the player's next sentence is bound against. Disambiguate only the
+	// display list and the ask becomes visible but still unanswerable — the exact complaint that
+	// started this — because "by the bar" would name nothing the decomposer could bind.
+	if err := relabelDistinct(ctx, h.pool, worldID, viewerID, p.Candidates); err != nil {
+		return PerceptionPayload{}, err
+	}
+
 	return p, nil
 }

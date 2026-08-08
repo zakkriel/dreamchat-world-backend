@@ -1284,19 +1284,50 @@ $$;
 CREATE FUNCTION public.fn_display_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  -- The label an entity wears in ONE viewer's mind (§3). Known name (the viewer's own name-knowledge,
-  -- via fn_perceived_name — a world_genesis-sourced perception subject-linked to the entity that the
-  -- viewer holds) if any; else the entity's DESCRIPTOR (Tier-2 'descriptor' attr — what a stranger
-  -- sees, e.g. "the muscle by the bar"); else the canonical registry name (engine fallback; a seed lag,
-  -- never shown once descriptors are seeded). ids stay real at every call site — the model binds the
-  -- id, this is only the label the viewer's knowledge puts on it.
   SELECT COALESCE(
     fn_perceived_name(p_world_id, p_viewer_id, p_entity_id),
     (SELECT ast.attrs->>'descriptor' FROM actor_state ast
       WHERE ast.world_id = p_world_id AND ast.entity_id = p_entity_id),
+    (SELECT art.attrs->>'descriptor' FROM artifact_state art
+      WHERE art.world_id = p_world_id AND art.entity_id = p_entity_id),
     (SELECT er.canonical_name FROM entity_registry er
       WHERE er.world_id = p_world_id AND er.entity_id = p_entity_id)
   );
+$$;
+
+
+--
+-- Name: fn_display_names_distinct(uuid, uuid, uuid[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_display_names_distinct(p_world_id uuid, p_viewer_id uuid, p_ids uuid[]) RETURNS TABLE(entity_id uuid, label text)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH base AS (
+    SELECT t.id AS entity_id,
+           t.ord,
+           fn_display_name(p_world_id, p_viewer_id, t.id) AS base_label,
+           fn_perceived_anchor(p_world_id, p_viewer_id, t.id) AS anchor
+      FROM unnest(p_ids) WITH ORDINALITY AS t(id, ord)
+  ),
+  -- Per-label aggregate rather than a window: Postgres has no count(DISTINCT …) OVER (…).
+  spread AS (
+    SELECT b.base_label,
+           count(*)                 AS same_label,
+           -- distinct anchors in this label's group; 1 (or 0) means detail cannot separate it
+           count(DISTINCT b.anchor) AS distinct_anchors
+      FROM base b
+     GROUP BY b.base_label
+  )
+  SELECT b.entity_id,
+         CASE
+           WHEN s.same_label > 1 AND s.distinct_anchors > 1 AND b.anchor IS NOT NULL
+             THEN b.base_label || ' by ' || b.anchor
+           ELSE b.base_label
+         END
+    FROM base b
+    JOIN spread s ON s.base_label IS NOT DISTINCT FROM b.base_label
+   ORDER BY b.ord;  -- callers rely on input order (the beat's own candidate order)
 $$;
 
 
@@ -1807,6 +1838,29 @@ CREATE FUNCTION public.fn_occupied_room(p_world_id uuid, p_container uuid) RETUR
   FROM artifact_state
   WHERE world_id = p_world_id
     AND (attrs->>'contained_by')::uuid = p_container;
+$$;
+
+
+--
+-- Name: fn_perceived_anchor(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perceived_anchor(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  WITH here AS (
+    SELECT a.attrs->>'location_id' AS loc
+      FROM actor_state a
+     WHERE a.world_id = p_world_id AND a.entity_id = p_entity_id
+  )
+  SELECT fn_display_name(p_world_id, p_viewer_id, art.entity_id)
+    FROM artifact_state art, here
+   WHERE art.world_id = p_world_id
+     AND here.loc IS NOT NULL
+     AND art.attrs->>'location_id' = here.loc
+     AND art.attrs ? 'coordinates'
+   ORDER BY fn_distance(p_world_id, p_entity_id, art.entity_id), art.entity_id
+   LIMIT 1;
 $$;
 
 
@@ -3606,4 +3660,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260807100005'),
     ('20260808090001'),
     ('20260808100001'),
-    ('20260808100002');
+    ('20260808100002'),
+    ('20260808100003');
