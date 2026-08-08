@@ -50,7 +50,12 @@ func candidateByID(cands []Candidate, id string) *Candidate {
 // so the doors were invisible too. ActorMoved could only target where you already stood.
 func TestPayload_OffersThePortalsOfThisRoomAndWhereTheyLead(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	// t.Cleanup, not defer: Go runs defers BEFORE registered cleanups, so `defer pool.Close()`
+	// alongside a t.Cleanup that deletes rows closes the pool first and the delete silently fails
+	// against a dead connection. Registering the close FIRST makes LIFO run it LAST, after every
+	// row-cleanup. (ledger_test.go documents the same ordering rule; two "Test World" rows leaked
+	// into the shared directory before this was fixed.)
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 	door := addPortal(t, ctx, pool, id.World, id.Place, id.ElsewherePlace, "a plain door", true, false)
@@ -85,7 +90,7 @@ func TestPayload_OffersThePortalsOfThisRoomAndWhereTheyLead(t *testing.T) {
 // somewhere on the other side, never who is standing there (B-1, I-3).
 func TestPayload_NeighbouringRoomDoesNotExposeItsPeople(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 	addPortal(t, ctx, pool, id.World, id.Place, id.ElsewherePlace, "a plain door", true, false)
@@ -108,7 +113,7 @@ func TestPayload_NeighbouringRoomDoesNotExposeItsPeople(t *testing.T) {
 // with a reason, and hiding it is what made the refusal unreachable.
 func TestPayload_AShutDoorStillNamesTheRoomBehindIt(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 	addPortal(t, ctx, pool, id.World, id.Place, id.ElsewherePlace, "a barred door", false, true)
@@ -130,7 +135,7 @@ func TestPayload_AShutDoorStillNamesTheRoomBehindIt(t *testing.T) {
 // behind you. Caught by hand-driving the endpoint, not by any existing test.
 func TestBuildScene_NamesTheRoomYouAreInNotTheOneNextDoor(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 	addPortal(t, ctx, pool, id.World, id.Place, id.ElsewherePlace, "a plain door", true, false)
@@ -164,7 +169,7 @@ func TestBuildScene_NamesTheRoomYouAreInNotTheOneNextDoor(t *testing.T) {
 // unsayable.
 func TestLabelCandidates_NamesEachOneInTheViewersOwnWords(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 
@@ -192,7 +197,7 @@ func TestLabelCandidates_NamesEachOneInTheViewersOwnWords(t *testing.T) {
 // hold. Asking "which did you mean?" must not answer a question the player never got to ask.
 func TestLabelCandidates_NeverLeaksACanonicalName(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	id := setupSceneWorld(t, ctx, pool)
 
@@ -210,7 +215,7 @@ func TestLabelCandidates_NeverLeaksACanonicalName(t *testing.T) {
 // No candidates must serialise as [] and never null — the frontend renders the list unconditionally.
 func TestLabelCandidates_EmptyIsAnEmptyList(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	got, err := labelCandidates(ctx, pool, "00000000-0000-0000-0000-000000000000", "00000000-0000-0000-0000-000000000000", nil)

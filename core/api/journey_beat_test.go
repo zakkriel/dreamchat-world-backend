@@ -231,6 +231,18 @@ func TestJourney_LegMintsAWaystationTheTravellerCanStandOn(t *testing.T) {
 			`UPDATE actor_state SET attrs = jsonb_set(attrs,'{location_id}', to_jsonb($1::text))
 			  WHERE world_id=$2 AND entity_id=$3`, wasAt, dlWorldID, dlKadeID)
 	})
+	// Clear this world's fire-log FIRST. Forcing a tier to fire is meaningless if a stale eruption
+	// row sits at or beyond the test's tick: fn_pressure_chance derives the chance from elapsed time
+	// SINCE the last fire, so a leftover row drives it to zero and the "forced" tier never fires. This
+	// suite shares one database and ordinary beats write fire-log rows, so the residue is normal.
+	if _, err := pool.Exec(ctx, `DELETE FROM world_eruption WHERE world_id=$1`, dlWorldID); err != nil {
+		t.Fatalf("clear fire-log: %v", err)
+	}
+	// And clear waystations minted by earlier runs. The place author mints by DESCRIPTOR and the
+	// engine's reuse-before-create floor matches on it, so a leftover stretch of road from a previous
+	// run is silently reused — wired to wherever THAT run came from, not to where this traveller
+	// stands. The move onto it then cannot be permitted and the leg proves nothing.
+	clearMintedWaystations(t, ctx, pool, dlWorldID)
 	wtForceTierFires(t, ctx, pool, dlWorldID, "small")
 	// wtOrchestrator leaves PlaceAuthor nil — nothing else in this package reaches the minting path.
 	orc.PlaceAuthor = NewFakePlaceAuthorDriver()
@@ -316,6 +328,18 @@ func TestJourney_InterruptedBlockStillNamesTheDestination(t *testing.T) {
 	})
 
 	// medium cuts the beat (eruptionCutsBeat); small never does.
+	// Clear this world's fire-log FIRST. Forcing a tier to fire is meaningless if a stale eruption
+	// row sits at or beyond the test's tick: fn_pressure_chance derives the chance from elapsed time
+	// SINCE the last fire, so a leftover row drives it to zero and the "forced" tier never fires. This
+	// suite shares one database and ordinary beats write fire-log rows, so the residue is normal.
+	if _, err := pool.Exec(ctx, `DELETE FROM world_eruption WHERE world_id=$1`, dlWorldID); err != nil {
+		t.Fatalf("clear fire-log: %v", err)
+	}
+	// And clear waystations minted by earlier runs. The place author mints by DESCRIPTOR and the
+	// engine's reuse-before-create floor matches on it, so a leftover stretch of road from a previous
+	// run is silently reused — wired to wherever THAT run came from, not to where this traveller
+	// stands. The move onto it then cannot be permitted and the leg proves nothing.
+	clearMintedWaystations(t, ctx, pool, dlWorldID)
 	wtForceTierFires(t, ctx, pool, dlWorldID, "medium")
 
 	tick := wtBaseTick(t, ctx, pool)
@@ -344,5 +368,28 @@ func TestJourney_InterruptedBlockStillNamesTheDestination(t *testing.T) {
 	}
 	if blk.GoalLabel == nil || *blk.GoalLabel != "Harbormaster's Office" {
 		t.Fatalf("goal_label = %v, want the destination the traveller can restate", blk.GoalLabel)
+	}
+}
+
+// clearMintedWaystations removes roads authored by earlier journeys in this shared fixture world —
+// the minted places and the ways connecting them. Matching on the fake place author's own descriptor
+// prefix keeps it surgical: seeded locations and their portals are untouched.
+func clearMintedWaystations(t *testing.T, ctx context.Context, pool *pgxpool.Pool, worldID string) {
+	t.Helper()
+	const minted = fakePlaceAuthorDescriptorPrefix + "%"
+	const ways = "the way connecting%"
+	for _, tbl := range []string{"location_state", "artifact_state"} {
+		if _, err := pool.Exec(ctx,
+			`DELETE FROM `+tbl+` WHERE world_id=$1 AND entity_id IN (
+			   SELECT entity_id FROM entity_registry
+			    WHERE world_id=$1 AND (canonical_name LIKE $2 OR canonical_name LIKE $3))`,
+			worldID, minted, ways); err != nil {
+			t.Fatalf("clear minted %s: %v", tbl, err)
+		}
+	}
+	if _, err := pool.Exec(ctx,
+		`DELETE FROM entity_registry WHERE world_id=$1 AND (canonical_name LIKE $2 OR canonical_name LIKE $3)`,
+		worldID, minted, ways); err != nil {
+		t.Fatalf("clear minted registry rows: %v", err)
 	}
 }
