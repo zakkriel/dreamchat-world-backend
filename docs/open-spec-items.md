@@ -359,6 +359,13 @@ Small backend config; pairs with SPEC-020.
 - **Owner:** Chunk 6. **Cross-repo to-do:** small BE config (this repo).
 - **Expected outcome:** CORS configured for the FE origin; no change to handlers or the perception
   boundary (B-1, I-3).
+- **Status:** **LANDED (2026-08-07).** `core/api/cors.go`, wired around the mux in `main.go` so
+  preflights are answered before routing (the router matches only GET/POST and 404'd every
+  `OPTIONS`). Allowlist is exact-match from **`DREAMCHAT_CORS_ORIGINS`** (comma-separated full
+  origins); unset ⇒ CORS off and logged, `*` and scheme-less entries refuse to boot. Origin is
+  echoed, never `*`; no `Allow-Credentials` (the FE sends no cookies — the trace key is a query
+  param), so enabling credentials later is a one-line change in that file. Handlers and the
+  perception boundary are untouched, as the expected outcome required.
 
 ## SPEC-022 — Dynamic multi-world id
 No hardcoded world constant — **world id is runtime state** (multi-world from the start). Pairs with
@@ -480,3 +487,36 @@ AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version ident
   last-known, containment, co-location, carry state — plus a real `decay.stale`, or an explicit
   founder ruling that chunk 4's gate is deferred and why.
 - **Firing trigger:** fired — the FE Compendium surfaces are built and waiting on data.
+
+
+---
+
+## BE-discovered contract gap (integration verification pass, 2026-08-07)
+
+## SPEC-030 — A journey cannot be started through the beat API
+A journey begins from an **over-budget `ActorMoved`** (`core/api/journey.go:105` `startJourney`,
+reached from the over-budget gates in `runChain`), so it needs an attempt bound to a destination far
+enough to exceed the beat budget. But the decompose seat may bind ids **only** from the candidate
+whitelist, and that whitelist is assembled from *present* perception alone: actors at the viewer's
+location, the viewer's current location, and co-located or carried artifacts
+(`core/api/beathandler.go` `payload`). **No remote location is ever a candidate.** The seeded play
+world has five locations (Alley, Cellar, Dock Street, Harbor Quarter of Vael, The Drowned Lantern)
+and exactly one of them — the room you are standing in — can be named in a beat. The code already
+records the cause in its own comment: the "one-hop-known absent entities" set is *"a separate
+follow-up"* needing perception/knowledge-subject-link machinery *"that does not yet exist cleanly"*.
+Local movement is unaffected: portal artifacts (Front Door, Back Door, Cellar Hatch) are co-located,
+so room-to-room travel binds normally. It is **long-range** travel — the whole point of the Journey —
+that has no reachable path.
+- **Evidence:** the Journey's own tests build their chains in Go and seed their own far geometry
+  (`core/api/journey_beat_test.go:66,158` pass `ToTargetID` directly); nothing exercises the journey
+  through `POST /worlds/{w}/beats`. Hand-driving `walk to the harbour` against the running server
+  returns `journey: null`, `committed: []`.
+- **Source:** backend integration verification pass, 2026-08-07 (three-repo integration).
+- **Owner:** unassigned — it reopens the question the Journey design (rung 2) left implicit.
+  **Cross-repo:** BE (this repo). The FE renders the journey block already and needs no change.
+- **Expected outcome:** a ruling on how a player names somewhere they are not standing —
+  the known-but-absent candidate set, a stated-destination shape the place author can bind, or an
+  explicit deferral saying long-range travel is unreachable until the spatial engine lands. **No
+  mechanism is proposed here** (anti-drift, `implementation_playbook_superpowers.md:90`): the gap is
+  documented, not invented around.
+- **Firing trigger:** fired — the Journey shipped in #32 and is unreachable by any client.
