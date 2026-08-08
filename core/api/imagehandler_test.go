@@ -232,3 +232,107 @@ func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
 		t.Fatalf("portraits status = %d, want 503", rec.Code)
 	}
 }
+
+// scene_current/2: participants carry `image`, null until a portrait exists. The version moved
+// because the payload is additionalProperties:false and the frontend pins it exactly — an added
+// field is a breaking change however additive it looks.
+func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupSceneWorld(t, ctx, pool)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, id.World) })
+
+	decode := func() (string, map[string]json.RawMessage) {
+		t.Helper()
+		rec := sceneGet(t, NewSceneHandler(pool, true), id.World, id.Viewer)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("status = %d: %s", rec.Code, rec.Body.String())
+		}
+		var v struct {
+			SchemaVersion string `json:"schema_version"`
+			Participants  []struct {
+				ID    string          `json:"id"`
+				Image json.RawMessage `json:"image"`
+			} `json:"participants"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &v); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		byID := map[string]json.RawMessage{}
+		for _, p := range v.Participants {
+			byID[p.ID] = p.Image
+		}
+		return v.SchemaVersion, byID
+	}
+
+	sv, byID := decode()
+	if sv != "scene_current/2" {
+		t.Fatalf("schema_version = %q, want scene_current/2", sv)
+	}
+	img, ok := byID[id.Companion]
+	if !ok {
+		t.Fatal("the companion is not a participant; this proves nothing")
+	}
+	// The field must be PRESENT and null, not absent: the schema requires it.
+	if string(img) != "null" {
+		t.Fatalf("image = %s, want null before any portrait exists", img)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id) VALUES ($1,'actor',$2,'asset_cf63b1d2e6150906')`,
+		id.World, id.Companion); err != nil {
+		t.Fatalf("insert slot: %v", err)
+	}
+	_, byID = decode()
+	var ref struct {
+		SchemaVersion string `json:"schema_version"`
+		AssetID       string `json:"asset_id"`
+		Path          string `json:"path"`
+	}
+	if err := json.Unmarshal(byID[id.Companion], &ref); err != nil {
+		t.Fatalf("decode image ref: %v (raw %s)", err, byID[id.Companion])
+	}
+	if ref.SchemaVersion != "image_ref/1" || ref.AssetID != "asset_cf63b1d2e6150906" {
+		t.Fatalf("ref = %+v", ref)
+	}
+	if !strings.HasPrefix(ref.Path, "/worlds/"+id.World+"/images/") {
+		t.Fatalf("path = %q, want a path back at this service", ref.Path)
+	}
+	// The invariant that lets the payload be cached at all.
+	if strings.Contains(string(byID[id.Companion]), "X-Amz") {
+		t.Fatalf("participant image carried a presigned URL: %s", byID[id.Companion])
+	}
+}
+
+// A busy room must not cost one query per participant for a field that is usually null.
+func TestImageRefsFor_ResolvesTheWholeRosterInOneQuery(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	worldID := "5a5e0000-0000-0000-0000-0000000000f6"
+	a1, a2 := "5a5e0000-0000-0000-0000-0000000000b1", "5a5e0000-0000-0000-0000-0000000000b2"
+	_, _ = pool.Exec(ctx, `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID) })
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id) VALUES ($1,'actor',$2,'asset_one')`,
+		worldID, a1); err != nil {
+		t.Fatalf("insert: %v", err)
+	}
+
+	refs, err := imageRefsFor(ctx, pool, worldID, "actor", []string{a1, a2})
+	if err != nil {
+		t.Fatalf("imageRefsFor: %v", err)
+	}
+	if _, ok := refs[a1]; !ok {
+		t.Fatal("the actor with an asset is missing from the batch")
+	}
+	// An entity with no slot is simply absent; a missing key marshals as null.
+	if _, ok := refs[a2]; ok {
+		t.Fatal("an entity with no picture must be absent, not an empty reference")
+	}
+	if empty, err := imageRefsFor(ctx, pool, worldID, "actor", nil); err != nil || len(empty) != 0 {
+		t.Fatalf("empty roster: %v / %v", empty, err)
+	}
+}

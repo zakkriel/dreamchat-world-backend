@@ -28,7 +28,7 @@ func TestActorPage_DefaultViewerSeesAboutMara(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &probe); err != nil {
 		t.Fatalf("payload not valid JSON: %v — %s", err, body)
 	}
-	if probe["schema_version"] != "actor_page/1" {
+	if probe["schema_version"] != "actor_page/2" {
 		t.Fatalf("missing/wrong schema_version: %s", body)
 	}
 	if !strings.Contains(body, aboutMaraPID) {
@@ -61,7 +61,7 @@ func TestActorPage_DebugViewerJonas_NoLeak(t *testing.T) {
 	if err := json.Unmarshal([]byte(body), &probe); err != nil {
 		t.Fatalf("payload not valid JSON: %v", err)
 	}
-	if probe["schema_version"] != "actor_page/1" {
+	if probe["schema_version"] != "actor_page/2" {
 		t.Fatalf("not a real actor page payload: %s", body)
 	}
 	_ = context.Background()

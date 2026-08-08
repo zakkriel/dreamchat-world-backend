@@ -1,0 +1,183 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "actor_page/2",
+  "title": "ActorPage",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "world_id",
+    "viewer_id",
+    "actor"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "const": "actor_page/2"
+    },
+    "world_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "viewer_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "actor": {
+      "type": "object",
+      "required": [
+        "id",
+        "perceived_name",
+        "perceived_role",
+        "current_synthesis",
+        "last_known_status",
+        "known_artifacts",
+        "collected_knowledge_groups",
+        "inline_links",
+        "image"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "format": "uuid"
+        },
+        "perceived_name": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "perceived_role": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "current_synthesis": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "last_known_status": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "known_artifacts": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "inline_links": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "collected_knowledge_groups": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "group_key",
+              "group_label",
+              "items"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "group_key": {
+                "type": "string"
+              },
+              "group_label": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "items": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "perception_id",
+                    "content",
+                    "epistemic_type",
+                    "occurred_at_tick",
+                    "display_label",
+                    "confidence",
+                    "decay",
+                    "source"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "perception_id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "epistemic_type": {
+                      "type": "string"
+                    },
+                    "occurred_at_tick": {
+                      "type": "integer"
+                    },
+                    "display_label": {
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "confidence": {
+                      "type": "number"
+                    },
+                    "decay": {
+                      "type": "object"
+                    },
+                    "source": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "image": {
+          "description": "Image reference, or null when there is no picture yet — the ordinary state, and what the frontend's placeholder silhouette is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema_version",
+                "asset_id",
+                "path"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "image_ref/1"
+                },
+                "asset_id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "path": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

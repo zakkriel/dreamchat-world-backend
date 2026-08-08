@@ -266,3 +266,36 @@ func recordSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerID, 
 		log.Printf("images: recording slot error for %s: %v", ownerID, err)
 	}
 }
+
+// imageRefsFor resolves image references for a whole set of entities in one round trip. A scene read
+// asks for every present actor at once, and most of them will have no picture: doing that one query
+// per participant would turn a single read into a dozen for a field that is usually null.
+//
+// Entities with no slot are simply absent from the returned map, and a missing key yields a nil
+// json.RawMessage, which marshals as `null` — the ordinary "no picture yet" the frontend expects.
+func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind string, ownerIDs []string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(ownerIDs))
+	if len(ownerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT owner_id::text, fn_image_ref($1::uuid, $2, owner_id)::text
+		  FROM image_slot
+		 WHERE world_id = $1 AND owner_kind = $2 AND owner_id = ANY($3::uuid[]) AND asset_id IS NOT NULL`,
+		worldID, ownerKind, ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var ref *string
+		if err := rows.Scan(&id, &ref); err != nil {
+			return nil, err
+		}
+		if ref != nil {
+			out[id] = json.RawMessage(*ref)
+		}
+	}
+	return out, rows.Err()
+}
