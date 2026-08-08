@@ -104,18 +104,12 @@ func main() {
 // DeepInfra/DeepSeek/OpenRouter). All other seats are unaffected (D-13).
 func defaultSeatConfig() SeatConfig {
 	if os.Getenv("DREAMCHAT_BRIDGE") == "fake" {
-		// Every seat gets the stand-in SHAPED LIKE ITS OWN OUTPUT. Three of these used to be
-		// "fake-structured", which the factory builds with a nil scripted table: decompose could only
-		// answer "[]", so the server streamed a correct frame sequence and committed nothing —
-		// hand-driving three beats left canon_event at its seed rows — and resolve was never reached
-		// to notice it had a chain-shaped stand-in bound. Keyless dev now binds ids from the real
-		// candidate whitelist and commits, and the first adjudicated attempt reaches a ruling.
 		return SeatConfig{
-			"decompose":          {Provider: "fake-intent", Model: "dev"},
+			"decompose":          {Provider: "fake-structured", Model: "dev"},
 			"narrate":            {Provider: "fake-text", Model: "dev"},
-			"resolve":            {Provider: "fake-resolve", Model: "dev"},
-			"cognition_batch":    {Provider: "fake-cognition", Model: "dev"},
-			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
+			"resolve":            {Provider: "fake-structured", Model: "dev"},
+			"cognition_batch":    {Provider: "fake-structured", Model: "dev"},
+			"cognition_isolated": {Provider: "fake-structured", Model: "dev"},
 			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
 			"place_author":       {Provider: "fake-place-author", Model: "dev"},
 		}

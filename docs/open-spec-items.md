@@ -359,6 +359,19 @@ Small backend config; pairs with SPEC-020.
 - **Owner:** Chunk 6. **Cross-repo to-do:** small BE config (this repo).
 - **Expected outcome:** CORS configured for the FE origin; no change to handlers or the perception
   boundary (B-1, I-3).
+- **Status:** **LANDED (2026-08-07).** `core/api/cors.go`, wired around the **mux** in `main.go` so a
+  preflight is answered before routing — the router matches only GET/POST and 404'd every `OPTIONS`,
+  which is why the FE's text-beat POST (it preflights, `application/json`) could not reach the API at
+  all. Allowlist is exact-match from **`DREAMCHAT_CORS_ORIGINS`** (comma-separated full origins);
+  unset ⇒ CORS off and logged, `*` and scheme-less entries refuse to boot.
+- **Contract, confirmed with the FE (2026-08-07):** local dev is **same-origin through the Vite
+  proxy**, so no localhost origin is baked in anywhere — `http://localhost:5173` belongs in dev/staging
+  config only, never in prod. Methods `GET, POST, OPTIONS`; allowed request header `Content-Type`
+  only; no `Expose-Headers`. **No credentials** — the FE sends no cookies and no `Authorization` (the
+  trace key is a query param), so `Access-Control-Allow-Credentials` is absent. The origin is echoed
+  rather than `*`, which is what makes credentials a one-line change in one file **when the session
+  model lands and a wildcard origin stops being legal**. The Continue POST is a simple request and is
+  served by the same echo path. Handlers and the perception boundary are untouched (B-1, I-3).
 
 ## SPEC-022 — Dynamic multi-world id
 No hardcoded world constant — **world id is runtime state** (multi-world from the start). Pairs with
