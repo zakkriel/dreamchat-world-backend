@@ -730,12 +730,13 @@ CREATE FUNCTION public.fn_actor_page(p_world_id uuid, p_viewer_id uuid, p_actor_
     'actor', json_build_object(
       'id',                         p_actor_id,
       'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_actor_id),
+      -- Perception rows do not carry a structured role taxonomy for actors.
       'perceived_role',             NULL,
-      'current_synthesis',          NULL,
-      'last_known_status',          NULL,
-      'known_artifacts',            '[]'::json,
+      'current_synthesis',          fn_compendium_current_synthesis(p_world_id, p_viewer_id, p_actor_id),
+      'last_known_status',          fn_compendium_latest_fact(p_world_id, p_viewer_id, p_actor_id),
+      'known_artifacts',            fn_compendium_related_entities(p_world_id, p_viewer_id, p_actor_id, ARRAY['artifact']),
       'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_actor_id),
-      'inline_links',               '[]'::json
+      'inline_links',               fn_compendium_related_entities(p_world_id, p_viewer_id, p_actor_id, ARRAY['actor','location','artifact'])
     )
   ) END;
 $$;
@@ -946,12 +947,14 @@ CREATE FUNCTION public.fn_artifact_page(p_world_id uuid, p_viewer_id uuid, p_art
     'artifact', json_build_object(
       'id',                         p_artifact_id,
       'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_artifact_id),
+      -- Perception rows do not encode a typed artifact classification.
       'perceived_type',             NULL,
-      'current_synthesis',          NULL,
-      'last_known_location',        NULL,
+      'current_synthesis',          fn_compendium_current_synthesis(p_world_id, p_viewer_id, p_artifact_id),
+      'last_known_location',        fn_compendium_last_known_location(p_world_id, p_viewer_id, p_artifact_id),
+      -- Holder/owner/access requires carry-state lenses that are not modeled in perception rows.
       'current_holder_owner_access',NULL,
       'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_artifact_id),
-      'inline_links',               '[]'::json
+      'inline_links',               fn_compendium_related_entities(p_world_id, p_viewer_id, p_artifact_id, ARRAY['actor','location','artifact'])
     )
   ) END;
 $$;
@@ -992,35 +995,117 @@ CREATE FUNCTION public.fn_collected_knowledge(p_world_id uuid, p_viewer_id uuid,
     LANGUAGE sql STABLE
     AS $$
   WITH about AS (
-    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence, ce.in_world_label
+    SELECT v.perception_id,
+           v.source_event_id,
+           v.content,
+           v.epistemic_type,
+           v.valid_tick,
+           v.confidence,
+           ce.in_world_label
     FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
-    JOIN perception_subject ps ON ps.perception_id = v.perception_id AND ps.entity_id = p_target_id
-    JOIN canon_event ce ON ce.event_id = v.source_event_id
+    JOIN perception_subject ps
+      ON ps.perception_id = v.perception_id
+     AND ps.entity_id = p_target_id
+    JOIN canon_event ce
+      ON ce.event_id = v.source_event_id
     WHERE ce.event_type <> 'world_genesis'
   ),
   items AS (
-    SELECT json_build_object(
+    SELECT a.source_event_id,
+           a.in_world_label,
+           a.valid_tick AS sort_tick,
+           a.perception_id,
+           json_build_object(
              'perception_id',    a.perception_id,
              'content',          a.content,
              'epistemic_type',   a.epistemic_type,
              'occurred_at_tick', a.valid_tick,
              'display_label',    a.in_world_label,
              'confidence',       a.confidence,
-             'decay',  json_build_object('stale', false, 'last_confirmed_label', a.in_world_label),
-             'source', json_build_object('epistemic_type', a.epistemic_type,
-                                         'source_event_label', a.in_world_label)
-           ) AS item,
-           a.valid_tick AS sort_tick
+             'decay',            fn_compendium_decay(p_world_id, a.valid_tick, a.in_world_label),
+             'source',           json_build_object(
+                                   'epistemic_type', a.epistemic_type,
+                                   'source_event_label', a.in_world_label
+                                 )
+           ) AS item
     FROM about a
+  ),
+  grouped AS (
+    SELECT i.source_event_id,
+           max(i.in_world_label) AS group_label,
+           max(i.sort_tick) AS group_sort_tick,
+           coalesce(
+             json_agg(i.item ORDER BY i.sort_tick, i.perception_id),
+             '[]'::json
+           ) AS group_items
+    FROM items i
+    GROUP BY i.source_event_id
   )
-  SELECT CASE WHEN count(*) = 0 THEN '[]'::json
-              ELSE json_build_array(json_build_object(
-                     'group_key',   p_target_id::text,
-                     'group_label', fn_perceived_name(p_world_id, p_viewer_id, p_target_id),
-                     'items',       coalesce(json_agg(i.item ORDER BY i.sort_tick), '[]'::json)
-                   ))
+  SELECT coalesce(
+           json_agg(
+             json_build_object(
+               'group_key',   'event:' || g.source_event_id::text,
+               'group_label', g.group_label,
+               'items',       g.group_items
+             )
+             ORDER BY g.group_sort_tick DESC, g.source_event_id
+           ),
+           '[]'::json
+         )
+  FROM grouped g;
+$$;
+
+
+--
+-- Name: fn_compendium_current_synthesis(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_current_synthesis(p_world_id uuid, p_viewer_id uuid, p_target_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  WITH ranked AS (
+    SELECT vp.content,
+           row_number() OVER (
+             ORDER BY vp.valid_tick DESC, vp.acquired_tick DESC, vp.perception_id DESC
+           ) AS rn
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+    JOIN perception_subject ps
+      ON ps.perception_id = vp.perception_id
+     AND ps.entity_id = p_target_id
+    JOIN canon_event ce
+      ON ce.event_id = vp.source_event_id
+    WHERE ce.event_type <> 'world_genesis'
+  )
+  SELECT CASE WHEN count(*) = 0 THEN NULL
+              ELSE string_agg(r.content, E'\n' ORDER BY r.rn)
          END
-  FROM items i;
+  FROM ranked r
+  WHERE r.rn <= 3;
+$$;
+
+
+--
+-- Name: fn_compendium_decay(uuid, bigint, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_decay(p_world_id uuid, p_valid_tick bigint, p_last_confirmed_label text) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT json_build_object(
+    'stale', (fn_world_now(p_world_id) - p_valid_tick) > fn_compendium_decay_horizon_ticks(),
+    'last_confirmed_label', p_last_confirmed_label
+  );
+$$;
+
+
+--
+-- Name: fn_compendium_decay_horizon_ticks(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_decay_horizon_ticks() RETURNS bigint
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  SELECT 72::bigint;
 $$;
 
 
@@ -1057,6 +1142,116 @@ CREATE FUNCTION public.fn_compendium_index_json(p_world_id uuid, p_viewer_id uui
                        ORDER BY entity_id)
        FROM fn_compendium_index(p_world_id, p_viewer_id, p_kind)), '[]'::json)
   );
+$$;
+
+
+--
+-- Name: fn_compendium_last_known_location(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_last_known_location(p_world_id uuid, p_viewer_id uuid, p_artifact_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  WITH about_artifact AS (
+    SELECT vp.perception_id,
+           vp.valid_tick,
+           vp.acquired_tick
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+    JOIN perception_subject psa
+      ON psa.perception_id = vp.perception_id
+     AND psa.entity_id = p_artifact_id
+    JOIN canon_event ce
+      ON ce.event_id = vp.source_event_id
+    WHERE ce.event_type <> 'world_genesis'
+  )
+  SELECT fn_perceived_name(p_world_id, p_viewer_id, er.entity_id)
+  FROM about_artifact aa
+  JOIN perception_subject psl
+    ON psl.perception_id = aa.perception_id
+   AND psl.entity_id <> p_artifact_id
+  JOIN entity_registry er
+    ON er.world_id = p_world_id
+   AND er.entity_id = psl.entity_id
+   AND er.entity_kind = 'location'
+  ORDER BY aa.valid_tick DESC, aa.acquired_tick DESC, aa.perception_id DESC, er.entity_id
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_compendium_latest_fact(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_latest_fact(p_world_id uuid, p_viewer_id uuid, p_target_id uuid) RETURNS text
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT vp.content
+  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+  JOIN perception_subject ps
+    ON ps.perception_id = vp.perception_id
+   AND ps.entity_id = p_target_id
+  JOIN canon_event ce
+    ON ce.event_id = vp.source_event_id
+  WHERE ce.event_type <> 'world_genesis'
+  ORDER BY vp.valid_tick DESC, vp.acquired_tick DESC, vp.perception_id DESC
+  LIMIT 1;
+$$;
+
+
+--
+-- Name: fn_compendium_related_entities(uuid, uuid, uuid, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_compendium_related_entities(p_world_id uuid, p_viewer_id uuid, p_target_id uuid, p_related_kinds text[]) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  WITH about_target AS (
+    SELECT vp.perception_id,
+           vp.valid_tick
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+    JOIN perception_subject pst
+      ON pst.perception_id = vp.perception_id
+     AND pst.entity_id = p_target_id
+    JOIN canon_event ce
+      ON ce.event_id = vp.source_event_id
+    WHERE ce.event_type <> 'world_genesis'
+  ),
+  related AS (
+    SELECT er.entity_id,
+           er.entity_kind,
+           at.valid_tick,
+           at.perception_id
+    FROM about_target at
+    JOIN perception_subject ps2
+      ON ps2.perception_id = at.perception_id
+     AND ps2.entity_id <> p_target_id
+    JOIN entity_registry er
+      ON er.world_id = p_world_id
+     AND er.entity_id = ps2.entity_id
+    WHERE er.entity_kind = ANY (p_related_kinds)
+  ),
+  collapsed AS (
+    SELECT r.entity_id,
+           r.entity_kind,
+           max(r.valid_tick) AS last_seen_tick,
+           count(DISTINCT r.perception_id) AS evidence_count
+    FROM related r
+    GROUP BY r.entity_id, r.entity_kind
+  )
+  SELECT coalesce(
+           json_agg(
+             json_build_object(
+               'id', c.entity_id,
+               'kind', c.entity_kind,
+               'perceived_name', fn_perceived_name(p_world_id, p_viewer_id, c.entity_id),
+               'last_seen_tick', c.last_seen_tick,
+               'evidence_count', c.evidence_count
+             )
+             ORDER BY c.last_seen_tick DESC, c.entity_id
+           ),
+           '[]'::json
+         )
+  FROM collapsed c;
 $$;
 
 
@@ -1498,13 +1693,15 @@ CREATE FUNCTION public.fn_location_page(p_world_id uuid, p_viewer_id uuid, p_loc
     'location', json_build_object(
       'id',                         p_location_id,
       'perceived_name',             fn_perceived_name(p_world_id, p_viewer_id, p_location_id),
+      -- No perception-level containment relation exists yet; "part_of" stays a stub.
       'part_of',                    NULL,
-      'current_synthesis',          NULL,
-      'last_known_status',          NULL,
+      'current_synthesis',          fn_compendium_current_synthesis(p_world_id, p_viewer_id, p_location_id),
+      'last_known_status',          fn_compendium_latest_fact(p_world_id, p_viewer_id, p_location_id),
+      -- Co-mentioned locations exist, but "inside" requires a containment edge not present in perception rows.
       'known_areas_inside',         '[]'::json,
-      'key_actors',                 '[]'::json,
+      'key_actors',                 fn_compendium_related_entities(p_world_id, p_viewer_id, p_location_id, ARRAY['actor']),
       'collected_knowledge_groups', fn_collected_knowledge(p_world_id, p_viewer_id, p_location_id),
-      'inline_links',               '[]'::json
+      'inline_links',               fn_compendium_related_entities(p_world_id, p_viewer_id, p_location_id, ARRAY['actor','location','artifact'])
     )
   ) END;
 $$;
@@ -1801,10 +1998,16 @@ CREATE FUNCTION public.fn_timeline(p_world_id uuid, p_viewer_id uuid, p_before_t
     LANGUAGE sql STABLE
     AS $$
   WITH mine AS (
-    SELECT v.perception_id, v.content, v.epistemic_type, v.valid_tick, v.confidence, ce.in_world_label
+    SELECT v.perception_id,
+           v.content,
+           v.epistemic_type,
+           v.valid_tick,
+           v.confidence,
+           ce.in_world_label
     FROM fn_visible_perceptions(p_world_id, p_viewer_id) v
-    JOIN canon_event ce ON ce.event_id = v.source_event_id
-    WHERE v.holder_id = p_viewer_id                              -- FILTER 2: relevance = own holdings
+    JOIN canon_event ce
+      ON ce.event_id = v.source_event_id
+    WHERE v.holder_id = p_viewer_id
       AND (p_before_tick IS NULL OR v.valid_tick < p_before_tick)
   )
   SELECT json_build_object(
@@ -1812,16 +2015,21 @@ CREATE FUNCTION public.fn_timeline(p_world_id uuid, p_viewer_id uuid, p_before_t
     'world_id',  p_world_id,
     'viewer_id', p_viewer_id,
     'records', coalesce(
-      (SELECT json_agg(json_build_object(
-                'perception_id',    m.perception_id,
-                'content',          m.content,
-                'epistemic_type',   m.epistemic_type,
-                'occurred_at_tick', m.valid_tick,
-                'display_label',    m.in_world_label,
-                'confidence',       m.confidence,
-                'decay', json_build_object('stale', false, 'last_confirmed_label', m.in_world_label))
-              ORDER BY m.valid_tick, m.perception_id)
-       FROM mine m), '[]'::json)
+      (SELECT json_agg(
+                json_build_object(
+                  'perception_id',    m.perception_id,
+                  'content',          m.content,
+                  'epistemic_type',   m.epistemic_type,
+                  'occurred_at_tick', m.valid_tick,
+                  'display_label',    m.in_world_label,
+                  'confidence',       m.confidence,
+                  'decay',            fn_compendium_decay(p_world_id, m.valid_tick, m.in_world_label)
+                )
+                ORDER BY m.valid_tick, m.perception_id
+              )
+       FROM mine m),
+      '[]'::json
+    )
   );
 $$;
 
@@ -3366,4 +3574,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260807100002'),
     ('20260807100003'),
     ('20260807100004'),
-    ('20260807100005');
+    ('20260807100005'),
+    ('20260808090001');
