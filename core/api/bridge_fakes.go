@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"regexp"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -206,4 +207,205 @@ func (f *fakePlaceAuthorDriver) Generate(_ context.Context, req GenRequest) (str
 		`{"descriptor":%s,"kind":"waystation","extent_class":"small"}`,
 		jsonStr(fmt.Sprintf("%s #%d-%d", fakePlaceAuthorDescriptorPrefix, fakePlaceAuthorRunSeed, n)),
 	), nil
+}
+
+// fakeIntentDriver — the DEV stand-in for the DECOMPOSE seat, i.e. the one DREAMCHAT_BRIDGE=fake
+// binds when a human is driving the server by hand or a frontend is integrating against it.
+//
+// Why it exists. fakeStructuredDriver answers from a scripted table, and the factory built it with a
+// NIL table (bridge.go), so every player input decomposed to "[]" — the empty chain. The server came
+// up, streamed a correct frame sequence, and committed NOTHING, ever: no canon event, no ruling, no
+// world turn with anything to turn on. Hand-driving three beats against the seeded Drowned Lantern
+// produced `committed: []` every time while canon_event stayed at its seed rows. That is a testbed
+// that can only prove the pipe is connected, never that the world moves — and the scripted-table
+// fake could not see it, because every test supplies its own table.
+//
+// What it is. A deterministic PARSER, not a model: it reads the candidate whitelist and the player's
+// raw words back out of the assembled decompose prompt and binds real ids from that list. It is
+// still a leash — it can only ever emit four of the closed vocabulary's shapes (ActorMoved,
+// Communicated, QUERY, UNRESOLVED), never out-of-vocab, and unrecognised prose still yields "[]"
+// (commits nothing, C-5) exactly as before.
+//
+// The rule is FIRST WORD = verb, deliberately: a dev stand-in that is guessable beats one that is
+// clever, because the person hand-driving needs to predict what their sentence will do.
+//
+//	movement (go/walk/head/…)   -> ActorMoved, bound to the named location or portal artifact
+//	speech   (say/tell/ask/…)   -> Communicated, bound to the named present actor
+//	query    (look/read/who/…)  -> QUERY, bound to any named candidate
+//
+// A reference that ties between two DISTINCT candidates emits UNRESOLVED rather than picking one —
+// the same refusal-to-guess the live seat owes, and the only way the frontend's unresolved-candidate
+// surface can be exercised without keys.
+//
+// NOT built, with the reason: ObjectRelocated (give/take/drop). Its destination is an actor — for
+// "take the crate" that actor is the VIEWER, whose id is not in the candidate block and cannot be
+// recovered from the prompt. Binding dest_id to a guess would make the carry path silently wrong,
+// which is worse than absent. It needs the viewer id at the seat boundary; that is its own change.
+//
+// FAKE: a dev/CI stand-in for a live model. The DESIGN has no LLM-free path
+// (POST-COMPACTION-RULINGS); this is scaffolding for driving the loop without keys, not a statement
+// that decompose can be done by string matching.
+type fakeIntentDriver struct{ name string }
+
+func NewFakeIntentDriver() Driver { return &fakeIntentDriver{name: "fake-intent"} }
+
+func (f *fakeIntentDriver) Name() string                { return f.name }
+func (f *fakeIntentDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+
+func (f *fakeIntentDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: intent driver used without a schema", f.name)
+	}
+	chain := devIntentChain(parseDecomposePlayerInput(req.Prompt), parseDecomposeCandidates(req.Prompt))
+	out, err := json.Marshal(chain)
+	if err != nil {
+		return "", fmt.Errorf("%s: marshal chain: %w", f.name, err)
+	}
+	return string(out), nil
+}
+
+// devIntentVerbs maps a first word to the shape it produces. Kept as data so the set is readable in
+// one place and so a reader can answer "what will my sentence do" without tracing code.
+var devIntentVerbs = map[string]string{
+	"go": "move", "walk": "move", "head": "move", "move": "move", "travel": "move",
+	"enter": "move", "step": "move", "climb": "move", "leave": "move", "return": "move", "run": "move",
+
+	"say": "speak", "tell": "speak", "ask": "speak", "talk": "speak", "speak": "speak",
+	"greet": "speak", "warn": "speak", "shout": "speak", "whisper": "speak", "reply": "speak",
+
+	"look": "query", "examine": "query", "inspect": "query", "study": "query", "read": "query",
+	"watch": "query", "who": "query", "what": "query", "where": "query",
+}
+
+// devIntentChain is the whole decision. It returns an EMPTY (never nil) chain whenever it cannot
+// bind honestly — no verb it knows, or no candidate the words name — so the caller marshals "[]".
+func devIntentChain(input string, cands []Candidate) []Attempt {
+	chain := []Attempt{}
+	if input == "" || len(cands) == 0 {
+		return chain
+	}
+	lower := strings.ToLower(input)
+	first, _, _ := strings.Cut(strings.TrimLeft(lower, `"' `), " ")
+	shape := devIntentVerbs[strings.Trim(first, ",.!?")]
+	if shape == "" {
+		return chain
+	}
+
+	var want []string
+	switch shape {
+	case "move":
+		want = []string{"location", "artifact"} // a room, or the portal object that reaches one
+	case "speak":
+		want = []string{"actor"}
+	}
+	matched := matchDevCandidates(lower, cands, want...)
+	switch {
+	case len(matched) == 0:
+		return chain
+	case len(matched) > 1:
+		ids := make([]string, 0, len(matched))
+		for _, c := range matched {
+			ids = append(ids, c.ID)
+		}
+		return append(chain, Attempt{
+			Type: "UNRESOLVED", Stated: input, Reference: matched[0].Name, CandidateIDs: ids,
+		})
+	}
+
+	target := matched[0]
+	switch shape {
+	case "move":
+		return append(chain, Attempt{Type: "ActorMoved", Stated: input, ToTargetID: target.ID})
+	case "speak":
+		return append(chain, Attempt{
+			Type: "Communicated", Stated: input, ListenerID: target.ID,
+			Content: devSpokenContent(input), DurationClass: "short",
+		})
+	default:
+		return append(chain, Attempt{Type: "QUERY", Stated: input, QueryTargetIDs: []string{target.ID}})
+	}
+}
+
+// devSpokenContent extracts what was actually said: the quoted words if the player quoted them, else
+// whatever follows "about", else the whole line. Never empty — Communicated.content has minLength 1.
+func devSpokenContent(input string) string {
+	if open := strings.Index(input, `"`); open >= 0 {
+		if close := strings.Index(input[open+1:], `"`); close > 0 {
+			if said := strings.TrimSpace(input[open+1 : open+1+close]); said != "" {
+				return said
+			}
+		}
+	}
+	if _, after, ok := strings.Cut(strings.ToLower(input), " about "); ok {
+		if said := strings.TrimSpace(after); said != "" {
+			return said
+		}
+	}
+	return input
+}
+
+// matchDevCandidates finds the candidates the player's words NAME: of every candidate whose name
+// appears in the input, the ones sharing the LONGEST name win, because the longest match is the most
+// specific reference ("the back door" over "the door"). More than one survivor means the words
+// genuinely do not distinguish two entities — the caller turns that into UNRESOLVED instead of
+// guessing. kinds filters the candidate block; empty kinds means any kind.
+func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) []Candidate {
+	var best []Candidate
+	bestLen := 0
+	for _, c := range cands {
+		if len(kinds) > 0 && !slices.Contains(kinds, c.Kind) {
+			continue
+		}
+		name := strings.ToLower(strings.TrimSpace(c.Name))
+		// Two characters is the floor: a one-letter label would match almost any sentence.
+		if len(name) < 2 || !strings.Contains(lowerInput, name) {
+			continue
+		}
+		switch {
+		case len(name) > bestLen:
+			best, bestLen = []Candidate{c}, len(name)
+		case len(name) == bestLen && c.ID != best[0].ID:
+			best = append(best, c)
+		}
+	}
+	return best
+}
+
+// parseDecomposeCandidates reads the candidate whitelist back out of an assembled decompose prompt.
+// Line shape is fixed by buildDecomposePrompt: "{id}  {name}  ({kind})". The kind is taken from the
+// LAST "  (" so a name containing brackets cannot shift the split. Anything unparseable is skipped
+// rather than guessed at — a malformed line must not become a bound id.
+func parseDecomposeCandidates(prompt string) []Candidate {
+	_, rest, ok := strings.Cut(prompt, decomposeCandidatesMarker)
+	if !ok {
+		return nil
+	}
+	block, _, _ := strings.Cut(rest, decomposePlayerInputMarker)
+	var out []Candidate
+	for _, line := range strings.Split(block, "\n") {
+		line = strings.TrimSpace(line)
+		id, tail, ok := strings.Cut(line, "  ")
+		if !ok || id == "" {
+			continue
+		}
+		open := strings.LastIndex(tail, "  (")
+		if open <= 0 || !strings.HasSuffix(tail, ")") {
+			continue
+		}
+		name, kind := tail[:open], tail[open+3:len(tail)-1]
+		if name == "" || kind == "" {
+			continue
+		}
+		out = append(out, Candidate{ID: id, Name: name, Kind: kind})
+	}
+	return out
+}
+
+// parseDecomposePlayerInput returns the raw words the player typed — the prompt's mutable tail.
+func parseDecomposePlayerInput(prompt string) string {
+	_, tail, ok := strings.Cut(prompt, decomposePlayerInputMarker)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSpace(tail)
 }
