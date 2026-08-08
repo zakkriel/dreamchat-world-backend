@@ -2477,7 +2477,7 @@ CREATE FUNCTION public.seed_world_defaults(p_world_id uuid) RETURNS void
          (p_world_id, 'long', 300), (p_world_id, 'extremely_long', 7200) ON CONFLICT DO NOTHING;
   INSERT INTO world_actor_config (world_id, tier, climb_rate, climb_chunk_ticks, cap)
   VALUES (p_world_id, 'small', 0.01, 60, 0.70),
-         (p_world_id, 'medium', 0.01, 3600, 0.70),
+         (p_world_id, 'medium', 0.01, 300, 0.70),
          (p_world_id, 'large', 0.01, 86400, 0.70) ON CONFLICT DO NOTHING;
   INSERT INTO world_actor_setting (world_id) VALUES (p_world_id) ON CONFLICT DO NOTHING;
   INSERT INTO extent_class_metres (world_id, class, radius_m)
@@ -3575,4 +3575,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260807100003'),
     ('20260807100004'),
     ('20260807100005'),
-    ('20260808090001');
+    ('20260808090001'),
+    ('20260808100001');
