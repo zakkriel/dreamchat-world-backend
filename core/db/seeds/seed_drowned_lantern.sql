@@ -480,4 +480,14 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
                             valid_from_tick, valid_from_seq) VALUES
  ('22222222-2222-2222-2222-222222222222','2e000000-0000-0000-0000-0000000000f9','2a7f0000-0000-0000-0000-0000000000f2','artifact','attrs.descriptor', to_jsonb('the ballast crate'::text), 40,62);
 
+-- SPEC-028 directory entry. THIS is the row that retires the 'Player' naming convention: the player
+-- here is KADE, and because ResolveViewer could only look for an actor literally named 'Player',
+-- every non-debug request against the one world anyone actually plays used to 500 at the door.
+-- Theme is the tavern's own: lamplight gold, nocturne, filigree.
+INSERT INTO world (world_id, display_name, theme, player_entity_id) VALUES
+ ('22222222-2222-2222-2222-222222222222', 'The Drowned Lantern',
+  '{"schema_version":"world_theme/1","accent":"#c9a227","mood":"nocturne","ornament":"filigree"}'::jsonb,
+  '2ac70000-0000-0000-0000-0000000000a1')
+ON CONFLICT (world_id) DO NOTHING;
+
 COMMIT;

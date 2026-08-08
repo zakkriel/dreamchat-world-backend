@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -85,6 +86,12 @@ func (h *sceneHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	viewerID, err := ResolveViewer(ctx, h.pool, worldID, r.URL.Query().Get("viewer"), h.dbg)
 	if err != nil {
+		// "this world has nobody to play as yet" is an ANSWER about a world that exists (a world
+		// created through POST /worlds before anything is authored into it), not a broken server.
+		if errors.Is(err, errNoPlayerInWorld) {
+			http.Error(w, "this world has no player yet", http.StatusNotFound)
+			return
+		}
 		http.Error(w, "viewer resolution failed", http.StatusInternalServerError)
 		return
 	}

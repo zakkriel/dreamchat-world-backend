@@ -345,6 +345,11 @@ evolves as module/world JSONB-style data, so it carries `schema_version` + runti
 - **Owner:** Chunk 6 (BE side: expose the field on world data; FE side: read it into the chrome theme).
 - **Expected outcome:** a theme-token shape on world data + the FE reading accent/mood/ornament as
   tokens (the "tokens are the floor" layer of D-15). No engine/DDL change.
+- **Status:** **LANDED (2026-08-08)** as `world.theme` (JSONB, `world_theme/1`), folded into SPEC-028's
+  registry and shipped on both `GET /worlds` and `POST /worlds`. One hex `accent`, a `mood`
+  atmosphere word, an `ornament` motif. The draft vocabulary (mood ∈ daylight/nocturne/mist/ember/
+  bleak, ornament ∈ none/filigree/rivet/vine/circuit) is documented but **not enforced**: unknown
+  values degrade in the client rather than failing here. See SPEC-028's status for the reasoning.
 
 ## SPEC-020 — Configurable backend API base (FE)
 The FE must reach the backend through a **single configurable base** (config/env var) at the existing
@@ -471,6 +476,37 @@ stub). A world list is a directory, not canon: no world *state* on this surface.
   ruling on world creation. No engine/DDL change; no perception-boundary change.
 - **Firing trigger:** fired — the FE shell is being built now and ships a URL-supplied world id with a
   dev default as the documented stub until this lands.
+- **Status:** **LANDED (2026-08-08), founder-ruled as a full endpoint rather than seed-only.** New
+  `world` table (`20260808100004_world_registry.sql`): `world_id`, `display_name`, `theme` (JSONB,
+  `world_theme/1`), `player_entity_id`, `created_at`. `fn_world_directory()` projects the list;
+  `GET /worlds` serves it and `POST /worlds` creates. Both published and payload-covered
+  (`world_directory/1`, `world_created/1`); contract coverage 9/15 → 11/17.
+  - **SPEC-019 folded in.** One hex accent, a mood word, an ornament motif — the FE's draft
+    vocabulary, deliberately **not** enum-constrained in the CHECK or the handler. Unknown values must
+    DEGRADE, never fail; enforcing the enum here would make the backend the thing that breaks on a
+    word it has not heard of, which is backwards for a field whose purpose is to evolve. One colour,
+    not a palette — the FE derives the rest rather than the backend owning visual design. `mood` is an
+    atmosphere word, never a genre (GA-3).
+  - **The viewer seam (move 4) rides it.** `ResolveViewer` reads `world.player_entity_id` instead of
+    matching an actor literally named `'Player'` — a convention that could not survive two worlds and
+    had already broken in the only world anyone plays, where the player is Kade and every non-debug
+    request 500'd at the door. **That world now answers 200 with no `?viewer=` at all.** A world with
+    no player is an ordinary state, answered 404 ("nobody plays this world yet"), not 500.
+- **The three design questions `POST /worlds` raises, answered rather than escalated:**
+  1. **Seeding semantics.** Creation writes the directory row and the world's operating defaults
+     (`seed_world_defaults`) in ONE transaction — a world without movement speeds or duration classes
+     is one every later call fails against. It authors **no entities**: no player, no rooms. A created
+     world is therefore real, listed, and `playable:false`, which is honest rather than empty.
+  2. **Templates: not built, on purpose.** "Create a world with a starter scene" means shipping
+     authored fiction — somebody's tavern, somebody's player character — and this service must not
+     learn what a world is "usually" like (GA-2/GA-3). Templates belong to whoever authors the
+     fiction; the seam is here and deliberately unbuilt.
+  3. **Auth: absent, and this is the deployment risk to close first.** No session model exists (B1),
+     so there is no caller identity to check and anyone who can reach the service can create a world.
+     Stated rather than papered over with an invented token scheme, which would be drift. Safe behind
+     a private deployment; **not** safe on a public origin. `POST /worlds` should be the first
+     endpoint auth is put in front of, and `fn_world_directory()` is the single place the "worlds the
+     caller may see" filter attaches — one WHERE clause, and every caller inherits it.
 
 ## SPEC-029 — Compendium projection lenses are stubs (chunk-4 gate blocker)
 Every page endpoint returns its full contract shape while almost every field inside it is a literal
