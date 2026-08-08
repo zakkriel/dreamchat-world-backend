@@ -11,6 +11,14 @@ type PerceptionPayload struct {
 	Lines      []string    `json:"lines"`                // perception-bound, epistemically framed lines for the holder
 	LineIDs    []string    `json:"line_ids,omitempty"`   // perception_id parallel to Lines (delta-first narration; no external API change — these are ids the holder already perceives, never raw canon)
 	Candidates []Candidate `json:"candidates,omitempty"` // entity whitelist for v2 decompose (beat_chain/2)
+	// Here is the id of the room the viewer is STANDING IN — stated outright rather than inferred.
+	// Callers used to recover it by scanning Candidates for the single entry of kind "location",
+	// which was only ever correct while exactly one location could be a candidate. SPEC-030 added the
+	// rooms this one connects to, so that scan silently began returning a neighbouring room; the scene
+	// endpoint reported the wrong place the moment the player walked through a door. The room you are
+	// in is a fact the assembler already knows, so it says so. Empty only when the viewer has no
+	// location_id at all. Not serialised to the seats: it is already the "location" candidate they see.
+	Here string `json:"-"`
 	// ViewerAliases is how OTHERS may refer to the VIEWER inside perception text — the viewer's own
 	// descriptor (what a stranger sees, e.g. "a young stranger, dark-haired") plus the viewer's OWN
 	// name-knowledge of himself, when he holds one. It is NEVER the registry canonical name he may not

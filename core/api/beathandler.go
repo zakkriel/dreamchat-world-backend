@@ -247,6 +247,7 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 	}
 
 	if loc != "" {
+		p.Here = loc
 		// Present actors at the same location. The candidate NAME is the VIEWER's display name for each
 		// (§3 naming reach): known-name else descriptor else canonical — so decompose CANDIDATES and
 		// narrate PRESENT both carry only what the viewer knows. The id stays real (the model binds the
@@ -329,6 +330,68 @@ func (h *beatHandler) payload(ctx context.Context, worldID, viewerID string) (Pe
 			return PerceptionPayload{}, err
 		}
 		artRows.Close()
+
+		// SPEC-030 — THE WAY OUT. Until this, `ActorMoved` could only ever target the room the actor was
+		// already standing in, so no movement of any kind was expressible: no remote location was ever a
+		// candidate, and portals carry {"open","locked","connects":[a,b]} with NO location_id, so the
+		// co-located-artifact query above never returned the doors either. The Journey shipped in #32
+		// and was unreachable by any client; so was walking through a door.
+		//
+		// Two candidate sources, both from what the actor genuinely PERCEIVES standing here — this adds
+		// no mechanism, it stops hiding what the room already contains:
+		//
+		//   • the PORTALS of this room. A door is part of the room you are in; you can see it, look at
+		//     it, and talk about it. Same "co-location IS perception" ruling the artifacts above rest on
+		//     (RULINGS-2026-07-30 §1, the founder's "Before You Begin" ruling).
+		//   • the LOCATIONS those portals connect to. A visible exit tells you there is somewhere on the
+		//     other side; naming it is the viewer's own naming (fn_display_name), exactly as with every
+		//     other candidate — the model binds the real id, the label is the viewer's knowledge.
+		//
+		// STILL BOUNDED BY PERCEPTION: only portals whose `connects` contains THIS room, and only the
+		// far side of those portals. A location two rooms away is not here and is not offered.
+		//
+		// Passage is NOT decided here. A candidate is a thing you may NAME, never a thing you may DO:
+		// the accessibility floor (fn_actor_move_permitted, mirrored in premiseHolds' ActorMoved branch)
+		// still requires a portal that is open ∧ ¬locked, so "go to the Alley" through a shut back door
+		// binds cleanly and is then refused with an honest reason. Offering the target is what lets the
+		// world say no; hiding it is what made the refusal impossible to reach.
+		//
+		// Not built here, and why: the absent-but-known set (RULINGS-2026-07-30 §1's "one-hop-known
+		// absent entities … IF the perception/knowledge query already yields them cleanly"). It now
+		// WOULD yield cleanly, via fn_entity_visible — but for the seeded viewer that set contains only
+		// the room he is in, so it would ship as an unexercised code path. It is the natural next source
+		// and belongs with the ruling on long-range travel (see the spec note).
+		wayRows, err := h.pool.Query(ctx,
+			`SELECT DISTINCT er.entity_id, fn_display_name($1, $3::uuid, er.entity_id), er.entity_kind
+			   FROM artifact_state a
+			   JOIN entity_registry er ON er.entity_id = a.entity_id AND er.world_id = $1
+			  WHERE a.world_id = $1
+			    AND a.attrs->'connects' @> to_jsonb($2::text)   -- a portal of THIS room
+			 UNION
+			 SELECT DISTINCT er.entity_id, fn_display_name($1, $3::uuid, er.entity_id), er.entity_kind
+			   FROM artifact_state a
+			   CROSS JOIN LATERAL jsonb_array_elements_text(a.attrs->'connects') AS c(loc)
+			   JOIN entity_registry er ON er.entity_id = c.loc::uuid AND er.world_id = $1
+			  WHERE a.world_id = $1
+			    AND a.attrs->'connects' @> to_jsonb($2::text)
+			    AND c.loc <> $2`, // the far side only — this room is already a candidate
+			worldID, loc, viewerID)
+		if err != nil {
+			return PerceptionPayload{}, err
+		}
+		for wayRows.Next() {
+			var id, name, kind string
+			if err := wayRows.Scan(&id, &name, &kind); err != nil {
+				wayRows.Close()
+				return PerceptionPayload{}, err
+			}
+			p.Candidates = append(p.Candidates, Candidate{ID: id, Name: name, Kind: kind})
+		}
+		if err := wayRows.Err(); err != nil {
+			wayRows.Close()
+			return PerceptionPayload{}, err
+		}
+		wayRows.Close()
 	}
 
 	return p, nil

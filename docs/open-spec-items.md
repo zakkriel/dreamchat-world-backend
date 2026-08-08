@@ -535,3 +535,33 @@ So the Journey (shipped in #32) has no reachable path, and neither does walking 
   `implementation_playbook_superpowers.md:90`): the gap is documented, not invented around.
 - **Firing trigger:** fired — movement is unreachable by any client, and the founder's own worked
   example for the Journey gate (walk out, get interrupted, restate, arrive) cannot be driven.
+- **Status:** **LANDED (2026-08-08) — movement works; the Journey needs one more thing (below).**
+  `core/api/beathandler.go` `payload` gained a second candidate source: the **portals whose
+  `connects` contains this room**, and the **rooms on the far side of those portals**. Both come from
+  what the actor perceives standing here — a door is part of the room you are in, and a visible exit
+  tells you there is somewhere on the other side — so this adds no mechanism, it stops hiding what
+  the room already contains. Labels are `fn_display_name` as everywhere else, ids stay real.
+  - **Passage is not decided at candidate time.** A candidate is a thing you may NAME, never a thing
+    you may DO. The accessibility floor (`fn_actor_move_permitted`, mirrored in `premiseHolds`) still
+    requires a portal that is open ∧ ¬locked. Offering the target is precisely what lets the world
+    refuse with a reason; hiding it is what made the refusal unreachable. Verified live: `go to the
+    Alley` through the shut back door now binds and halts `premise_broken`, and the actor stays put.
+  - **A defect this fix introduced, and fixed.** `buildScene` resolved the place as "the last
+    candidate of kind `location`", correct only while exactly one location could be a candidate. With
+    neighbours now offered, the scene endpoint named a room the player was not in. `PerceptionPayload`
+    gained an explicit `Here`, and the scene resolves the place by id. Caught by hand-driving, not by
+    any test — then pinned by one.
+  - **Deliberately not added:** the absent-but-known set (`fn_entity_visible`). It *would* now yield
+    cleanly, but for the seeded viewer it contains only the room he is in, so it would ship as an
+    unexercised code path. It belongs with the long-range ruling below.
+- **STILL OPEN — the Journey gate cannot be driven, and it is world content, not engine.** A journey
+  starts only from an **over-budget** `ActorMoved`. The Drowned Lantern's tension is `tense` →
+  **30 s budget** (`tensionBudgetSeconds`), and the farthest room reachable from it is the Alley at
+  **29 s** (`fn_move_duration_actor`); Dock Street is 5 s and the Cellar 6 s. **Every destination in
+  the world fits inside one beat**, so nothing can start a journey — the four rooms cluster within 40
+  units while the Harbor Quarter frame that holds them is 2000×2000 and otherwise empty. Exercising
+  the founder's worked example (walk out, get interrupted, restate, arrive) needs **one connected
+  destination further than ~41 units from the tavern**. That is a place in his fiction with a name he
+  owns, so it is not invented here.
+- **Firing trigger:** movement half is delivered; the remaining half fires the moment a distant place
+  is authored into the seed.

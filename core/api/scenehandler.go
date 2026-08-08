@@ -129,12 +129,17 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 	// does not (yet) enforce it.
 	present, labelFor := narrateRoster(payload, viewerID)
 
+	// The place is the room the viewer STANDS IN (payload.Here), matched by id. It used to be "the
+	// last candidate of kind location", which held only while exactly one location could ever be a
+	// candidate; SPEC-030 made the connected rooms candidates too, and that scan promptly started
+	// reporting a neighbour — walk through the front door and the scene still named the room behind
+	// you. Candidates are things you may NAME; exactly one of them is where you ARE.
 	var place *Candidate
 	kindByID := make(map[string]string, len(payload.Candidates))
 	for i := range payload.Candidates {
 		c := &payload.Candidates[i]
 		kindByID[c.ID] = c.Kind
-		if c.Kind == "location" {
+		if c.ID == payload.Here {
 			place = c
 		}
 	}
