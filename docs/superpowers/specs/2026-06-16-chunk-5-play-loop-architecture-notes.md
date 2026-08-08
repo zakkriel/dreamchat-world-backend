@@ -236,11 +236,21 @@ separate concern that does not touch replay.) This is why a non-deterministic na
 threaten Q1: replay reconstructs the world from the event log, not from prose. (ADR-001 canon = events;
 I-6 chatter ≠ canon; ADR-020 narrator-bound; D-1 only the gate commits.)
 
-**Open — intra-tick ordering.** When several events share a tick they need a deterministic tiebreaker.
-**The register has no established ordering field for this.** (An earlier reference to "ADR-034
-(tick, beat_seq)" was recall-drift — it is *not* in the register; do not treat it as law.) If the
-engine needs an explicit intra-tick sequence, it is a **new engine ADR (ADR-034+) with running-code
-evidence** (D-9), decided at implementation. Captured as open, not settled.
+**~~Open — intra-tick ordering.~~ SETTLED — this paragraph was wrong.** It read: *"The register has no
+established ordering field for this. (An earlier reference to 'ADR-034 (tick, beat_seq)' was
+recall-drift — it is not in the register; do not treat it as law.)"* Both claims are false, and the
+correction was first raised in PR #20 (2026-06-19), which went stale before it could land; verified
+against the tree and rewritten here on 2026-08-07.
+
+**ADR-034 exists and is law** — *"Canonical event ordering excludes recorded_at"*, in
+`canon_engine/02_world_state_adrs.md`. **The tiebreaker is enforced in the schema**, not merely
+proposed: `uq_ce_accepted_order` is a UNIQUE index on `(world_id, in_world_tick, beat_seq)` filtered to
+accepted rows (`core/db/migrations/20260610090007_spec002_accepted_order_unique.sql`), so two accepted
+events cannot share a slot in a world. `apply_beat` and its successors assign `beat_seq`; a
+zero-duration event shares the prior tick and increments it. **No new engine ADR is owed.**
+
+Leaving the old text standing would tell a future implementer that a solved problem is open and that a
+real ADR is a hallucination — the precise inversion of the truth, in a document written to be trusted.
 
 ---
 
@@ -571,7 +581,8 @@ ADR-009 / D-1, ADR-011 / C-11, ADR-016, ADR-017, ADR-020, ADR-021/030, ADR-026, 
 spine (§3, reconciled against the Master DDL), the perceivability flag on AttributeChanged, the two
 perception-generation triggers if they extend the engine; **action-driven clock advancement + per-event
 duration read from world state (§10–§11), where they touch the World Clock**; the **spatial engine**
-(§12); an **intra-tick ordering field, if needed — new ADR-034+** (§8).
+(§12). ~~An intra-tick ordering field, if needed — new ADR-034+ (§8)~~ — **already settled: ADR-034
+exists and `uq_ce_accepted_order` enforces `(in_world_tick, beat_seq)` in the schema. No ADR is owed.**
 
 **Promoted to the register (2026-06-17) — design-intent amendments, NOT engine-behavior claims, so
 not gated by D-9 (precedent: D-3 declares the Image Platform boundary ahead of that build):**
@@ -586,9 +597,10 @@ not gated by D-9 (precedent: D-3 declares the Image Platform boundary ahead of t
 Still **awaiting ADRs with running-code evidence at implementation** (D-9), NOT register rules: the
 action-driven clock, the canon event spine, and the duration mechanism — engine-behavior claims all.
 
-**Open (remaining):** exact thin-slice action set (move + say; possession in or out?); **intra-tick event
-ordering** (ADR-034+ if the engine needs it, §8); the **turn-budget cap value** + **long-action behavior**
-(halt-before vs multi-turn commitment, §9). Resolved this session: ~~loop skeleton~~ (§8); ~~canon-authority
+**Open (remaining):** exact thin-slice action set (move + say; possession in or out?); the
+**turn-budget cap value** + **long-action behavior** (halt-before vs multi-turn commitment, §9) —
+*long-action behavior was answered on 2026-07-30: an over-budget action is not a reject, it is the
+Journey, and it shipped 2026-08-07.* Resolved this session: ~~loop skeleton~~ (§8); ~~canon-authority
 boundary~~ (§13); ~~the gate's own (non-perception) view~~ (§13/§17 — the gate is the omniscient truth-side
 reader, opposite end of the same filter from the perception payload); ~~the Chunk-5 operator gate~~ (§17).
 
