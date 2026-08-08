@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
@@ -59,7 +60,7 @@ type narrationFrame struct {
 
 // sceneFrame carries the Task 1 scene projection wholesale (scenehandler.go's sceneView, produced by
 // buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/1) is preserved
-// rather than clobbered by the envelope's beat_frame/1.
+// rather than clobbered by the envelope's beat_frame/2.
 type sceneFrame struct {
 	Scene sceneView `json:"scene"`
 }
@@ -71,15 +72,66 @@ type journeyFrame struct {
 	Journey *journeyBlock `json:"journey"`
 }
 
-// resultBlock mirrors the singular /beat endpoint's own "result" object exactly (beathandler.go:268-274)
-// — committed, halt_reason, ticks_advanced, unresolved_candidates, telegraphs — so the two endpoints
-// report the SAME beat outcome shape, one buffered, one streamed.
+// unresolvedCandidate is ONE thing the player's words could have meant: the real id, plus the label
+// that viewer's own knowledge puts on it (fn_display_name — the same path scene/current and the
+// candidate whitelist already use, so this can never surface a name the viewer does not hold).
+//
+// v1 shipped bare ids. The frontend cannot name an id and will not invent one (B-1/D-7), so the
+// "which did you mean?" affordance could never render and it correctly fell back to generic copy —
+// the ask was unanswerable because it was unsayable.
+//
+// NOTE: two candidates may legitimately carry the SAME label. That is not a defect to paper over,
+// it IS the ambiguity — the seeded world has two hooded figures a viewer cannot tell apart, which is
+// precisely why UNRESOLVED fires. Callers must key on `id` (or list position) and must never assume
+// labels are distinct.
+type unresolvedCandidate struct {
+	ID    string `json:"id"`
+	Label string `json:"label"`
+}
+
+// resultBlock is the beat outcome the stream reports — committed, halt_reason, ticks_advanced,
+// unresolved_candidates, telegraphs.
 type resultBlock struct {
-	Committed            []string `json:"committed"`
-	HaltReason           string   `json:"halt_reason"`
-	TicksAdvanced        int64    `json:"ticks_advanced"`
-	UnresolvedCandidates []string `json:"unresolved_candidates"`
-	Telegraphs           []string `json:"telegraphs"`
+	Committed            []string              `json:"committed"`
+	HaltReason           string                `json:"halt_reason"`
+	TicksAdvanced        int64                 `json:"ticks_advanced"`
+	UnresolvedCandidates []unresolvedCandidate `json:"unresolved_candidates"`
+	Telegraphs           []string              `json:"telegraphs"`
+}
+
+// labelCandidates renders each unresolved id with the VIEWER's own name for it, via fn_display_name
+// — the identical labelling path the candidate whitelist, the narrate roster and scene/current all
+// use. It never reaches for the canonical registry name a viewer may not know (§3 naming reach), so
+// the "which did you mean?" list cannot leak a name the ask itself proves the player does not have.
+//
+// Returns a non-nil empty slice for no candidates, so the payload carries `[]` and never `null`.
+// One round trip for the whole list; unresolved sets are two or three entries by construction
+// (beat_chain/2 requires at least two, and a tie of more than a handful is not a real scene).
+func labelCandidates(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string, ids []string) ([]unresolvedCandidate, error) {
+	out := make([]unresolvedCandidate, 0, len(ids))
+	if len(ids) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx,
+		`SELECT id, fn_display_name($1::uuid, $2::uuid, id)
+		   FROM unnest($3::uuid[]) WITH ORDINALITY AS t(id, ord)
+		  ORDER BY t.ord`, // preserve the engine's order: the frontend keys disambiguation on position
+		worldID, viewerID, ids)
+	if err != nil {
+		return nil, fmt.Errorf("labelCandidates: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var c unresolvedCandidate
+		if err := rows.Scan(&c.ID, &c.Label); err != nil {
+			return nil, fmt.Errorf("labelCandidates: scan: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("labelCandidates: %w", err)
+	}
+	return out, nil
 }
 
 type resultFrame struct {
@@ -364,11 +416,19 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Labels are attached HERE, at the API boundary, not in the orchestrator: the engine reasons in
+	// ids (it must — ids are what bind), and whose knowledge renders them is a projection question.
+	unresolved, err := labelCandidates(ctx, h.pool, worldID, viewerID, outcome.UnresolvedCandidates)
+	if err != nil {
+		log.Printf("beats stream: labelCandidates: %v", err)
+		_ = frames.emit("error", errorFrame{Message: "the world could not name what you meant"})
+		return
+	}
 	result := resultBlock{
 		Committed:            outcome.Committed,
 		HaltReason:           outcome.HaltReason,
 		TicksAdvanced:        outcome.TicksAdvanced,
-		UnresolvedCandidates: outcome.UnresolvedCandidates,
+		UnresolvedCandidates: unresolved,
 		Telegraphs:           outcome.Telegraphs,
 	}
 	if err := frames.emit("result", resultFrame{Result: result}); err != nil {

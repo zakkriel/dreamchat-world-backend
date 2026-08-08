@@ -7,11 +7,16 @@ import (
 )
 
 // beatFrameSchemaVersion stamps every SSE frame POST /worlds/{w}/beats emits
-// (schema/beat_frame.v1.schema.json — core/api/schema/, the frontend repo generates its types from
+// (schema/beat_frame.v2.schema.json — core/api/schema/, the frontend repo generates its types from
 // that directory).
-const beatFrameSchemaVersion = "beat_frame/1"
+//
+// v2 (2026-08-08), a CLEAN CUTOVER with no v1 alias: the result frame's unresolved_candidates
+// changed from bare ids to {id, label} pairs. The frontend pins this string exactly and fails the
+// load on a mismatch (pin-and-fail, the agreed negotiation policy), so a silent reshape under the
+// v1 id was never an option — the version moving IS the notification.
+const beatFrameSchemaVersion = "beat_frame/2"
 
-// frameWriter emits one SSE `data:` line per beat_frame/1 frame and flushes IMMEDIATELY after each —
+// frameWriter emits one SSE `data:` line per beat_frame/2 frame and flushes IMMEDIATELY after each —
 // the whole reason POST /worlds/{w}/beats exists as a stream rather than a buffered response (design
 // §4.8, plan rung3 Task 3): a client watching with `curl -N` sees each frame the instant the handler
 // accepted it, never all of them arriving together the moment ServeHTTP returns. Skipping the flush
@@ -34,7 +39,7 @@ func newFrameWriter(w http.ResponseWriter) (*frameWriter, bool) {
 }
 
 // emit marshals payload, merges its fields into the frame envelope
-// ({"schema_version":"beat_frame/1","kind":kind, ...payload fields}), writes the result as one SSE
+// ({"schema_version":"beat_frame/2","kind":kind, ...payload fields}), writes the result as one SSE
 // event, and flushes before returning — the flush is not an afterthought, it is the point (plan Task
 // 3's "flush after every frame, or the whole exercise is theatre"). payload must marshal to a JSON
 // object; every per-kind payload type in beatsstream.go does, and deliberately NESTS any reused shape

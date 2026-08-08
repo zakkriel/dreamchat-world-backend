@@ -606,6 +606,28 @@ END $$;
 
 
 --
+-- Name: canon_event_carry_in_world_label(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.canon_event_carry_in_world_label() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.in_world_label IS NULL THEN
+    SELECT ce.in_world_label INTO NEW.in_world_label
+      FROM canon_event ce
+     WHERE ce.world_id = NEW.world_id
+       AND ce.in_world_label IS NOT NULL
+       AND (ce.in_world_tick, ce.beat_seq) <= (NEW.in_world_tick, NEW.beat_seq)
+     ORDER BY ce.in_world_tick DESC, ce.beat_seq DESC
+     LIMIT 1;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: causal_bundle_append_only(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3339,6 +3361,13 @@ CREATE TRIGGER trg_canon_event_append_only BEFORE UPDATE ON public.canon_event F
 
 
 --
+-- Name: canon_event trg_canon_event_carry_in_world_label; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_canon_event_carry_in_world_label BEFORE INSERT ON public.canon_event FOR EACH ROW EXECUTE FUNCTION public.canon_event_carry_in_world_label();
+
+
+--
 -- Name: canon_event trg_canon_event_no_delete; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3576,4 +3605,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260807100004'),
     ('20260807100005'),
     ('20260808090001'),
-    ('20260808100001');
+    ('20260808100001'),
+    ('20260808100002');
