@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path"
 	"strings"
 	"sync"
 	"testing"
@@ -41,6 +42,11 @@ type fakePlatform struct {
 	concurrentOnce  bool
 	failJob         bool
 	omitFinalAssets bool
+	// the platform no longer has these assets (its storage has its own lifecycle, and a real reset
+	// during integration is exactly how a slot outlives the asset it names)
+	forgottenAssets map[string]bool
+	// a bad minute rather than a verdict: any non-zero status is returned for every asset read
+	assetFailStatus int
 }
 
 func newFakePlatform() *fakePlatform {
@@ -138,8 +144,17 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 	})
 
 	mux.HandleFunc("/v1/assets/", func(w http.ResponseWriter, r *http.Request) {
+		id := path.Base(r.URL.Path)
+		if f.assetFailStatus != 0 {
+			writeErr(w, f.assetFailStatus, "internal_error", "the platform is having a bad minute")
+			return
+		}
+		if f.forgottenAssets[id] {
+			writeErr(w, http.StatusNotFound, "not_found", "asset not found")
+			return
+		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"id": "asset_cf63b1d2e6150906", "status": "ready",
+			"id": id, "status": "ready",
 			"thumbnail_download_url": "http://minio/thumb.png?X-Amz-Signature=a",
 			"preview_download_url":   "http://minio/low.png?X-Amz-Signature=b",
 			"final_download_url":     "http://minio/high.png?X-Amz-Signature=c",
