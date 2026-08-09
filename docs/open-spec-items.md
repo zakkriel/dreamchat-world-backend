@@ -754,3 +754,67 @@ gate reliably refuses it.
 - **The founder ruling this entry asked for is therefore MOOT.** There is no tension between the
   presence-boundary power and D-1's accessibility floor, because the floor was never what refused the
   move. **Lesson, and it cost real time: measure the thing before designing around it.**
+
+---
+
+## SPEC-034 — `ObjectRelocated` generates no perception, so a handled object is invisible to everyone
+**Raised by:** frontend carrying work, 2026-08-09 — "a carried artifact links to an Artifact page
+that 404s". The report is real and reproducible on the seed. The cause it assumed is not.
+
+**Measured, not inferred.** Kade carries the Sealed Note (`fn_carrying` lists it), and:
+
+```
+fn_entity_visible(DL, Kade, note)          → false
+fn_artifact_page(DL, Kade, note)           → NULL   ⇒ 404
+fn_compendium_index_json(DL, Kade,'artifact') → entries: []
+```
+
+`fn_entity_visible` is "does the viewer hold at least one perception whose subject is this entity".
+Kade holds **zero** perceptions about a thing that is in his hands. The 404 is a faithful read of
+the perception store and a **false statement about the world**.
+
+**The cause is write-side, and it is one missing branch.** `generate_perceptions` has rules for
+`private_disclosure`/`Communicated` and `move`/`ActorMoved`. It has **no `ObjectRelocated` branch at
+all** — so when an object changes hands nobody records it, not even the new holder. Possession
+without knowledge is not a lawful epistemic state: carrying a thing is knowledge acquired by the
+most direct path there is (B-2 valid paths; I-2, perception traces source).
+
+**Latent only because nothing has reached it yet.** `canon_event` in the play world contains 102
+`move`, 4 `Communicated`, 2 `ActorMoved` … and **zero `ObjectRelocated`**. The seeded carry edges
+were authored as state, never as events. The first handover in play makes both objects involved
+permanently invisible on the Compendium for every viewer. This is the fourth instance of the pattern
+the 2026-08-08 handover §6 names: *a stand-in that omits, "safe" because nothing reached it — until
+a later feature did.*
+
+**Blast radius beyond the reported 404:**
+- Artifact page and artifact index 404/empty for anything ever handed over.
+- `carrying/1`'s `quick_inspect_preview` is null for every carried item — observed while building
+  the endpoint and recorded there as an honest null; this is *why*.
+- **Artifacts AC#2** (known/believed owner/holder/access) is unmeetable in principle, not just
+  unbuilt: no one ever holds a perception of a handover to render.
+
+**Both options the frontend offered are rejected, and here is why neither is the seam:**
+1. *"Carrying implies a minimal dossier"* — the page would have to source its existence claim, and
+   then its fields, from `*_state`. That is the wall (B-1, I-3), and it is the exact thing SPEC-029's
+   entry above forbids in writing: **do not populate these from `*_state`.** A projection must never
+   manufacture an existence claim the perception store cannot back; that is how a page learns to lie.
+2. *"The 404 is honest until the artifact lens work lands"* — the lenses cannot fix it and waiting on
+   them waits forever. The gate is `fn_entity_visible`, not a lens; `perceived_type` and
+   `current_holder_owner_access` landing tomorrow would still 404, because every lens reads
+   `fn_visible_perceptions` and there is nothing there to read.
+
+**Owner:** BE, write-side — the same workstream as the other `generate_perceptions` rules, NOT the
+compendium lens work. **Cross-repo:** BE only; the frontend needs no change and should not design
+around the 404 as if a lens will remove it.
+
+**Expected outcome:** an `ObjectRelocated` branch in `generate_perceptions`, with the epistemic
+question answered explicitly rather than assumed — **who witnesses a handover?** The new holder
+certainly (`direct`). The old holder, presumably. Everyone co-present is the one that needs a
+ruling, because concealment is already a product beat in this very world ("Mara tucked the sealed
+note under her cloak"), so "everyone in the room sees it" would silently delete a scene the seed
+authors on purpose. **No mechanism is proposed here** (anti-drift,
+`implementation_playbook_superpowers.md:90`): the gap is documented and measured, not invented
+around.
+
+**Firing trigger:** fired — the FE's carrying overlay reaches it today, and the first in-play
+handover makes it permanent.
