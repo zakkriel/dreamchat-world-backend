@@ -508,27 +508,54 @@ stub). A world list is a directory, not canon: no world *state* on this surface.
      endpoint auth is put in front of, and `fn_world_directory()` is the single place the "worlds the
      caller may see" filter attaches — one WHERE clause, and every caller inherits it.
 
-## SPEC-029 — Compendium projection lenses are stubs (chunk-4 gate blocker)
-Every page endpoint returns its full contract shape while almost every field inside it is a literal
-stub in `core/db/migrations/20260615090001_compendium_read_functions.sql`: `perceived_role`,
-`current_synthesis`, `last_known_status`, `part_of`, `perceived_type`, `last_known_location` and
-`current_holder_owner_access` ship `NULL` (`:100-102`, `:123-125`, `:146-149`); `known_artifacts`,
-`inline_links`, `known_areas_inside` and `key_actors` ship `[]` (`:103`, `:105`, `:126-127`, `:129`,
-`:151`); `collected_knowledge_groups` is always exactly one group keyed by the target's own id
-(`:78-82`); and `decay.stale` is the literal `false` (`:70`, `:181`), so the decay language the PRDs
-require can never render. A real Actor page today is an id, a perceived name, and one flat knowledge
-list. This is not an FE gap — the frontend renders every field that is populated and renders each lens
-only when non-empty, so absence never implies knowledge (B-1).
-Unmeetable while the stubs stand: **Actors AC#3, AC#4, AC#10**; **Locations AC#2, AC#3, AC#4, AC#5,
+## SPEC-029 — Compendium projection lenses were stubs (chunk-4 gate blocker) — **LANDED**
+**Status: LANDED (2026-08-08, PR #40 `049895a`).** The problem statement below is written in the
+**past tense on purpose** — it described `20260615090001_compendium_read_functions.sql`, which #40
+superseded with `CREATE OR REPLACE`. Do not read it as current behaviour.
+
+Every page endpoint returned its full contract shape while almost every field inside it was a literal
+stub: `perceived_role`, `current_synthesis`, `last_known_status`, `part_of`, `perceived_type`,
+`last_known_location` and `current_holder_owner_access` shipped `NULL` (`:100-102`, `:123-125`,
+`:146-149`); `known_artifacts`, `inline_links`, `known_areas_inside` and `key_actors` shipped `[]`
+(`:103`, `:105`, `:126-127`, `:129`, `:151`); `collected_knowledge_groups` was always exactly one
+group keyed by the target's own id (`:78-82`); and `decay.stale` was the literal `false` (`:70`,
+`:181`), so the decay language the PRDs require could never render. A real Actor page was an id, a
+perceived name, and one flat knowledge list. This was never an FE gap — the frontend renders every
+field that is populated and renders each lens only when non-empty, so absence never implies
+knowledge (B-1).
+Unmeetable while the stubs stood: **Actors AC#3, AC#4, AC#10**; **Locations AC#2, AC#3, AC#4, AC#5,
 AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version identity in the payload).
 - **Source:** frontend review pass while building the Compendium pages onto the design system; full
   table in `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §2.5.
-- **Owner:** reopens Chunk 4 (its gate is "all four PRDs' read-side ACs on seed",
+- **Owner:** reopened Chunk 4 (its gate is "all four PRDs' read-side ACs on seed",
   `implementation_playbook_superpowers.md:70`). **Cross-repo:** BE (this repo).
-- **Expected outcome:** the deferred lenses computed from perception — synthesis, role/type,
-  last-known, containment, co-location, carry state — plus a real `decay.stale`, or an explicit
-  founder ruling that chunk 4's gate is deferred and why.
-- **Firing trigger:** fired — the FE Compendium surfaces are built and waiting on data.
+- **Firing trigger:** fired — the FE Compendium surfaces were built and waiting on data.
+- **What landed.** Every lens below is computed from `fn_visible_perceptions(world, viewer)` only —
+  no `*_state` read anywhere on these paths, so no canon crosses the boundary (B-1, I-3). Design
+  record: `docs/superpowers/specs/2026-08-08-spec-029-compendium-lenses.md`; pgTAP:
+  `core/db/tests/24_compendium_lenses_test.sql`.
+
+  | page | now computed |
+  |---|---|
+  | actor | `current_synthesis`, `last_known_status`, `known_artifacts`, `inline_links` |
+  | location | `current_synthesis`, `last_known_status`, `key_actors`, `inline_links` |
+  | artifact | `current_synthesis`, `last_known_location`, `inline_links` |
+  | all pages + timeline | real `decay.stale` (`fn_world_now - valid_tick > fn_compendium_decay_horizon_ticks()`, 72 ticks) |
+  | all pages | `collected_knowledge_groups` grouped by source event (`group_key: "event:<uuid>"`) instead of one group keyed by the target's own id |
+- **Still `NULL`/`[]` after #40, and why — these five are the honest remainder, not an oversight.**
+  `perceived_role` (`fn_actor_page`): perception rows carry no structured role taxonomy.
+  `perceived_type` and `current_holder_owner_access` (`fn_artifact_page`): no typed artifact
+  classification, and holder/owner/access is carry state, not a perception row — the first half of
+  that gap closes with `GET /worlds/{w}/carrying` (`mvp_slice_and_bridge.md` §4.1).
+  `part_of` and `known_areas_inside` (`fn_location_page`): co-mention is not containment, and no
+  containment edge exists in perception rows. Each needs a real signal, not a guess; **do not
+  populate them from `*_state`** — that is the wall.
+- **Open defect this created, owned here.** Event-keyed grouping labels each group with that event's
+  `in_world_label`, which is the *moment* label (B-5's display companion to the logical tick), carried
+  forward by `trg_canon_event_carry_in_world_label` — neither unique nor a topic. Mara's dossier
+  renders **25 groups all headed "Arrival"** (frontend audit, 2026-08-09). Grouping by event is also
+  grouping by log order, which Actors PRD §10 ("grouped by topic, not by raw timeline/log order") and
+  the Artifacts PRD both forbid. **Owner:** BE, next chunk-4 pass.
 
 ---
 
@@ -660,7 +687,7 @@ broken; the numbers simply describe a world that interrupts a traveller about on
 
 ---
 
-## SPEC-032 — The World Actor's presence-boundary power does not work
+## SPEC-032 — The World Actor's presence-boundary power does not work — **LANDED, and the diagnosis below was wrong**
 **This, not the odds, is why nobody has ever seen an interruption on a journey.**
 
 The World Actor has two lawful shapes (`runWorldActor`), and the design names the second as this
@@ -688,3 +715,31 @@ gate reliably refuses it.
 - **Owner:** founder ruling required. **Cross-repo:** BE only; the FE already renders whatever arrives.
 - **Firing trigger:** fired — the SPEC-031 tuning landed and proved the dial works while the felt
   experience did not change, which isolates this as the actual blocker.
+- **Status: LANDED (2026-08-08, PR #47 `e5bc56e`) — and the diagnosis above is WRONG. Read this
+  before you trust a word of it.** No D-1 exception was needed and none was taken. The claim that
+  the accessibility floor refuses the presence-boundary move was **inference, not measurement**, and
+  measurement contradicted it: `fn_actor_move_permitted` returns **true** for an NPC in the tavern
+  moving into a travelling scene, because the world's turn runs at *the room the traveller left*, not
+  at the waystation. Forcing eruptions produced 5 committed eruptions and 4 minted waystations with
+  portals — the mechanism already worked. What failed was the step immediately after.
+- **The real cause: the way behind you was optional.** The leg minted a waystation and built the
+  `from→place` portal only when no direct origin→goal connection already existed
+  (`if !exists { ensurePortal(from, place) }`, while `ensurePortal(place, goal)` was unconditional).
+  That guard conflated two different questions — "is there already a way to the goal?" (R4's bar
+  check, answered earlier, which returns *barred* for a shut way and never routes around it) and
+  "can the traveller stand on the stretch of road they just walked onto?" (always yes, because the
+  place is minted *because* they are there). Latent until #41 seeded the Harbormaster's Office behind
+  an open door from Dock Street, which made `exists` true for the first time. From then on every
+  eruption on that road minted a waystation wired only to the GOAL and then failed to step the
+  traveller onto it: `gate_reject`, returned as a hard error that killed the beat.
+- **One root cause, two reported defects.** Because no waystation ever survived a leg, the frontend's
+  `journey.where_label` was also permanently `null`. Both closed by removing the guard.
+- **Regression test runs against the REAL seeded road**
+  (`TestJourney_LegMintsAWaystationTheTravellerCanStandOn`, `core/api/journey_beat_test.go`): the
+  defect only appears when origin and goal are already connected, so a fixture that forgot to connect
+  them would pass against the broken code. Reverting the guard makes it fail with "they were stranded
+  off the road they walked onto". Driven from the wire with eruptions forced: `where_label` names a
+  waystation on every leg and the journey still arrives.
+- **The founder ruling this entry asked for is therefore MOOT.** There is no tension between the
+  presence-boundary power and D-1's accessibility floor, because the floor was never what refused the
+  move. **Lesson, and it cost real time: measure the thing before designing around it.**
