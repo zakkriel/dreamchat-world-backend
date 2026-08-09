@@ -77,16 +77,13 @@ func (h *imageHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 
 	url, err := h.client.assetURL(r.Context(), assetID, tier)
 	if err != nil || url == "" {
-		// A definitive 404 means the slot has outlived its asset, and this is the only place that can
-		// ever notice: the projection read deliberately never calls the platform, so a stale reference
-		// is invisible on the read path, and the fill query skips any slot that already names an asset
-		// — so no re-trigger can heal it either. Left alone, one vanished asset is a permanently broken
-		// picture recoverable only by hand. Forgetting it here lets the world heal itself: the next
-		// read reports `image: null`, which is the frontend's ordinary "no picture yet" placeholder,
-		// and the next portrait trigger refills the slot.
-		var apiErr *imageAPIError
-		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
-			h.forgetAsset(r.Context(), worldID, assetID)
+		// The platform will not serve this id again — deleted, or retired in place by supersession.
+		// This is the only place that can ever notice on the read path: the projection read
+		// deliberately never calls the platform, so a stale reference is invisible there. Forgetting
+		// it lets the world heal itself — the next read reports `image: null`, the frontend shows its
+		// placeholder, and the next portrait trigger refills the slot.
+		if errors.Is(err, errAssetGone) {
+			forgetAsset(r.Context(), h.pool, worldID, assetID, "asset gone at platform: "+err.Error())
 		}
 		// Anything else — a 5xx, a timeout, a rate limit — is the platform having a bad minute. The
 		// asset is presumed fine and the reference is kept; discarding a good portrait over a blip
@@ -105,22 +102,29 @@ func (h *imageHandler) serveAsset(w http.ResponseWriter, r *http.Request) {
 // had before its first portrait: empty, refillable, and honest about having no picture. The visual
 // identity is deliberately kept — an identity is not an asset, and the fill path re-upserts it
 // anyway, so keeping it preserves the actor's appearance across a regeneration.
-func (h *imageHandler) forgetAsset(ctx context.Context, worldID, assetID string) {
-	if _, err := h.pool.Exec(ctx, `
+//
+// A free function, not a method: BOTH paths that can discover a dead reference need it — the fetch,
+// which trips over one, and the trigger, which now goes looking. One writer, one meaning of empty.
+func forgetAsset(ctx context.Context, pool *pgxpool.Pool, worldID, assetID, reason string) {
+	if _, err := pool.Exec(ctx, `
 		UPDATE image_slot
 		   SET asset_id = NULL, job_id = NULL, last_error = $3, updated_at = now()
 		 WHERE world_id = $1::uuid AND asset_id = $2`,
-		worldID, assetID, "asset missing at platform"); err != nil {
+		worldID, assetID, reason); err != nil {
 		log.Printf("images: forget asset %s: %v", assetID, err)
 	}
 }
 
 type portraitsResult struct {
 	SchemaVersion string `json:"schema_version"`
-	Requested     int    `json:"requested"`
-	Completed     int    `json:"completed"`
-	Failed        int    `json:"failed"`
-	Skipped       int    `json:"skipped"`
+	// Slots freed because the asset they named will not be served again. This is the number that
+	// explains a `requested: 0` — without it the endpoint reports "nothing to do" whether the world
+	// is fully illustrated or entirely stale, which is how the mosaics survived a live art flip.
+	Reclaimed int `json:"reclaimed"`
+	Requested int `json:"requested"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+	Skipped   int `json:"skipped"`
 }
 
 // portraits fills in the portraits a world is missing.
@@ -171,12 +175,25 @@ const imageBatchLimit = 5
 // fillPortraits requests a portrait for up to `limit` actors in this world that do not have one and
 // do not already have a job in flight, then waits for each to settle.
 //
+// It first REAPS: a slot naming an asset the platform will not serve again is not a filled slot, it
+// is a dangling id, and the fill query below cannot tell the difference. #53 taught the fetch path
+// that lesson and the trigger never learned it, so when the platform archived every mock asset this
+// endpoint answered `requested: 0` for a world that was serving nothing but mosaics — "already
+// illustrated" and "entirely stale" were the same answer. Asking is bounded by the same `limit` as
+// the fill, so one call still cannot outrun the platform.
+//
 // Every step is written to image_slot as it happens, so an interrupted run resumes instead of
 // restarting: an identity already upserted is not upserted again, and a job already requested is
 // polled rather than re-requested. Re-requesting would in fact be harmless — reuse is the platform's
 // default and returns the same asset at zero cost — but "harmless" is not a reason to do it.
 func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (portraitsResult, error) {
 	out := portraitsResult{SchemaVersion: "image_portraits/1"}
+
+	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, limit)
+	if err != nil {
+		return out, err
+	}
+	out.Reclaimed = reclaimed
 
 	styleID, err := client.ensureStyle(ctx, "dreamchat-default")
 	if err != nil {
@@ -302,6 +319,59 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		out.Skipped = 0
 	}
 	return out, nil
+}
+
+// reapRetiredAssets returns every slot whose asset the platform will not serve again to the empty
+// state, so the fill query can see it. Bounded by the same `limit` as the fill.
+//
+// Why the trigger has to ASK rather than infer: an archived asset answers `200` and still hands back
+// working presigned URLs (their contract: "archived assets remain displayable to the owning
+// tenant"), so nothing about a stale slot looks wrong from here. The database cannot know, the
+// projection deliberately never calls out, and the fetch path only learns when someone happens to
+// request that exact picture. One GET per filled slot is the honest price of the truth.
+//
+// Deliberately conservative in both directions. Only errAssetGone frees a slot: a 5xx, a timeout or
+// a rate limit is the platform having a bad minute, and throwing away a good portrait over a blip
+// would turn a wobble into a re-generation bill. And a slot with a job in flight is not examined at
+// all — its asset_id is already NULL by construction.
+func reapRetiredAssets(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (int, error) {
+	rows, err := pool.Query(ctx, `
+		SELECT asset_id
+		  FROM image_slot
+		 WHERE world_id = $1::uuid AND owner_kind = 'actor' AND asset_id IS NOT NULL
+		 ORDER BY owner_id
+		 LIMIT $2`, worldID, limit)
+	if err != nil {
+		return 0, err
+	}
+	var assets []string
+	for rows.Next() {
+		var a string
+		if err := rows.Scan(&a); err != nil {
+			rows.Close()
+			return 0, err
+		}
+		assets = append(assets, a)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+
+	n := 0
+	for _, a := range assets {
+		err := client.assetAlive(ctx, a)
+		if err == nil {
+			continue // a real picture; leave it alone
+		}
+		if !errors.Is(err, errAssetGone) {
+			log.Printf("images: could not verify asset %s, keeping the reference: %v", a, err)
+			continue
+		}
+		forgetAsset(ctx, pool, worldID, a, "reaped by portrait trigger: "+err.Error())
+		n++
+	}
+	return n, nil
 }
 
 // recordSlotError leaves the reason on the slot so a blank portrait can explain itself. It clears

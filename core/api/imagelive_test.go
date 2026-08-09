@@ -1,8 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"image/png"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"testing"
 )
@@ -94,4 +99,127 @@ func TestLive_ImageHandshake(t *testing.T) {
 		t.Fatalf("reuse produced a different asset: %s then %s — a portrait must not be re-rendered", before, again)
 	}
 	fmt.Printf("LIVE reuse returned the same asset: %s\n", again)
+}
+
+// The LIVE verification for the fal flip: run the real trigger against the real play world, then
+// fetch a portrait back through THIS service's own endpoint and prove the bytes are real art rather
+// than the mock colour grid. Gated the same way as the handshake above, and it SPENDS MONEY — every
+// role whose mock asset was archived is regenerated on fal.
+//
+//	DREAMCHAT_IMAGE_LIVE=1 DREAMCHAT_IMAGE_PORTRAIT_REFRESH=1 \
+//	DREAMCHAT_IMAGE_BASE_URL=http://localhost:8081 DREAMCHAT_IMAGE_API_TOKEN=... \
+//	DATABASE_URL=... go test -run TestLive_PortraitsAreRealArt -timeout 20m -v .
+//
+// It is a test and not a curl script for the reason the handshake is: it drives the REAL
+// fillPortraits and the REAL imageHandler.ServeHTTP, so what it proves is what a browser gets.
+func TestLive_PortraitsAreRealArt(t *testing.T) {
+	if os.Getenv("DREAMCHAT_IMAGE_LIVE") == "" || os.Getenv("DREAMCHAT_IMAGE_PORTRAIT_REFRESH") == "" {
+		t.Skip("needs DREAMCHAT_IMAGE_LIVE and DREAMCHAT_IMAGE_PORTRAIT_REFRESH — this one spends money")
+	}
+	client := newImageClientFromEnv()
+	if client == nil {
+		t.Fatal("DREAMCHAT_IMAGE_BASE_URL / DREAMCHAT_IMAGE_API_TOKEN not set")
+	}
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const worldID = "22222222-2222-2222-2222-222222222222" // The Drowned Lantern, the world anyone plays
+
+	res, err := fillPortraits(ctx, pool, client, worldID, imageBatchLimit)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	fmt.Printf("LIVE portraits: %+v\n", res)
+	if res.Reclaimed == 0 && res.Requested == 0 {
+		t.Fatalf("nothing reclaimed and nothing requested — the trigger still cannot see stale slots")
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT owner_id::text, coalesce(asset_id,''), coalesce(last_error,'')
+		  FROM image_slot WHERE world_id=$1 AND owner_kind='actor' ORDER BY owner_id`, worldID)
+	if err != nil {
+		t.Fatalf("read slots: %v", err)
+	}
+	type slot struct{ owner, asset, lastErr string }
+	var slots []slot
+	for rows.Next() {
+		var s slot
+		if err := rows.Scan(&s.owner, &s.asset, &s.lastErr); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		slots = append(slots, s)
+	}
+	rows.Close()
+
+	h := NewImageHandler(pool, client, true)
+	checked := 0
+	for _, s := range slots {
+		if s.asset == "" {
+			t.Errorf("slot %s has no asset (last_error=%q)", s.owner, s.lastErr)
+			continue
+		}
+		// Provenance, straight from the platform: the mock assets were provider_id=mock,
+		// model_id=pm_mock_v1. Anything still carrying those is a mosaic by definition.
+		var a struct {
+			Status     string `json:"status"`
+			ProviderID string `json:"provider_id"`
+			ModelID    string `json:"model_id"`
+		}
+		if err := client.do(ctx, http.MethodGet, "/v1/assets/"+s.asset, nil, "", &a); err != nil {
+			t.Errorf("asset %s: %v", s.asset, err)
+			continue
+		}
+		if a.Status == "archived" || a.Status == "failed" {
+			t.Errorf("slot %s still names a %s asset %s", s.owner, a.Status, s.asset)
+		}
+		if a.ProviderID == "mock" || a.ModelID == "pm_mock_v1" {
+			t.Errorf("slot %s is still mock art: asset=%s provider=%s model=%s",
+				s.owner, s.asset, a.ProviderID, a.ModelID)
+		}
+
+		// Now the bytes, through OUR endpoint, following the redirect exactly as a browser does.
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/worlds/"+worldID+"/images/"+s.asset+"?tier=preview", nil))
+		if rec.Code != http.StatusFound {
+			t.Errorf("fetch %s: status %d, want 302", s.asset, rec.Code)
+			continue
+		}
+		resp, err := http.Get(rec.Header().Get("Location"))
+		if err != nil {
+			t.Errorf("follow redirect for %s: %v", s.asset, err)
+			continue
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		img, err := png.Decode(bytes.NewReader(raw))
+		if err != nil {
+			t.Errorf("decode %s: %v (%d bytes)", s.asset, err, len(raw))
+			continue
+		}
+		// A generated portrait has thousands of distinct colours; the mock grid has a handful of
+		// flat blocks. This is the difference the founder is looking at, measured rather than
+		// asserted from provenance alone.
+		colours := map[uint32]struct{}{}
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y += 2 {
+			for x := b.Min.X; x < b.Max.X; x += 2 {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				colours[r>>8<<16|g>>8<<8|bl>>8] = struct{}{}
+			}
+		}
+		fmt.Printf("LIVE %s asset=%s provider=%s model=%s status=%s %dx%d %d bytes %d distinct colours\n",
+			s.owner, s.asset, a.ProviderID, a.ModelID, a.Status,
+			b.Dx(), b.Dy(), len(raw), len(colours))
+		if len(colours) < 256 {
+			t.Errorf("slot %s renders %d distinct colours — that is a colour grid, not a portrait",
+				s.owner, len(colours))
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no portrait was verified end to end")
+	}
 }

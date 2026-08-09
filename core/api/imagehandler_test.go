@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -429,5 +430,134 @@ func TestImageHandler_ATransientFailureKeepsTheReference(t *testing.T) {
 	}
 	if assetID == nil || *assetID != good {
 		t.Fatalf("asset_id was discarded over a 500 — a blip must not cost the world a good portrait")
+	}
+}
+
+// ── the live failure this fixes ─────────────────────────────────────────────────────────────────
+// The image platform flipped to real art and ARCHIVED every mock asset. The world kept serving
+// mosaics and POST /images/portraits answered `requested: 0`, because the fill query treats any
+// non-null asset_id as a filled slot and an archived asset does not 404 — it answers 200 with
+// working URLs. "Already illustrated" and "entirely stale" were the same answer.
+func TestFillPortraits_ArchivedAssetsAreReapedSoTheTriggerCanRefill(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000f9", "5a5e0000-0000-0000-0000-0000000000a9"
+	const stale = "asset_mock_mosaic_archived"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Mosaic Subject') ON CONFLICT DO NOTHING`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, visual_identity_id, asset_id)
+		VALUES ($1::uuid,'actor',$2::uuid,'vi_kept',$3)`, worldID, actorID, stale); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.archivedAssets = map[string]bool{stale: true}
+
+	res, err := fillPortraits(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Reclaimed != 1 {
+		t.Fatalf("reclaimed = %d, want 1 — an archived asset is not a portrait, and a trigger that "+
+			"cannot say so reports `requested: 0` for a world serving nothing but stale art", res.Reclaimed)
+	}
+	if res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want the reaped slot refilled in the same call", res)
+	}
+
+	var assetID, identityID string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id, visual_identity_id FROM image_slot
+		  WHERE world_id=$1::uuid AND owner_kind='actor' AND owner_id=$2::uuid`, worldID, actorID).
+		Scan(&assetID, &identityID); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID == stale {
+		t.Fatalf("slot still names the archived asset %q", assetID)
+	}
+	// The identity survives the regeneration: a new portrait of the SAME character, not a stranger.
+	if identityID != "vi_c40c1fc21b057d27" && identityID != "vi_kept" {
+		t.Fatalf("visual_identity_id = %q, want the identity carried across", identityID)
+	}
+}
+
+// The mirror, and the reason the reap cannot free a slot on any error: a platform having a bad
+// minute must not cost the world a good portrait AND a regeneration bill.
+func TestFillPortraits_ATransientFailureDoesNotReapAGoodPortrait(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000fa", "5a5e0000-0000-0000-0000-0000000000aa"
+	const good = "asset_real_art_fine"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Fine Subject') ON CONFLICT DO NOTHING`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id)
+		VALUES ($1::uuid,'actor',$2::uuid,$3)`, worldID, actorID, good); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.assetFailStatus = http.StatusInternalServerError
+
+	res, err := fillPortraits(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Reclaimed != 0 || res.Requested != 0 {
+		t.Fatalf("result = %+v — a 5xx is a bad minute, not a verdict; the portrait must be kept", res)
+	}
+	var assetID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id FROM image_slot WHERE world_id=$1::uuid AND owner_id=$2::uuid`,
+		worldID, actorID).Scan(&assetID); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if assetID == nil || *assetID != good {
+		t.Fatalf("asset_id = %v, want the good asset kept across a platform blip", assetID)
+	}
+}
+
+// A live asset mid-flight is not gone. Reaping a pending or preview_ready asset would throw away a
+// portrait that is about to arrive, so only archived and failed count.
+func TestAssetURL_ArchivedIsGoneButAReadyOneServes(t *testing.T) {
+	f := newFakePlatform()
+	f.archivedAssets = map[string]bool{"asset_retired": true}
+	f.forgottenAssets = map[string]bool{"asset_deleted": true}
+	c := testImageClient(t, f)
+	ctx := context.Background()
+
+	if _, err := c.assetURL(ctx, "asset_retired", ""); !errors.Is(err, errAssetGone) {
+		t.Fatalf("archived asset err = %v, want errAssetGone — it answers 200 with working URLs, "+
+			"which is exactly why the mosaics kept serving after the flip", err)
+	}
+	if _, err := c.assetURL(ctx, "asset_deleted", ""); !errors.Is(err, errAssetGone) {
+		t.Fatalf("deleted asset err = %v, want errAssetGone (the 404 shape)", err)
+	}
+	url, err := c.assetURL(ctx, "asset_ready", "")
+	if err != nil || url == "" {
+		t.Fatalf("ready asset must still serve: url=%q err=%v", url, err)
 	}
 }
