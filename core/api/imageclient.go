@@ -322,12 +322,37 @@ func (c *imageClient) jobAssets(ctx context.Context, jobID string) ([]imageAsset
 	return out.Assets, nil
 }
 
+// errAssetGone is the ONE condition both image paths act on: the platform will not serve a usable
+// picture for this id again, so the slot naming it is a dangling reference. Two shapes reach it and
+// they look nothing alike on the wire:
+//
+//   - **404 not_found** — deleted. Definitive, and the only shape #53 handled.
+//   - **200 with a retired status** — retired IN PLACE. `AssetStatus` is
+//     `pending|preview_ready|ready|failed|archived`, and supersession leaves `archived` behind.
+//     Their contract is explicit that "archived assets remain displayable to the owning tenant",
+//     so the platform answers **200 and hands back working presigned URLs** to the picture nobody
+//     wants any more. That is exactly why the mock mosaics kept serving cleanly after the fal flip:
+//     nothing ever 404'd, so #53's healing never fired and the fill query never saw an empty slot.
+//     `failed` is the same class — an asset row with no usable image behind it.
+//
+// `pending` and `preview_ready` are deliberately NOT gone. They are a live asset mid-flight, and
+// reaping one would throw away a portrait that is about to arrive.
+var errAssetGone = errors.New("asset will not be served again")
+
 // assetURL mints a FRESH presigned URL for one asset and returns it for immediate use. Never stored.
 // tier selects among the three always-available sizes: thumbnail 256, preview 768, final 1024.
 func (c *imageClient) assetURL(ctx context.Context, assetID, tier string) (string, error) {
 	var a imageAsset
 	if err := c.do(ctx, http.MethodGet, "/v1/assets/"+assetID, nil, "", &a); err != nil {
+		var apiErr *imageAPIError
+		if errors.As(err, &apiErr) && apiErr.Status == http.StatusNotFound {
+			return "", fmt.Errorf("%w: %s is gone from the platform", errAssetGone, assetID)
+		}
 		return "", fmt.Errorf("assetURL: %w", err)
+	}
+	// Checked BEFORE the URLs are read, because a retired asset still carries perfectly valid ones.
+	if a.Status == "archived" || a.Status == "failed" {
+		return "", fmt.Errorf("%w: %s is %s", errAssetGone, assetID, a.Status)
 	}
 	switch tier {
 	case "thumbnail":
@@ -337,6 +362,13 @@ func (c *imageClient) assetURL(ctx context.Context, assetID, tier string) (strin
 	default:
 		return a.PreviewURL, nil
 	}
+}
+
+// assetAlive asks the one question the trigger needs — will this id still serve a picture? — over
+// the same single GET, rather than adding a second way to interrogate an asset.
+func (c *imageClient) assetAlive(ctx context.Context, assetID string) error {
+	_, err := c.assetURL(ctx, assetID, "")
+	return err
 }
 
 // ── polling ─────────────────────────────────────────────────────────────────────────────────────

@@ -45,6 +45,11 @@ type fakePlatform struct {
 	// the platform no longer has these assets (its storage has its own lifecycle, and a real reset
 	// during integration is exactly how a slot outlives the asset it names)
 	forgottenAssets map[string]bool
+	// RETIRED IN PLACE, and the shape that fooled #53: the platform answers 200 for these, with a
+	// retired status and perfectly working download URLs, because "archived assets remain
+	// displayable to the owning tenant". Supersession leaves this behind, so it is what every mock
+	// asset became the moment the platform flipped to real art.
+	archivedAssets map[string]bool
 	// a bad minute rather than a verdict: any non-zero status is returned for every asset read
 	assetFailStatus int
 }
@@ -151,6 +156,16 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 		}
 		if f.forgottenAssets[id] {
 			writeErr(w, http.StatusNotFound, "not_found", "asset not found")
+			return
+		}
+		if f.archivedAssets[id] {
+			// 200, a retired status, and URLs that still work. Nothing here looks like a failure.
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id": id, "status": "archived",
+				"thumbnail_download_url": "http://minio/old-mosaic-thumb.png?X-Amz-Signature=a",
+				"preview_download_url":   "http://minio/old-mosaic-low.png?X-Amz-Signature=b",
+				"final_download_url":     "http://minio/old-mosaic-high.png?X-Amz-Signature=c",
+			})
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
