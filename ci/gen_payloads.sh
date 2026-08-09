@@ -67,6 +67,23 @@ for vp in $VIEWERS; do
   save "timeline_${vp%%:*}" "SELECT fn_timeline('$WORLD','${vp#*:}')"
 done
 
+# --- carrying (carrying/1): both fixture viewers, PLUS the play world's two carriers.
+# The fixture world's Player and Jonas carry nothing, so on their own they would only ever exercise
+# the empty envelope and the item shape would ship unvalidated — a coverage hole that reads green.
+# The Drowned Lantern's Kade and Mara each hold exactly one thing, so those two payloads are what
+# actually put `carried[*]` in front of the validator. Anchored on canonical_name, same as $WORLD
+# above, never a LIMIT-1-any-world.
+for vp in $VIEWERS; do
+  save "carrying_${vp%%:*}" "SELECT fn_carrying('$WORLD','${vp#*:}')"
+done
+DL=$(PSQL "SELECT world_id FROM world WHERE display_name='The Drowned Lantern'")
+if [ -n "$DL" ]; then
+  for who in Kade Mara; do
+    eid=$(PSQL "SELECT entity_id FROM entity_registry WHERE world_id='$DL' AND canonical_name='$who'")
+    [ -n "$eid" ] && save "carrying_dl_$who" "SELECT fn_carrying('$DL','$eid')"
+  done
+fi
+
 # --- scene/current: assembled in Go (buildScene, core/api/scenehandler.go), not a SQL function —
 # there is no fn_* this generator can call directly the way it calls fn_actor_page/fn_timeline
 # above. TestGenSceneCurrentPayloads (core/api/scenehandler_test.go) is the Go-side equivalent: gated
