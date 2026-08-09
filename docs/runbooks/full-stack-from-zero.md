@@ -20,6 +20,13 @@ Only the first two are required. The image platform is optional — with no imag
 config the world runs exactly as before and every `image` field is `null`. The
 frontend is optional for backend work; `curl` reaches everything.
 
+> **There is a one-command wrapper: `../stack.sh`** (repo root, beside the three
+> checkouts). `start [--reset] [--no-images]` · `stop [--all]` · `status` · `smoke` ·
+> `portraits`. It is this runbook distilled into an idempotent script — same order, same
+> health gates, anything already up is left alone. Use it to bring the stack up; the
+> manual steps below stay the reference for what it is doing and for debugging when a
+> gate fails.
+
 ---
 
 ## 0. Prerequisites
