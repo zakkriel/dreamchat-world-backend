@@ -2351,13 +2351,23 @@ CREATE FUNCTION public.fn_world_directory() RETURNS json
     LANGUAGE sql STABLE
     AS $$
   SELECT json_build_object(
-    'schema_version', 'world_directory/1',
+    'schema_version', 'world_directory/2',
     'worlds', COALESCE((
       SELECT json_agg(json_build_object(
                'id',            w.world_id,
                'display_name',  w.display_name,
+               'tagline',       w.tagline,
                'theme',         w.theme,
-               'playable',      w.player_entity_id IS NOT NULL
+               'playable',      w.player_entity_id IS NOT NULL,
+               'cover_image',   fn_image_ref(w.world_id, 'world', w.world_id),
+               'last_place_label', (
+                  SELECT fn_display_name(w.world_id, w.player_entity_id,
+                                         (a.attrs->>'location_id')::uuid)
+                    FROM actor_state a
+                   WHERE a.world_id = w.world_id
+                     AND a.entity_id = w.player_entity_id
+                     AND a.attrs->>'location_id' IS NOT NULL
+               )
              ) ORDER BY w.display_name, w.world_id)
         FROM world w), '[]'::json)
   );
@@ -2962,7 +2972,7 @@ CREATE TABLE public.image_slot (
     issued_at timestamp with time zone,
     last_error text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT image_slot_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text])))
+    CONSTRAINT image_slot_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text, 'world'::text])))
 );
 
 
@@ -3160,7 +3170,9 @@ CREATE TABLE public.world (
     theme jsonb DEFAULT '{"mood": "nocturne", "accent": "#c9a227", "ornament": "filigree", "schema_version": "world_theme/1"}'::jsonb NOT NULL,
     player_entity_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
+    tagline text,
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
+    CONSTRAINT world_tagline_check CHECK (((tagline IS NULL) OR (length(btrim(tagline)) > 0))),
     CONSTRAINT world_theme_check CHECK ((((theme ->> 'schema_version'::text) = 'world_theme/1'::text) AND ((theme ->> 'accent'::text) ~ '^#[0-9a-fA-F]{6}$'::text) AND (length(COALESCE((theme ->> 'mood'::text), ''::text)) > 0) AND (length(COALESCE((theme ->> 'ornament'::text), ''::text)) > 0)))
 );
 
@@ -3911,4 +3923,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260808100005'),
     ('20260808100006'),
     ('20260809090001'),
-    ('20260809090002');
+    ('20260809090002'),
+    ('20260809090003');

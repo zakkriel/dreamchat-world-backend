@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "beat_frame/2",
-  "title": "beat_frame/2 — one SSE frame of POST /worlds/{w}/beats (design §4.8, rung3 Task 3)",
+  "$id": "beat_frame/3",
+  "title": "beat_frame/3 \u2014 one SSE frame of POST /worlds/{w}/beats (design \u00a74.8, rung3 Task 3)",
   "type": "object",
   "oneOf": [
     {
@@ -37,7 +37,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "interpretation"
@@ -60,7 +60,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "narration"
@@ -110,7 +110,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "scene"
@@ -130,7 +130,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "journey"
@@ -157,7 +157,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "result"
@@ -226,7 +226,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "error"
@@ -247,7 +247,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/2"
+          "const": "beat_frame/3"
         },
         "kind": {
           "const": "trace"
@@ -1196,6 +1196,8 @@
       ]
     },
     "scene_current": {
+      "$id": "scene_current/3",
+      "title": "scene_current/2 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1208,7 +1210,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "scene_current/2"
+          "const": "scene_current/3"
         },
         "place": {
           "type": "object",
@@ -1217,7 +1219,8 @@
             "id",
             "label",
             "description",
-            "tone"
+            "tone",
+            "image"
           ],
           "properties": {
             "id": {
@@ -1237,6 +1240,34 @@
               "type": [
                 "string",
                 "null"
+              ]
+            },
+            "image": {
+              "description": "The play-surface BACKDROP for the place the viewer stands in. Not perception-scoped, for the same reason a portrait is not: the room you are standing in is not a secret, and what the viewer KNOWS about it is already carried by label and description. Image reference, or null when there is no picture yet \u2014 the ordinary state, and what the frontend's placeholder is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+              "oneOf": [
+                {
+                  "type": "null"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "schema_version",
+                    "asset_id",
+                    "path"
+                  ],
+                  "properties": {
+                    "schema_version": {
+                      "const": "image_ref/1"
+                    },
+                    "asset_id": {
+                      "type": "string"
+                    },
+                    "path": {
+                      "type": "string"
+                    }
+                  }
+                }
               ]
             }
           }
@@ -1264,7 +1295,7 @@
                 "const": "actor"
               },
               "image": {
-                "description": "Image reference or null. Mirrors scene_current/2's participant image; see that schema. The nested scene payload carries its OWN schema_version, which is how a scene change is announced without moving beat_frame's.",
+                "description": "Image reference, or null when there is no picture yet \u2014 the ordinary state, and what the frontend's placeholder silhouette is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
                 "oneOf": [
                   {
                     "type": "null"
@@ -1331,7 +1362,72 @@
             "type": "string"
           }
         }
-      }
+      },
+      "$defs": {
+        "journey_block": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "active",
+            "kind",
+            "goal_label",
+            "where_label",
+            "progress",
+            "legs_done",
+            "legs_total",
+            "interruptible",
+            "status"
+          ],
+          "properties": {
+            "active": {
+              "type": "boolean"
+            },
+            "kind": {
+              "enum": [
+                "travel",
+                "wait",
+                "watch"
+              ]
+            },
+            "goal_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "where_label": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "progress": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 1
+            },
+            "legs_done": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "legs_total": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "interruptible": {
+              "type": "boolean"
+            },
+            "status": {
+              "enum": [
+                "active",
+                "arrived",
+                "ended"
+              ]
+            }
+          }
+        }
+      },
+      "description": "EMBEDDED COPY of the published scene_current/3 payload \u2014 the scene frame carries the identical object GET /worlds/{w}/scene/current returns. It is duplicated rather than $ref'd because ci/schema_contract.py loads each schema file independently and has no cross-file resolver. THE COUPLING IS REAL AND HAS BITTEN: bumping scene_current invalidates this branch and therefore forces a beat_frame bump too, which is how /3 happened. Keep them in lockstep, or give the checker a resolver and $ref this instead."
     },
     "journey_block": {
       "type": "object",

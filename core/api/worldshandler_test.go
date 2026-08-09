@@ -54,8 +54,8 @@ func TestWorlds_DirectoryListsTheSeededWorldsWithTheirLook(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatalf("decode: %v\n%s", err, rec.Body.String())
 	}
-	if got.SchemaVersion != "world_directory/1" {
-		t.Fatalf("schema_version = %q, want world_directory/1", got.SchemaVersion)
+	if got.SchemaVersion != "world_directory/2" {
+		t.Fatalf("schema_version = %q, want world_directory/2", got.SchemaVersion)
 	}
 
 	var lantern *struct {
@@ -107,11 +107,39 @@ func TestWorlds_DirectoryCarriesNoWorldState(t *testing.T) {
 	if err := json.Unmarshal(raw["worlds"], &entries); err != nil {
 		t.Fatalf("decode worlds: %v", err)
 	}
-	allowed := map[string]bool{"id": true, "display_name": true, "theme": true, "playable": true}
+	// The allowlist widened for the world-picker pass, and the three additions were weighed one at a
+	// time rather than waved through:
+	//
+	//   tagline      authored fiction ABOUT the world, the same class as display_name. Not state.
+	//   cover_image  an asset id and a path, the same class as theme. Not state.
+	//   last_place_label   the only genuinely arguable one, and it IS derived from world state
+	//                (actor_state.attrs.location_id). It ships because what this rule protects is
+	//                "you cannot inspect a world's interior without entering it", and one label of
+	//                YOUR OWN last position is the door remembering which room you left by, not a
+	//                read model of the world's contents. It is rendered as that world's own player,
+	//                so no viewer learns anything that is not already theirs (B-1), and it carries
+	//                no tick and no wall-clock (B-5) — asserted below, because "a label and nothing
+	//                else" is the whole of what makes it safe.
+	//
+	// STANDING RISK, recorded against SPEC-028: GET /worlds is unauthenticated and lists every
+	// world, so this field tells any caller where each world's player stands. Harmless in the
+	// single-user deployment it is built for, NOT harmless on a public origin. When B1 lands it must
+	// sit inside the same WHERE clause fn_world_directory() gains — which the handover already names
+	// as the one place that filter attaches.
+	allowed := map[string]bool{"id": true, "display_name": true, "tagline": true, "theme": true,
+		"playable": true, "cover_image": true, "last_place_label": true}
 	for _, e := range entries {
 		for k := range e {
 			if !allowed[k] {
 				t.Fatalf("world entry carries %q — a directory is not canon; no world state may ride this surface", k)
+			}
+		}
+		// A LABEL and nothing else: a bare JSON string or null. An object or a number here would mean
+		// a tick or a timestamp had crept onto a surface B-5 keeps wall-clock off entirely.
+		if lp, ok := e["last_place_label"]; ok {
+			var s *string
+			if err := json.Unmarshal(lp, &s); err != nil {
+				t.Fatalf("last_place_label is not a bare string|null (%s) — no clock may ride this field", lp)
 			}
 		}
 	}

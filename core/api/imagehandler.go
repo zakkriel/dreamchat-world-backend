@@ -21,6 +21,7 @@ import (
 // where generation is TRIGGERED, deliberately kept off every read path.
 var imageAssetRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/([A-Za-z0-9_-]{1,128})$`)
 var imagePortraitsRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/portraits$`)
+var imageScenesRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/scenes$`)
 
 type imageHandler struct {
 	pool   *pgxpool.Pool
@@ -35,19 +36,24 @@ func NewImageHandler(pool *pgxpool.Pool, client *imageClient, debug bool) http.H
 func (h *imageHandler) Match(r *http.Request) bool {
 	switch r.Method {
 	case http.MethodGet:
-		return imageAssetRoute.MatchString(r.URL.Path) && !imagePortraitsRoute.MatchString(r.URL.Path)
+		return imageAssetRoute.MatchString(r.URL.Path) &&
+			!imagePortraitsRoute.MatchString(r.URL.Path) &&
+			!imageScenesRoute.MatchString(r.URL.Path)
 	case http.MethodPost:
-		return imagePortraitsRoute.MatchString(r.URL.Path)
+		return imagePortraitsRoute.MatchString(r.URL.Path) || imageScenesRoute.MatchString(r.URL.Path)
 	}
 	return false
 }
 
 func (h *imageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		h.portraits(w, r)
-		return
+	switch {
+	case r.Method == http.MethodPost && imageScenesRoute.MatchString(r.URL.Path):
+		h.trigger(w, r, imageScenesRoute, fillScenes)
+	case r.Method == http.MethodPost:
+		h.trigger(w, r, imagePortraitsRoute, fillPortraits)
+	default:
+		h.serveAsset(w, r)
 	}
-	h.serveAsset(w, r)
 }
 
 // serveAsset redirects to a FRESHLY minted presigned URL.
@@ -145,8 +151,14 @@ type portraitsResult struct {
 // ever been called — which is the property that lets the image platform be genuinely optional.
 //
 // `limit` caps the batch at the platform's own concurrency default so one call cannot outrun it.
-func (h *imageHandler) portraits(w http.ResponseWriter, r *http.Request) {
-	m := imagePortraitsRoute.FindStringSubmatch(r.URL.Path)
+//
+// trigger serves BOTH bounded generation surfaces — /images/portraits and /images/scenes — because
+// everything except the fill function is identical, and the two must never drift on the parts that
+// bit us live: platform-not-configured is an ordinary answer, a platform failure is a 502 and not a
+// 500, and the counters come back as data so `requested: 0` can explain itself.
+func (h *imageHandler) trigger(w http.ResponseWriter, r *http.Request, route *regexp.Regexp,
+	fill func(context.Context, *pgxpool.Pool, *imageClient, string, int) (portraitsResult, error)) {
+	m := route.FindStringSubmatch(r.URL.Path)
 	if m == nil {
 		http.NotFound(w, r)
 		return
@@ -155,12 +167,10 @@ func (h *imageHandler) portraits(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "image platform not configured", http.StatusServiceUnavailable)
 		return
 	}
-	worldID := m[1]
-
-	res, err := fillPortraits(r.Context(), h.pool, h.client, worldID, imageBatchLimit)
+	res, err := fill(r.Context(), h.pool, h.client, m[1], imageBatchLimit)
 	if err != nil {
-		log.Printf("images: portraits: %v", err)
-		http.Error(w, "portrait generation failed", http.StatusBadGateway)
+		log.Printf("images: %s: %v", r.URL.Path, err)
+		http.Error(w, "image generation failed", http.StatusBadGateway)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -189,7 +199,7 @@ const imageBatchLimit = 5
 func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (portraitsResult, error) {
 	out := portraitsResult{SchemaVersion: "image_portraits/1"}
 
-	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, limit)
+	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, []string{"actor"}, limit)
 	if err != nil {
 		return out, err
 	}
@@ -334,13 +344,13 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 // a rate limit is the platform having a bad minute, and throwing away a good portrait over a blip
 // would turn a wobble into a re-generation bill. And a slot with a job in flight is not examined at
 // all — its asset_id is already NULL by construction.
-func reapRetiredAssets(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (int, error) {
+func reapRetiredAssets(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, kinds []string, limit int) (int, error) {
 	rows, err := pool.Query(ctx, `
 		SELECT asset_id
 		  FROM image_slot
-		 WHERE world_id = $1::uuid AND owner_kind = 'actor' AND asset_id IS NOT NULL
-		 ORDER BY owner_id
-		 LIMIT $2`, worldID, limit)
+		 WHERE world_id = $1::uuid AND owner_kind = ANY($2) AND asset_id IS NOT NULL
+		 ORDER BY owner_kind, owner_id
+		 LIMIT $3`, worldID, kinds, limit)
 	if err != nil {
 		return 0, err
 	}
@@ -419,4 +429,154 @@ func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind st
 		}
 	}
 	return out, rows.Err()
+}
+
+// ── scene backdrops: world covers and place backdrops ───────────────────────────────────────────
+
+// fillScenes renders the world's cover and the backdrops for its places, over the platform's
+// scene_capable route. Same shape as fillPortraits — reap first, explicit and bounded, never a read
+// side effect — and the same slot table, so #58's rule (archived ⇒ dangling ⇒ re-request) covers
+// these pictures the day the platform reroutes them too.
+//
+// ── ONE RULE DECIDES WHAT GETS AN IMAGE: GENERATE FROM AUTHORED FICTION, OR NOT AT ALL ──────────
+// A backdrop needs something to be a picture OF, and the only honest source is fiction the world
+// already authored. So a place is rendered from `location_state.attrs.description` and a world from
+// its `tagline`, and anything carrying neither is simply not a target. That single rule does three
+// jobs at once, none of them as a special case:
+//
+//   - It excludes the waystations the place author mints mid-journey. Those carry area/kind/
+//     coordinates and NO description, because nobody wrote them — they are road, procedurally
+//     placed. Rendering one would mean inventing the fiction at the boundary, which is exactly the
+//     drift GA-2/D-1 forbid, and they multiply with every journey.
+//   - It excludes container areas like the Harbor Quarter, which exist to hold other places and
+//     have no described interior to stand in.
+//   - It makes the founder's approval of a tagline STRUCTURAL rather than procedural: no tagline,
+//     no cover, because there is nothing to render from. The gate is the data, not a promise.
+//
+// Descriptions are read from *_state rather than from perception on purpose, and it is the same
+// decision the portrait path already records: a picture is of the THING, not of anyone's opinion of
+// it, and the prompt goes to a private service, never to a player. B-1 governs what reaches the
+// FRONTEND — and what reaches the frontend here is an asset id and a path.
+func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (portraitsResult, error) {
+	out := portraitsResult{SchemaVersion: "image_scenes/1"}
+
+	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, []string{"world", "location"}, limit)
+	if err != nil {
+		return out, err
+	}
+	out.Reclaimed = reclaimed
+
+	styleID, err := client.ensureStyle(ctx, "dreamchat-default")
+	if err != nil {
+		return out, err
+	}
+
+	// The cover and the places in one ordered list: cover first, because it is the card the founder
+	// is looking at, then places by id for determinism. A slot with a job in flight is excluded by
+	// the same predicate the portrait fill uses.
+	rows, err := pool.Query(ctx, `
+		SELECT 'world', w.world_id::text, w.tagline
+		  FROM world w
+		  LEFT JOIN image_slot s
+		    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id
+		 WHERE w.world_id = $1 AND w.tagline IS NOT NULL
+		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+		UNION ALL
+		SELECT 'location', er.entity_id::text, l.attrs->>'description'
+		  FROM entity_registry er
+		  JOIN location_state l ON l.world_id = er.world_id AND l.entity_id = er.entity_id
+		  LEFT JOIN image_slot s
+		    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id
+		 WHERE er.world_id = $1 AND er.entity_kind = 'location'
+		   AND coalesce(btrim(l.attrs->>'description'), '') <> ''
+		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+		 ORDER BY 1 DESC, 2
+		 LIMIT $2`, worldID, limit)
+	if err != nil {
+		return out, err
+	}
+	type target struct{ kind, id, description string }
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.kind, &t.id, &t.description); err != nil {
+			rows.Close()
+			return out, err
+		}
+		targets = append(targets, t)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return out, err
+	}
+
+	for _, t := range targets {
+		// Envelope and key pinned together, for the reason the portrait path documents at length:
+		// their idempotency key hashes the whole body, so a fresh issued_at under a stable key is a
+		// 409 idempotency_conflict rather than a retry.
+		issuedAt := time.Now().UTC()
+		key := "scene-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
+		// Their ContentClass enum is character_portrait|place_scene|artifact|expression|angle_variant
+		// and has no world-cover member. `place_scene` is the honest nearest for both: a cover is
+		// scenery too. Switch if they ever add one rather than stretching `artifact` to fit.
+		env := newGovEnvelope(issuedAt, "place_scene")
+
+		jobID, err := client.requestSceneGeneration(ctx, t.id, worldID, styleID, t.description, key, env)
+		if err != nil {
+			out.Failed++
+			recordSceneSlotError(ctx, pool, worldID, t.kind, t.id, err.Error())
+			continue
+		}
+		out.Requested++
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO image_slot (world_id, owner_kind, owner_id, job_id, idempotency_key, issued_at, updated_at)
+			VALUES ($1,$2,$3,$4,$5,$6, now())
+			ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
+			   SET job_id          = EXCLUDED.job_id,
+			       idempotency_key = EXCLUDED.idempotency_key,
+			       issued_at       = EXCLUDED.issued_at,
+			       last_error      = NULL,
+			       updated_at      = now()`,
+			worldID, t.kind, t.id, jobID, key, issuedAt); err != nil {
+			return out, err
+		}
+
+		job, err := client.awaitJob(ctx, jobID, defaultPollBackoff())
+		if err != nil {
+			// Still in flight, or the budget ran out. The row keeps job_id, so a later call resumes
+			// this job rather than paying for a second one.
+			log.Printf("images: scene job %s not settled: %v", jobID, err)
+			continue
+		}
+		if job.Status != "completed" || len(job.FinalAssetIDs) == 0 {
+			out.Failed++
+			recordSceneSlotError(ctx, pool, worldID, t.kind, t.id, job.ErrorCode+": "+job.ErrorMessage)
+			continue
+		}
+		if _, err := pool.Exec(ctx, `
+			UPDATE image_slot SET asset_id=$1, job_id=NULL, last_error=NULL, updated_at=now()
+			 WHERE world_id=$2 AND owner_kind=$3 AND owner_id=$4`,
+			job.FinalAssetIDs[0], worldID, t.kind, t.id); err != nil {
+			return out, err
+		}
+		out.Completed++
+	}
+	out.Skipped = len(targets) - out.Requested - out.Failed
+	if out.Skipped < 0 {
+		out.Skipped = 0
+	}
+	return out, nil
+}
+
+// recordSceneSlotError is recordSlotError for a non-actor owner: same "a blank picture explains
+// itself, and a dead job_id is cleared so the next run does not poll it forever" contract.
+func recordSceneSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind, ownerID, msg string) {
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, last_error, updated_at)
+		VALUES ($1,$2,$3,$4, now())
+		ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
+		   SET last_error = EXCLUDED.last_error, job_id = NULL, updated_at = now()`,
+		worldID, ownerKind, ownerID, msg); err != nil {
+		log.Printf("images: record scene slot error: %v", err)
+	}
 }

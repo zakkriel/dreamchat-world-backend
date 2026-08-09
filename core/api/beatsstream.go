@@ -59,8 +59,8 @@ type narrationFrame struct {
 }
 
 // sceneFrame carries the Task 1 scene projection wholesale (scenehandler.go's sceneView, produced by
-// buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/2) is preserved
-// rather than clobbered by the envelope's beat_frame/2.
+// buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/3) is preserved
+// rather than clobbered by the envelope's beat_frame/3.
 type sceneFrame struct {
 	Scene sceneView `json:"scene"`
 }

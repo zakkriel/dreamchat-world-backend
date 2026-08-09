@@ -4,7 +4,7 @@ package main
 // real-payload coverage, so `make schema-contract` exited 1 on two published, unexercised schemas. Both
 // are SEAT-CONTRACT schemas (bridge.go's SeatWorldActor/SeatPlaceAuthor: the structured-output LEASH a
 // driver's raw response is validated against), not API response envelopes — unlike every projection
-// schema (scene_current/2, actor_page/2, ...), their `additionalProperties: false` property set has no
+// schema (scene_current/3, actor_page/2, ...), their `additionalProperties: false` property set has no
 // room for a "schema_version" field (the envelope belongs to what the API RETURNS, never to what a seat
 // may EMIT — see bridge_fakes.go's fakeWorldActorDriver/fakePlaceAuthorDriver doc comments for the exact
 // shape each fake authors). ci/schema_contract.py's Direction-1 check therefore cannot key these two
