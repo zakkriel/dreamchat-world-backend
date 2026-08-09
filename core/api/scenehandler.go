@@ -11,13 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v2.schema.json,
+// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v3.schema.json,
 // core/api/schema/ — the frontend repo generates its types from that directory).
 //
 // v2 (2026-08-08): participants carry `image`. The payload is additionalProperties:false and the
 // frontend pins this string exactly, so an added field is a breaking change however additive it
 // looks — the version moving IS the notification. Clean cutover, no alias.
-const sceneCurrentSchemaVersion = "scene_current/2"
+const sceneCurrentSchemaVersion = "scene_current/3"
 
 var sceneCurrentRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/scene/current$`)
 
@@ -28,6 +28,11 @@ type scenePlace struct {
 	Label       string  `json:"label"`
 	Description *string `json:"description"`
 	Tone        *string `json:"tone"` // the place's authored tension where one exists — a word, not a number
+	// Image is the backdrop for the play surface — the same image_ref/1 shape a portrait uses, and
+	// null until one is generated, which is the ordinary state. NOT perception-scoped, for the same
+	// reason a portrait is not: the room you are standing in is not a secret. The wall governs what
+	// the viewer KNOWS about the place — its label and description above are already theirs.
+	Image json.RawMessage `json:"image"`
 }
 
 // sceneParticipant is one present CHARACTER, labeled with the viewer's own name for them (UX
@@ -53,7 +58,7 @@ type sceneNow struct {
 	DisplayLabel *string `json:"display_label"`
 }
 
-// sceneView is the scene_current/2 projection: perception-bound, schema_version-stamped, no canon
+// sceneView is the scene_current/3 projection: perception-bound, schema_version-stamped, no canon
 // row crosses (B-1, I-3, D-7). Journey is the rung3 Task 2 block (journey.go's journeyBlock), or nil
 // when the viewer holds no active journey — never an empty/placeholder value for "not travelling".
 type sceneView struct {
@@ -173,6 +178,13 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 		participants = append(participants, sceneParticipant{ID: id, Label: labelFor[id], Kind: "actor", Image: images[id]})
 	}
 
+	// The backdrop for the place the viewer stands in. One more slot lookup, same table and same
+	// nil-is-ordinary contract as the portraits above.
+	placeImages, err := imageRefsFor(ctx, pool, worldID, "location", []string{place.ID})
+	if err != nil {
+		return sceneView{}, fmt.Errorf("buildScene: place image ref: %w", err)
+	}
+
 	var tick int64
 	if err := pool.QueryRow(ctx, `SELECT fn_world_now($1::uuid)`, worldID).Scan(&tick); err != nil {
 		return sceneView{}, fmt.Errorf("buildScene: fn_world_now: %w", err)
@@ -224,6 +236,7 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 			Label:       place.Name,
 			Description: nullIfEmpty(place.Description),
 			Tone:        nullIfEmpty(tone),
+			Image:       placeImages[place.ID],
 		},
 		Participants: participants,
 		Now: sceneNow{

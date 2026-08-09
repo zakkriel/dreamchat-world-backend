@@ -507,6 +507,13 @@ stub). A world list is a directory, not canon: no world *state* on this surface.
      a private deployment; **not** safe on a public origin. `POST /worlds` should be the first
      endpoint auth is put in front of, and `fn_world_directory()` is the single place the "worlds the
      caller may see" filter attaches — one WHERE clause, and every caller inherits it.
+     **Raised 2026-08-09 by `world_directory/2`:** the directory now carries `last_place_label`, so
+     an unauthenticated `GET /worlds` tells any caller where each world's player stands. Harmless in
+     the single-user deployment this is built for, NOT harmless on a public origin — and it makes
+     the WHERE clause above load-bearing rather than tidy. When B1 lands, that filter must cover
+     this field, which it does for free by covering the row. Guarded meanwhile by
+     `TestWorlds_DirectoryCarriesNoWorldState`, whose allowlist was widened deliberately and records
+     the reasoning for each of the three additions.
 
 ## SPEC-029 — Compendium projection lenses were stubs (chunk-4 gate blocker) — **LANDED**
 **Status: LANDED (2026-08-08, PR #40 `049895a`).** The problem statement below is written in the

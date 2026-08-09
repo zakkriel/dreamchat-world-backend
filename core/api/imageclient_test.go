@@ -52,6 +52,11 @@ type fakePlatform struct {
 	archivedAssets map[string]bool
 	// a bad minute rather than a verdict: any non-zero status is returned for every asset read
 	assetFailStatus int
+
+	// the scene_capable route
+	sceneCalls              int
+	lastSceneDescription    string
+	lastScenePinnedProvider *string
 }
 
 func newFakePlatform() *fakePlatform {
@@ -146,6 +151,44 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 			body["final_asset_ids"] = []string{"asset_cf63b1d2e6150906"}
 		}
 		_ = json.NewEncoder(w).Encode(body)
+	})
+
+	// The scene_capable route: POST /v1/artifacts/{id}/generate. Their contract requires world_id,
+	// style_profile_id and description in the body, and a description is the whole point here — a
+	// backdrop with nothing authored behind it would be invented fiction, so an empty one is an
+	// error rather than a silently blank picture.
+	mux.HandleFunc("/v1/artifacts/", func(w http.ResponseWriter, r *http.Request) {
+		f.mu.Lock()
+		f.sceneCalls++
+		f.mu.Unlock()
+		var body struct {
+			WorldID     string         `json:"world_id"`
+			StyleID     string         `json:"style_profile_id"`
+			Description string         `json:"description"`
+			Governance  map[string]any `json:"governance"`
+			Provider    *string        `json:"provider_id"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		switch {
+		case body.WorldID == "":
+			writeErr(w, 400, "invalid_request", "world_id is required")
+			return
+		case body.StyleID == "":
+			writeErr(w, 400, "invalid_request", "style_profile_id is required")
+			return
+		case body.Description == "":
+			writeErr(w, 400, "invalid_request", "description is required")
+			return
+		case body.Governance == nil:
+			writeErr(w, 400, "invalid_request", "governance is required")
+			return
+		}
+		f.mu.Lock()
+		f.lastSceneDescription = body.Description
+		f.lastScenePinnedProvider = body.Provider
+		f.mu.Unlock()
+		w.WriteHeader(http.StatusAccepted)
+		_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job_041c843f24940ad4", "status": "queued"})
 	})
 
 	mux.HandleFunc("/v1/assets/", func(w http.ResponseWriter, r *http.Request) {

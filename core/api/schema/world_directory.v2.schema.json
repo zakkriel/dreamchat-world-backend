@@ -1,0 +1,126 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_directory/2",
+  "title": "world_directory/2 \u2014 GET /worlds: the worlds a caller may choose between (SPEC-028). A DIRECTORY, never canon: an id, a name, a line of fiction, a look, a cover, where you left off, and whether anyone can play it. No world STATE on this surface.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "worlds"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "world_directory/2"
+    },
+    "worlds": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "id",
+          "display_name",
+          "tagline",
+          "theme",
+          "playable",
+          "cover_image",
+          "last_place_label"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "display_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The world's name as a chooser sees it. The one label in the system that is not viewer-relative, because it names the CONTAINER rather than anything inside it \u2014 B-1 governs what is in a world."
+          },
+          "tagline": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "ONE world-authored line selling the world on its card. AUTHORED FICTION (GA-2): this service never composes it \u2014 no default, no template. null when the world's author has not written one, and the card renders without it. Never an empty string; a blank is rejected at the column."
+          },
+          "theme": {
+            "$ref": "#/$defs/world_theme"
+          },
+          "playable": {
+            "type": "boolean",
+            "description": "Whether this world states a player (world.player_entity_id). False for a world created through POST /worlds that has nothing authored into it yet \u2014 real, listed, and not yet enterable."
+          },
+          "cover_image": {
+            "description": "The world's cover art. Image reference, or null when there is no picture yet \u2014 the ordinary state, and what the frontend's placeholder is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "schema_version",
+                  "asset_id",
+                  "path"
+                ],
+                "properties": {
+                  "schema_version": {
+                    "const": "image_ref/1"
+                  },
+                  "asset_id": {
+                    "type": "string"
+                  },
+                  "path": {
+                    "type": "string"
+                  }
+                }
+              }
+            ]
+          },
+          "last_place_label": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "The world's own label for where its player stands, or left off. A LABEL AND NOTHING ELSE \u2014 no tick, no timestamp, no '2 hours ago' (B-5 keeps wall-clock off this boundary, and a directory is a shelf of doors, not a save-game list). Rendered as the world's player, whose whereabouts it is and who a caller becomes on entering. null when the world has no player yet, or has one who has never been placed anywhere \u2014 never entered, nothing to say."
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "world_theme": {
+      "$id": "world_theme/1",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "accent",
+        "mood",
+        "ornament"
+      ],
+      "description": "SPEC-019 theme tokens. ONE accent colour \u2014 the frontend derives the rest, because a backend shipping a palette would own visual design it has no business owning. mood is an ATMOSPHERE word, never a genre: the system never learns the word 'fantasy' (GA-3).",
+      "properties": {
+        "schema_version": {
+          "const": "world_theme/1"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$",
+          "description": "A single hex colour."
+        },
+        "mood": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Draft vocabulary: daylight | nocturne | mist | ember | bleak. Deliberately NOT constrained to that set \u2014 unknown values must DEGRADE in the client, never fail here. Enforcing the enum backend-side would make this service the thing that breaks on a word it has not heard of, which is backwards for a field whose purpose is to evolve."
+        },
+        "ornament": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Draft vocabulary: none | filigree | rivet | vine | circuit. Unconstrained for the same reason as mood."
+        }
+      }
+    }
+  }
+}

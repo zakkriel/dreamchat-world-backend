@@ -277,6 +277,41 @@ func (c *imageClient) requestGeneration(ctx context.Context, identityID, idempot
 	return acc.JobID, nil
 }
 
+// requestSceneGeneration asks for ONE image rendered from an authored description, over the
+// platform's scene_capable route (`POST /v1/artifacts/{id}/generate`). Despite the path segment it
+// is not about Artifacts in this repo's sense — it is their description-conditioned single-image
+// route, and it is the one their contract marks scene_capable. `id` is OUR key for the thing being
+// rendered: a location entity id for a backdrop, a world id for a cover.
+//
+// The place-pack route (`/v1/places/{id}/generate-pack`) is deliberately NOT used. It asks for
+// pack_capable and renders a fixed SET of variant roles from a pack template — time-of-day, state —
+// against a place visual identity. We want one backdrop conditioned on the fiction the world already
+// authored, so a pack would be several images we did not ask for and an identity we have nothing to
+// anchor.
+//
+// provider_id is deliberately NOT pinned, though their doc notes pinning `bfl` resolves the BFL
+// scene route. Which provider satisfies scene_capable is the platform's routing decision, not ours
+// (D-3, mirrored): pinning it here would freeze their router from the outside and rot the day they
+// add a better scene model. If their routing sends this to a mock provider the portraits' own
+// lesson applies — the provenance check catches it immediately, and #58's reap makes the later flip
+// self-healing.
+//
+// Same envelope discipline as requestGeneration: the caller pins issued_at and stores it with the
+// key, because their idempotency key hashes the whole body.
+func (c *imageClient) requestSceneGeneration(ctx context.Context, subjectID, worldID, styleID, description, idempotencyKey string, env govEnvelope) (string, error) {
+	var acc generationAccepted
+	err := c.do(ctx, http.MethodPost, "/v1/artifacts/"+subjectID+"/generate", map[string]any{
+		"governance":       env,
+		"world_id":         worldID,
+		"style_profile_id": styleID,
+		"description":      description,
+	}, idempotencyKey, &acc)
+	if err != nil {
+		return "", fmt.Errorf("requestSceneGeneration: %w", err)
+	}
+	return acc.JobID, nil
+}
+
 type imageJob struct {
 	ID            string   `json:"id"`
 	Status        string   `json:"status"`

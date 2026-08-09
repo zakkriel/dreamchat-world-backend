@@ -576,7 +576,7 @@ func (o *Orchestrator) journeyScene(ctx context.Context, j *Journey, tickAfter i
 }
 
 // journeyBlock is the scene projection's `journey` field (design §4.8, plan rung3 Task 2; schema
-// core/api/schema/scene_current.v2.schema.json's `$defs.journey_block`): the viewer's OWN read on
+// core/api/schema/scene_current.v3.schema.json's `$defs.journey_block`): the viewer's OWN read on
 // wherever they stand mid-journey — a label for the destination and for the place currently
 // underfoot (never a raw id, D-7/B-1), a 0..1 progress fraction, and `interruptible=true` for as
 // long as the journey stays active (the honest "the world may still stop you" the play page needs

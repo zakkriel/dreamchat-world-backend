@@ -239,7 +239,7 @@ func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
 	}
 }
 
-// scene_current/2: participants carry `image`, null until a portrait exists. The version moved
+// scene_current/3: participants carry `image`, null until a portrait exists. The version moved
 // because the payload is additionalProperties:false and the frontend pins it exactly — an added
 // field is a breaking change however additive it looks.
 func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
@@ -273,8 +273,8 @@ func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
 	}
 
 	sv, byID := decode()
-	if sv != "scene_current/2" {
-		t.Fatalf("schema_version = %q, want scene_current/2", sv)
+	if sv != "scene_current/3" {
+		t.Fatalf("schema_version = %q, want scene_current/3", sv)
 	}
 	img, ok := byID[id.Companion]
 	if !ok {
@@ -559,5 +559,259 @@ func TestAssetURL_ArchivedIsGoneButAReadyOneServes(t *testing.T) {
 	url, err := c.assetURL(ctx, "asset_ready", "")
 	if err != nil || url == "" {
 		t.Fatalf("ready asset must still serve: url=%q err=%v", url, err)
+	}
+}
+
+// ── scene backdrops ─────────────────────────────────────────────────────────────────────────────
+
+// The one rule: generate from AUTHORED FICTION, or not at all. A place the world described gets a
+// backdrop; a waystation the place author minted mid-journey does not, because nobody wrote it and
+// rendering one would mean inventing the fiction at the boundary. A world gets a cover only once
+// somebody has authored its tagline, which is what makes the founder's approval structural rather
+// than a promise.
+func TestFillScenes_RendersAuthoredFictionAndNothingElse(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const worldID = "5cee0000-0000-0000-0000-0000000000f1"
+	const described = "5cee0000-0000-0000-0000-0000000000c1" // authored place
+	const minted = "5cee0000-0000-0000-0000-0000000000c2"    // waystation: coordinates, no description
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM location_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO world (world_id, display_name) VALUES ($1,'ZZ Scene Fixture')`, worldID); err != nil {
+		t.Fatalf("seed world: %v", err)
+	}
+	for _, l := range []struct{ id, attrs string }{
+		{described, `{"description":"a low room of wet stone and lamplight"}`},
+		{minted, `{"kind":"waystation","coordinates":{"x":1,"y":2}}`},
+	} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+			 VALUES ($1,$2,'location','ZZ Place')`, l.id, worldID); err != nil {
+			t.Fatalf("seed location registry: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO location_state (world_id, entity_id, attrs) VALUES ($1,$2,$3::jsonb)`,
+			worldID, l.id, l.attrs); err != nil {
+			t.Fatalf("seed location state: %v", err)
+		}
+	}
+
+	f := newFakePlatform()
+	res, err := fillScenes(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillScenes: %v", err)
+	}
+	// Exactly one: the described place. No cover (no tagline authored), no waystation (no fiction).
+	if res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want exactly the one described place rendered", res)
+	}
+
+	var kinds []string
+	rows, err := pool.Query(ctx,
+		`SELECT owner_kind||':'||owner_id::text FROM image_slot WHERE world_id=$1 AND asset_id IS NOT NULL ORDER BY 1`, worldID)
+	if err != nil {
+		t.Fatalf("read slots: %v", err)
+	}
+	for rows.Next() {
+		var k string
+		_ = rows.Scan(&k)
+		kinds = append(kinds, k)
+	}
+	rows.Close()
+	if len(kinds) != 1 || kinds[0] != "location:"+described {
+		t.Fatalf("filled slots = %v, want only the authored place — a minted waystation has no "+
+			"authored description and must never be rendered from an invented one", kinds)
+	}
+
+	// Author a tagline and the cover becomes reachable, from that line and nothing else.
+	if _, err := pool.Exec(ctx,
+		`UPDATE world SET tagline='Everything here is one tide from gone.' WHERE world_id=$1`, worldID); err != nil {
+		t.Fatalf("author tagline: %v", err)
+	}
+	res2, err := fillScenes(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("second fillScenes: %v", err)
+	}
+	if res2.Requested != 1 || res2.Completed != 1 {
+		t.Fatalf("result = %+v, want the cover rendered once its tagline exists", res2)
+	}
+	var cover string
+	if err := pool.QueryRow(ctx,
+		`SELECT coalesce(asset_id,'') FROM image_slot
+		  WHERE world_id=$1 AND owner_kind='world' AND owner_id=$1`, worldID).Scan(&cover); err != nil {
+		t.Fatalf("read cover slot: %v", err)
+	}
+	if cover == "" {
+		t.Fatal("the world cover slot was not filled")
+	}
+	// And the described place is not re-requested: a filled slot is left alone.
+	if res2.Skipped != 0 || res2.Failed != 0 {
+		t.Fatalf("result = %+v, want no collateral work on the already-filled place", res2)
+	}
+}
+
+// #58's rule reaches the new owner kinds too: an archived backdrop is a dangling reference, so the
+// scene trigger reclaims and re-requests it exactly as the portrait trigger does.
+func TestFillScenes_ArchivedBackdropsAreReapedToo(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const worldID = "5cee0000-0000-0000-0000-0000000000f2"
+	const place = "5cee0000-0000-0000-0000-0000000000c3"
+	const stale = "asset_backdrop_archived"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM location_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO world (world_id, display_name) VALUES ($1,'ZZ Reap Fixture')`, worldID); err != nil {
+		t.Fatalf("seed world: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'location','ZZ Reap Place')`, place, worldID); err != nil {
+		t.Fatalf("seed registry: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO location_state (world_id, entity_id, attrs)
+		 VALUES ($1,$2,'{"description":"a pier the sea keeps taking back"}'::jsonb)`, worldID, place); err != nil {
+		t.Fatalf("seed location: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id) VALUES ($1,'location',$2,$3)`,
+		worldID, place, stale); err != nil {
+		t.Fatalf("seed slot: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.archivedAssets = map[string]bool{stale: true}
+
+	res, err := fillScenes(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillScenes: %v", err)
+	}
+	if res.Reclaimed != 1 || res.Requested != 1 {
+		t.Fatalf("result = %+v, want the archived backdrop reclaimed and re-requested (#58's rule)", res)
+	}
+	var got string
+	if err := pool.QueryRow(ctx,
+		`SELECT coalesce(asset_id,'') FROM image_slot WHERE world_id=$1 AND owner_id=$2`, worldID, place).
+		Scan(&got); err != nil {
+		t.Fatalf("read slot: %v", err)
+	}
+	if got == stale || got == "" {
+		t.Fatalf("asset_id = %q, want a fresh backdrop", got)
+	}
+}
+
+// Two contract facts the scene route depends on, both cheap to get wrong silently.
+//
+//   - The description sent is the world's OWN authored line, verbatim. Anything else — a template, a
+//     name, a composed "a {mood} {kind}" — would be this service writing fiction (GA-2).
+//   - provider_id is NOT pinned. Their doc notes pinning `bfl` resolves the BFL scene route, but
+//     which provider satisfies scene_capable is their routing decision (D-3, mirrored). Pinning it
+//     from here freezes their router from the outside and rots the day they add a better model.
+func TestFillScenes_SendsAuthoredFictionVerbatimAndPinsNoProvider(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const worldID = "5cee0000-0000-0000-0000-0000000000f3"
+	const line = "Everything here is one tide from gone."
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO world (world_id, display_name, tagline) VALUES ($1,'ZZ Verbatim Fixture',$2)`,
+		worldID, line); err != nil {
+		t.Fatalf("seed world: %v", err)
+	}
+
+	f := newFakePlatform()
+	if _, err := fillScenes(ctx, pool, testImageClient(t, f), worldID, 5); err != nil {
+		t.Fatalf("fillScenes: %v", err)
+	}
+	if f.lastSceneDescription != line {
+		t.Fatalf("description = %q, want the authored tagline verbatim %q", f.lastSceneDescription, line)
+	}
+	if f.lastScenePinnedProvider != nil {
+		t.Fatalf("provider_id = %q — routing is the platform's decision, not ours", *f.lastScenePinnedProvider)
+	}
+	if f.sceneCalls != 1 {
+		t.Fatalf("scene route called %d times, want exactly 1", f.sceneCalls)
+	}
+}
+
+// scene_current/3: the place carries a backdrop, null until one exists, and it is the SAME
+// image_ref/1 shape a portrait uses so the frontend has one renderer for every picture.
+func TestSceneCurrentV3_PlaceCarriesABackdrop(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	scene, err := buildScene(ctx, pool, dlWorldID, dlKadeID, false)
+	if err != nil {
+		t.Fatalf("buildScene: %v", err)
+	}
+	if scene.SchemaVersion != "scene_current/3" {
+		t.Fatalf("schema_version = %q, want scene_current/3", scene.SchemaVersion)
+	}
+	placeID := scene.Place.ID
+
+	_, _ = pool.Exec(ctx, `DELETE FROM image_slot WHERE world_id=$1 AND owner_kind='location' AND owner_id=$2`,
+		dlWorldID, placeID)
+	t.Cleanup(func() {
+		_, _ = pool.Exec(context.Background(),
+			`DELETE FROM image_slot WHERE world_id=$1 AND owner_kind='location' AND owner_id=$2`, dlWorldID, placeID)
+	})
+
+	scene, err = buildScene(ctx, pool, dlWorldID, dlKadeID, false)
+	if err != nil {
+		t.Fatalf("buildScene: %v", err)
+	}
+	if scene.Place.Image != nil && string(scene.Place.Image) != "null" {
+		t.Fatalf("place.image = %s, want null before any backdrop exists", scene.Place.Image)
+	}
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO image_slot (world_id, owner_kind, owner_id, asset_id) VALUES ($1,'location',$2,'asset_backdrop_zz')`,
+		dlWorldID, placeID); err != nil {
+		t.Fatalf("seed backdrop: %v", err)
+	}
+	scene, err = buildScene(ctx, pool, dlWorldID, dlKadeID, false)
+	if err != nil {
+		t.Fatalf("buildScene: %v", err)
+	}
+	var ref struct {
+		SchemaVersion string `json:"schema_version"`
+		AssetID       string `json:"asset_id"`
+		Path          string `json:"path"`
+	}
+	if err := json.Unmarshal(scene.Place.Image, &ref); err != nil {
+		t.Fatalf("place.image did not decode: %v (%s)", err, scene.Place.Image)
+	}
+	if ref.SchemaVersion != "image_ref/1" || ref.AssetID != "asset_backdrop_zz" {
+		t.Fatalf("place.image = %+v, want the shared image_ref/1 shape", ref)
+	}
+	if ref.Path != "/worlds/"+dlWorldID+"/images/asset_backdrop_zz" {
+		t.Fatalf("path = %q — a backdrop must carry a path back to this service, never a presigned URL", ref.Path)
 	}
 }

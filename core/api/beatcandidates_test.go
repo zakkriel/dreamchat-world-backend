@@ -163,7 +163,7 @@ func TestBuildScene_NamesTheRoomYouAreInNotTheOneNextDoor(t *testing.T) {
 	}
 }
 
-// beat_frame/2 — unresolved_candidates carries {id, label}, not bare ids. v1 shipped ids alone, so
+// beat_frame/2 (now /3) — unresolved_candidates carries {id, label}, not bare ids. v1 shipped ids alone, so
 // the frontend could not name what it was asking about and would not invent a name (B-1/D-7): the
 // "which did you mean?" affordance could never render. The ask was unanswerable because it was
 // unsayable.

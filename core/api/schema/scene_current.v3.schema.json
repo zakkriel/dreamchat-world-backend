@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "scene_current/2",
-  "title": "scene_current/2 — where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
+  "$id": "scene_current/3",
+  "title": "scene_current/2 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,7 +14,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "scene_current/2"
+      "const": "scene_current/3"
     },
     "place": {
       "type": "object",
@@ -23,7 +23,8 @@
         "id",
         "label",
         "description",
-        "tone"
+        "tone",
+        "image"
       ],
       "properties": {
         "id": {
@@ -43,6 +44,34 @@
           "type": [
             "string",
             "null"
+          ]
+        },
+        "image": {
+          "description": "The play-surface BACKDROP for the place the viewer stands in. Not perception-scoped, for the same reason a portrait is not: the room you are standing in is not a secret, and what the viewer KNOWS about it is already carried by label and description. Image reference, or null when there is no picture yet \u2014 the ordinary state, and what the frontend's placeholder is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "schema_version",
+                "asset_id",
+                "path"
+              ],
+              "properties": {
+                "schema_version": {
+                  "const": "image_ref/1"
+                },
+                "asset_id": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                }
+              }
+            }
           ]
         }
       }
@@ -70,7 +99,7 @@
             "const": "actor"
           },
           "image": {
-            "description": "Image reference, or null when there is no picture yet — the ordinary state, and what the frontend's placeholder silhouette is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
+            "description": "Image reference, or null when there is no picture yet \u2014 the ordinary state, and what the frontend's placeholder silhouette is for. It swaps in on a later read with no re-request and no subscription. Carries an asset id and a PATH back to the world backend, never a presigned URL: those expire (~15 min), so an embedded one would make this payload rot in any cache or log. Fetch as {apiBase}{path}, optionally ?tier=thumbnail|preview|final (256/768/1024, default preview); the backend mints a fresh short-lived URL per read and redirects.",
             "oneOf": [
               {
                 "type": "null"
