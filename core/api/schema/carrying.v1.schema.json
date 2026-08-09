@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "carrying/1",
+  "title": "Carrying",
+  "description": "GET /worlds/{w}/carrying — the play-facing overlay answering 'what do I have on me right now?' (mvp_slice_and_bridge §4.1; PRD Compendium — Artifacts & Carrying Overlay). The carrier IS the viewer: the SQL function takes no carrier argument, so this surface cannot be pointed at an NPC (PRD non-goal). It is deliberately NOT the Artifact Compendium (AC#1) — the Compendium lists meaningful KNOWN objects regardless of ownership, this lists possession, and the two are never merged. Two of the PRD's four projection fields are deliberately absent: `contextual_actions` (presentation, and presentation is the frontend's — D-7) and `open_full_artifact_link` (each entry's `id` IS the link; emitting a route would hardcode the frontend's URL space).",
+  "type": "object",
+  "required": ["schema_version", "world_id", "viewer_id", "carried"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "carrying/1" },
+    "world_id":  { "type": "string", "format": "uuid" },
+    "viewer_id": { "type": "string", "format": "uuid" },
+    "carried": {
+      "description": "Everything whose containment chain roots at the viewer, deepest-first order aside: directly-carried entries first, then alphabetically by the label the viewer uses, id as the final tiebreak. Always an array — an empty one means 'you are carrying nothing', which is an answer, not a missing page.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "label", "state", "container", "last_confirmed_tick", "quick_inspect_preview", "decay"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "Artifact entity id. This is the PRD's open_full_artifact_link: compose the Artifact page route from it.",
+            "type": "string",
+            "format": "uuid"
+          },
+          "label": {
+            "description": "fn_display_name — the viewer's own naming, with the descriptor fallback, exactly as the beat candidate whitelist labels things. Never the canonical identity when the viewer has a name of their own for it.",
+            "type": "string"
+          },
+          "state": {
+            "description": "Carry State. The PRD enum is carried|worn|held|packed|stored_elsewhere|lost|unknown; the world records exactly one distinction (contained_by: in your possession, or not), so `carried` is the only value it can honestly produce today. worn/held/packed need a signal that does not exist; stored_elsewhere/lost/unknown describe things that are NOT on you and can never appear here. NOT enum-pinned on purpose — when a real signal lands the value set widens in place and costs no re-pin, PROVIDED the frontend treats an unrecognised value as opaque rather than switching exhaustively.",
+            "type": "string"
+          },
+          "container": {
+            "description": "null = directly on the viewer. Non-null = the thing of theirs it is inside. Nesting is included because the engine already means it — fn_apply_carry_change climbs contained_by to the root carrier and charges the whole subtree to that actor's carried_weight, so an overlay showing only the top layer would contradict the encumbrance the same world computes. Reporting the chain is not an answer to the PRD's open container-semantics question (pouch-inside-bag as a UI affordance), which stays open.",
+            "oneOf": [
+              { "type": "null" },
+              {
+                "type": "object",
+                "required": ["id", "label"],
+                "additionalProperties": false,
+                "properties": {
+                  "id":    { "type": "string", "format": "uuid" },
+                  "label": { "type": "string" }
+                }
+              }
+            ]
+          },
+          "last_confirmed_tick": {
+            "description": "In-world tick of the accepted event whose state_mutation last set this containment (Artifacts AC#3). Read from the append-only ledger, not from artifact_state, because only the ledger carries the event behind the fact. Logical tick only — wall clock never crosses this boundary (B-5).",
+            "type": "integer"
+          },
+          "quick_inspect_preview": {
+            "description": "The viewer's latest held perception about the object (fn_compendium_latest_fact, which reads fn_visible_perceptions and nothing else), so the preview can never say more than its carrier knows. null is ordinary: you can carry a thing you have learned nothing about.",
+            "type": ["string", "null"]
+          },
+          "decay": {
+            "description": "Artifacts AC#3 — a stale carry state renders decay language and never disappears. Same horizon (fn_compendium_decay_horizon_ticks) and same shape as every other compendium surface.",
+            "type": "object",
+            "required": ["stale", "last_confirmed_label"],
+            "additionalProperties": false,
+            "properties": {
+              "stale": { "type": "boolean" },
+              "last_confirmed_label": { "type": ["string", "null"] }
+            }
+          }
+        }
+      }
+    }
+  }
+}

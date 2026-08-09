@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -224,14 +223,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx := context.Background()
 
 	viewerID, err := ResolveViewer(ctx, h.pool, worldID, r.URL.Query().Get("viewer"), h.dbg)
-	if err != nil {
-		// "this world has nobody to play as yet" is an ANSWER about a world that exists (a world
-		// created through POST /worlds before anything is authored into it), not a broken server.
-		if errors.Is(err, errNoPlayerInWorld) {
-			http.Error(w, "this world has no player yet", http.StatusNotFound)
-			return
-		}
-		http.Error(w, "viewer resolution failed", http.StatusInternalServerError)
+	if writeNoViewer(w, err) {
 		return
 	}
 
@@ -505,7 +497,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // quoted text field is never mistaken for structure.
 type narrationLineSplitter struct {
 	buf       []byte
-	depth     int  // nesting depth of [ and { seen so far (the outer array itself is depth 1)
+	depth     int // nesting depth of [ and { seen so far (the outer array itself is depth 1)
 	inString  bool
 	escaped   bool
 	elemStart int // byte offset in buf where the in-flight element began, or -1 when not in one

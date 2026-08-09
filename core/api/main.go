@@ -29,6 +29,42 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
+// newRouter is the ONE list of served routes. It is a function rather than a literal inside main()
+// so a test can drive the composed router instead of a handler in isolation: a handler that works
+// perfectly and was never added to this slice is a 404 in production and a green suite, and that is
+// exactly the failure mode "hand-drive everything" exists to catch.
+func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClient) *router {
+	return &router{handlers: []matcher{
+		NewPageHandler(pool, debug, "actors", "fn_actor_page").(matcher),
+		NewPageHandler(pool, debug, "locations", "fn_location_page").(matcher),
+		NewPageHandler(pool, debug, "artifacts", "fn_artifact_page").(matcher),
+		NewIndexHandler(pool, debug, "actors", "actor").(matcher),
+		NewIndexHandler(pool, debug, "locations", "location").(matcher),
+		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
+		NewTimelineHandler(pool, debug).(matcher),
+		// GET /worlds/{w}/carrying — the Carrying overlay (mvp_slice_and_bridge §4.1). No carrier
+		// segment: the carrier is the resolved viewer, which is what makes "Carrying for NPCs" (a
+		// PRD non-goal) unreachable by construction rather than by a check.
+		NewCarryingHandler(pool, debug).(matcher),
+		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
+		NewSceneHandler(pool, debug).(matcher),
+		// POST /worlds/{w}/beats and POST /worlds/{w}/beats/continue — the only write path; everything
+		// it commits goes through apply_event (D-1). The singular POST /worlds/{w}/beat endpoint is
+		// GONE (rung3 Task 5, founder-approved clean cutover — no alias, no deprecation shim; the only
+		// caller was the founder's own throwaway test page). beatsStreamHandler serves both routes,
+		// delivering the beat as a stream of validated frames (design §4.8, rung3 Task 3); continue
+		// skips decompose entirely — an empty chain against an active journey IS the continue press.
+		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
+		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
+		// /worlds/{id}, because it is what you call when you do not have an id yet.
+		NewWorldsHandler(pool, debug).(matcher),
+		// Images (SPEC-033): GET /worlds/{w}/images/{asset_id} redirects to a freshly minted
+		// presigned URL; POST /worlds/{w}/images/portraits is the explicit, bounded trigger.
+		// A nil client is an ordinary state — the world runs, images simply stay absent.
+		NewImageHandler(pool, images, debug).(matcher),
+	}}
+}
+
 func main() {
 	url := os.Getenv("DATABASE_URL")
 	if url == "" {
@@ -52,32 +88,7 @@ func main() {
 		log.Fatalf("bridge: %v", err)
 	}
 
-	rt := &router{handlers: []matcher{
-		NewPageHandler(pool, debug, "actors", "fn_actor_page").(matcher),
-		NewPageHandler(pool, debug, "locations", "fn_location_page").(matcher),
-		NewPageHandler(pool, debug, "artifacts", "fn_artifact_page").(matcher),
-		NewIndexHandler(pool, debug, "actors", "actor").(matcher),
-		NewIndexHandler(pool, debug, "locations", "location").(matcher),
-		NewIndexHandler(pool, debug, "artifacts", "artifact").(matcher),
-		NewTimelineHandler(pool, debug).(matcher),
-		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
-		NewSceneHandler(pool, debug).(matcher),
-		// POST /worlds/{w}/beats and POST /worlds/{w}/beats/continue — the only write path; everything
-		// it commits goes through apply_event (D-1). The singular POST /worlds/{w}/beat endpoint is
-		// GONE (rung3 Task 5, founder-approved clean cutover — no alias, no deprecation shim; the only
-		// caller was the founder's own throwaway test page). beatsStreamHandler serves both routes,
-		// delivering the beat as a stream of validated frames (design §4.8, rung3 Task 3); continue
-		// skips decompose entirely — an empty chain against an active journey IS the continue press.
-		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
-		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
-		// /worlds/{id}, because it is what you call when you do not have an id yet.
-		NewWorldsHandler(pool, debug).(matcher),
-		// Images (SPEC-033): GET /worlds/{w}/images/{asset_id} redirects to a freshly minted
-		// presigned URL; POST /worlds/{w}/images/portraits is the explicit, bounded trigger.
-		// imageClient is nil when the platform is not configured, and that is an ordinary state —
-		// the world runs, images simply stay absent.
-		NewImageHandler(pool, newImageClientFromEnv(), debug).(matcher),
-	}}
+	rt := newRouter(pool, debug, bridge, newImageClientFromEnv())
 
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)

@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"net/http"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -24,9 +26,13 @@ import (
 // the answer is now a lookup with somewhere for auth to attach: when B1 lands it decides WHICH world
 // a caller may enter, and this function keeps working unchanged.
 //
-// A world with no player yet (created through POST /worlds, before anything is seeded into it) is a
-// real state, not a broken row — it returns a viewer-less error the handler renders as 404 rather
-// than 500, because "nobody plays this world yet" is an answer.
+// TWO ANSWERS AND ONE BREAKAGE. A world that does not exist and a world nobody plays yet are both
+// real states of the question "who do I play as here" — the answer is "nobody" — and both are 404.
+// Only a failed lookup is a 500. Before this the first case fell through pgx.ErrNoRows into the
+// generic error branch, so every world-scoped endpoint answered a typo'd or deleted world id with
+// `500 viewer resolution failed`: a broken-server signal for an ordinary client mistake, which is
+// exactly the conflation the errNoPlayerInWorld comment was already written to prevent for the
+// other half. Found by hand-driving /carrying; it was never specific to /carrying.
 func ResolveViewer(ctx context.Context, pool *pgxpool.Pool, worldID, debugOverride string, debug bool) (string, error) {
 	if debug && debugOverride != "" {
 		return debugOverride, nil
@@ -34,6 +40,9 @@ func ResolveViewer(ctx context.Context, pool *pgxpool.Pool, worldID, debugOverri
 	var id *string
 	if err := pool.QueryRow(ctx,
 		`SELECT player_entity_id::text FROM world WHERE world_id = $1`, worldID).Scan(&id); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return "", errNoSuchWorld
+		}
 		return "", err
 	}
 	if id == nil {
@@ -42,7 +51,25 @@ func ResolveViewer(ctx context.Context, pool *pgxpool.Pool, worldID, debugOverri
 	return *id, nil
 }
 
-// errNoPlayerInWorld distinguishes "this world has nobody to play as" from "the lookup failed". The
-// first is an ordinary answer about a world that exists but is not yet inhabited; the second is a
-// broken database. Conflating them is how a normal state becomes a 500.
-var errNoPlayerInWorld = errors.New("world has no player_entity_id")
+// The two "there is nobody to play as" answers. Both are 404 — an answer about a world, not a
+// broken server — and they are deliberately distinct so the body can say which.
+var (
+	errNoSuchWorld     = errors.New("no such world")
+	errNoPlayerInWorld = errors.New("this world has no player yet")
+)
+
+// writeNoViewer answers a ResolveViewer failure and reports whether it handled it. Every
+// world-scoped handler asks the same question — is this an answer or a breakage? — so it lives
+// here once instead of as the same eight-line branch copied into six files, which is how the
+// unknown-world case came to be handled in none of them.
+func writeNoViewer(w http.ResponseWriter, err error) bool {
+	switch {
+	case errors.Is(err, errNoSuchWorld), errors.Is(err, errNoPlayerInWorld):
+		http.Error(w, err.Error(), http.StatusNotFound)
+	case err != nil:
+		http.Error(w, "viewer resolution failed", http.StatusInternalServerError)
+	default:
+		return false
+	}
+	return true
+}
