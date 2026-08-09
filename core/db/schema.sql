@@ -1142,9 +1142,36 @@ CREATE FUNCTION public.fn_collected_knowledge(p_world_id uuid, p_viewer_id uuid,
       ON ce.event_id = v.source_event_id
     WHERE ce.event_type <> 'world_genesis'
   ),
+  -- Candidate topics: the other things these records are about — never the page's own subject, and
+  -- never the reader.
+  named_cosubject AS (
+    SELECT a.perception_id,
+           ps.entity_id,
+           fn_display_name(p_world_id, p_viewer_id, ps.entity_id) AS label
+    FROM about a
+    JOIN perception_subject ps
+      ON ps.perception_id = a.perception_id
+     AND ps.entity_id <> p_target_id
+     AND ps.entity_id <> p_viewer_id
+    WHERE fn_display_name(p_world_id, p_viewer_id, ps.entity_id) IS NOT NULL
+  ),
+  -- A topic is a thing that keeps coming up: how many of this page's records each candidate shares.
+  recurrence AS (
+    SELECT entity_id, label, count(DISTINCT perception_id) AS n
+    FROM named_cosubject
+    GROUP BY entity_id, label
+  ),
+  -- Exactly one topic per record — its strongest, deterministically.
+  filed AS (
+    SELECT DISTINCT ON (nc.perception_id)
+           nc.perception_id, nc.entity_id, nc.label
+    FROM named_cosubject nc
+    JOIN recurrence r ON r.entity_id = nc.entity_id
+    ORDER BY nc.perception_id, r.n DESC, nc.label, nc.entity_id
+  ),
   items AS (
-    SELECT a.source_event_id,
-           a.in_world_label,
+    SELECT coalesce(f.entity_id, p_target_id) AS group_entity,
+           f.label AS group_label,
            a.valid_tick AS sort_tick,
            a.perception_id,
            json_build_object(
@@ -1161,26 +1188,30 @@ CREATE FUNCTION public.fn_collected_knowledge(p_world_id uuid, p_viewer_id uuid,
                                  )
            ) AS item
     FROM about a
+    LEFT JOIN filed f ON f.perception_id = a.perception_id
   ),
   grouped AS (
-    SELECT i.source_event_id,
-           max(i.in_world_label) AS group_label,
-           max(i.sort_tick) AS group_sort_tick,
+    SELECT i.group_entity,
+           max(i.group_label) AS group_label,   -- one label per group; NULL for the remainder
+           count(*) AS n,
+           max(i.sort_tick) AS latest_tick,
            coalesce(
              json_agg(i.item ORDER BY i.sort_tick, i.perception_id),
              '[]'::json
            ) AS group_items
     FROM items i
-    GROUP BY i.source_event_id
+    GROUP BY i.group_entity
   )
   SELECT coalesce(
            json_agg(
              json_build_object(
-               'group_key',   'event:' || g.source_event_id::text,
+               'group_key',   'subject:' || g.group_entity::text,
                'group_label', g.group_label,
                'items',       g.group_items
              )
-             ORDER BY g.group_sort_tick DESC, g.source_event_id
+             -- Unheaded remainder first (a heading-less block between two headed groups reads as
+             -- theirs), then what recurs most, then what is most recent, then id.
+             ORDER BY (g.group_label IS NOT NULL), g.n DESC, g.latest_tick DESC, g.group_entity
            ),
            '[]'::json
          )
@@ -3879,4 +3910,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260808100004'),
     ('20260808100005'),
     ('20260808100006'),
-    ('20260809090001');
+    ('20260809090001'),
+    ('20260809090002');

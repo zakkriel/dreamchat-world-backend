@@ -89,9 +89,11 @@
             "additionalProperties": false,
             "properties": {
               "group_key": {
+                "description": "Stable group identity, 'subject:<entity uuid>' \u2014 the thing this group of knowledge is ABOUT. Collected Knowledge is grouped by subject, never by source event or by moment: about-ness (perception_subject, SPEC-008/ADR-035) is the only axis the world records that is genuinely a topic, and both Compendium PRDs forbid grouping by raw timeline/log order. A record about several things is filed under exactly ONE of them \u2014 the co-subject it recurs with most on this page, for this viewer \u2014 so no item is ever printed twice. The group whose key is 'subject:' + this page's own entity id is the REMAINDER (records about the page's subject and nothing else nameable); it is always emitted FIRST and always carries a null group_label.",
                 "type": "string"
               },
               "group_label": {
+                "description": "The viewer's own name for the group's subject (fn_display_name). NULL means the unheaded remainder group described in group_key \u2014 render its items directly under Collected Knowledge with no heading, because a heading-less block placed between two headed groups reads as belonging to the one above it. Groups after the remainder are ordered by recurrence (most records first), then recency, then id; items inside a group stay in in-world chronological order so a topic reads as it evolved.",
                 "type": [
                   "string",
                   "null"

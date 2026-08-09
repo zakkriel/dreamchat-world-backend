@@ -550,12 +550,23 @@ AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version ident
   `part_of` and `known_areas_inside` (`fn_location_page`): co-mention is not containment, and no
   containment edge exists in perception rows. Each needs a real signal, not a guess; **do not
   populate them from `*_state`** — that is the wall.
-- **Open defect this created, owned here.** Event-keyed grouping labels each group with that event's
-  `in_world_label`, which is the *moment* label (B-5's display companion to the logical tick), carried
-  forward by `trg_canon_event_carry_in_world_label` — neither unique nor a topic. Mara's dossier
-  renders **25 groups all headed "Arrival"** (frontend audit, 2026-08-09). Grouping by event is also
-  grouping by log order, which Actors PRD §10 ("grouped by topic, not by raw timeline/log order") and
-  the Artifacts PRD both forbid. **Owner:** BE, next chunk-4 pass.
+- **Defect this created — FIXED (2026-08-09), and the grouping is now by subject.** Event-keyed
+  grouping labelled each group with that event's `in_world_label`, which is the *moment* label
+  (B-5's display companion to the logical tick), carried forward by
+  `trg_canon_event_carry_in_world_label` — neither unique nor a topic. Mara's dossier rendered
+  **25 groups all headed "Arrival"** (frontend audit, 2026-08-09; reproduced before being fixed).
+  The label was the visible half: one group per event is one group per log line, which Actors PRD
+  §10 ("grouped by topic, not by raw timeline/log order") and the Artifacts PRD both forbid — so
+  merging groups that share a moment label would have swapped 25 headings for one "Arrival" holding
+  25 unrelated facts, still time and still a log.
+  `fn_collected_knowledge` now groups by **knowledge subject** (`group_key: "subject:<uuid>"`),
+  the only axis the world records that is genuinely a topic (`perception_subject`, SPEC-008 /
+  ADR-035). One group per record — its most-recurring co-subject — never repeated under each; the
+  viewer is never a topic; the unheaded remainder is keyed by the page's own id and comes first.
+  Measured: 28 groups → 3. **The payload shape does not move**, so `actor_page/2`,
+  `location_page/1` and `artifact_page/1` all stay put. Design:
+  `docs/superpowers/specs/2026-08-09-knowledge-grouping.md`; pgTAP:
+  `core/db/tests/26_knowledge_grouping_test.sql`.
 
 ---
 

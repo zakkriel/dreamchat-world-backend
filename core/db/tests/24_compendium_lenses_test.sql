@@ -57,8 +57,9 @@ SELECT ok( EXISTS (
          fn_actor_page('11111111-1111-1111-1111-111111111111',
                        'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
                        'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb')->'actor'->'collected_knowledge_groups') g
-  WHERE g->>'group_key' = 'event:e0000000-0000-0000-0000-000000000290'
-), 'collected_knowledge_groups are event-keyed, not target-id keyed');
+  WHERE g->>'group_key' = 'subject:a4000000-0000-0000-0000-0000000000a1'
+    AND g->>'group_label' = 'Sealed Note'
+), 'collected_knowledge_groups are subject-keyed: the multi-subject record files under a topic');
 
 SELECT ok( EXISTS (
   SELECT 1
