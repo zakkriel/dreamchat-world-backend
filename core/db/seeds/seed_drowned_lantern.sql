@@ -484,10 +484,20 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
 -- here is KADE, and because ResolveViewer could only look for an actor literally named 'Player',
 -- every non-debug request against the one world anyone actually plays used to 500 at the door.
 -- Theme is the tavern's own: lamplight gold, nocturne, filigree.
-INSERT INTO world (world_id, display_name, theme, player_entity_id) VALUES
+-- The tagline is AUTHORED FICTION and the seed is where it lives (GA-2): the service never composes
+-- one, so the only way a world has a line is that somebody wrote it here. Founder-approved verbatim
+-- 2026-08-09; do not reword it in passing.
+--
+-- DO UPDATE on the tagline specifically, and the rest still DO NOTHING. The seeds are re-run against
+-- a live shared database, and `ON CONFLICT DO NOTHING` is exactly how the SPEC-031 tuning nearly
+-- landed green while changing nothing in the only world anyone plays. The other columns keep DO
+-- NOTHING because they are identity, not content: re-seeding must never reset a world's player or
+-- rename it, but it MUST converge the fiction it owns.
+INSERT INTO world (world_id, display_name, tagline, theme, player_entity_id) VALUES
  ('22222222-2222-2222-2222-222222222222', 'The Drowned Lantern',
+  'A harbor town where everyone is owed something, and the tide keeps the ledger.',
   '{"schema_version":"world_theme/1","accent":"#c9a227","mood":"nocturne","ornament":"filigree"}'::jsonb,
   '2ac70000-0000-0000-0000-0000000000a1')
-ON CONFLICT (world_id) DO NOTHING;
+ON CONFLICT (world_id) DO UPDATE SET tagline = EXCLUDED.tagline;
 
 COMMIT;

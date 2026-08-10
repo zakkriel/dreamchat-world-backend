@@ -209,10 +209,13 @@ INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
 -- the actor named 'Player', which is what ResolveViewer's 0A convention was built around. Muted
 -- palette on purpose — this is the deterministic test fixture, and it should not look like the world
 -- anyone plays.
-INSERT INTO world (world_id, display_name, theme, player_entity_id) VALUES
+-- Founder-approved verbatim 2026-08-09. See the note in seed_drowned_lantern.sql for why the
+-- tagline specifically DO UPDATEs while the rest of the row does not.
+INSERT INTO world (world_id, display_name, tagline, theme, player_entity_id) VALUES
  ('11111111-1111-1111-1111-111111111111', 'Mara 0A Fixture',
+  'A test world. Two people, one room, and every rule watching.',
   '{"schema_version":"world_theme/1","accent":"#7a8b99","mood":"mist","ornament":"none"}'::jsonb,
   'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa')
-ON CONFLICT (world_id) DO NOTHING;
+ON CONFLICT (world_id) DO UPDATE SET tagline = EXCLUDED.tagline;
 
 COMMIT;
