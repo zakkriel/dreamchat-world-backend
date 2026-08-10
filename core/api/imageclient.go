@@ -40,6 +40,24 @@ const (
 	imageBaseURLEnv = "DREAMCHAT_IMAGE_BASE_URL"
 	imageTokenEnv   = "DREAMCHAT_IMAGE_API_TOKEN"
 
+	// Optional provider pin for the scene_capable route. EMPTY BY DEFAULT, which means "you route
+	// it" — which provider satisfies a capability is the platform's decision, not ours (D-3,
+	// mirrored), and hardcoding one here would freeze their router from the outside.
+	//
+	// It exists because the principle and the deployment disagreed, and the deployment won. Measured
+	// from their own startup log: `route_mock_text_to_image_{draft,high,standard}` are valid for
+	// scene_capable, `route_bfl_text_to_image_standard` is valid for scene_capable, and the service
+	// banner reads `image_provider: mock` — so an unpinned scene request resolves MOCK even with real
+	// keys present, and their operator note says so outright: "+fal configured — pin provider_id=fal
+	// to use it". Portraits escape this only by accident: identity work fail-closes mock
+	// (`synthetic_identity_disabled`), so fal wins by elimination. Scenes have no such elimination.
+	//
+	// So the choice is a config knob, not a constant, and it mirrors DREAMCHAT_RESOLVE_PROVIDER
+	// (main.go) — the pattern this repo already uses to re-point one seat without teaching the code a
+	// provider name. Unset it and we are back to letting them route. The real fix is theirs: a
+	// platform holding real keys should not default scene work to a mock provider.
+	imageSceneProviderEnv = "DREAMCHAT_IMAGE_SCENE_PROVIDER"
+
 	// The governance envelope's authorized_by must appear in the platform's
 	// GOVERNANCE_AUTHORIZED_ISSUERS allowlist, or the request is recorded as
 	// eligibility_blocked/unknown_issuer — silently under log_only, and 403 under enforce.
@@ -58,7 +76,10 @@ const (
 type imageClient struct {
 	baseURL string
 	token   string
-	http    *http.Client
+	// sceneProvider pins provider_id on the scene_capable route. Empty = unpinned; see
+	// imageSceneProviderEnv.
+	sceneProvider string
+	http          *http.Client
 }
 
 // newImageClientFromEnv returns nil when the platform is not configured. The token is read once at
@@ -68,7 +89,12 @@ func newImageClientFromEnv() *imageClient {
 	if base == "" || token == "" {
 		return nil
 	}
-	return &imageClient{baseURL: base, token: token, http: &http.Client{Timeout: 30 * time.Second}}
+	return &imageClient{
+		baseURL:       base,
+		token:         token,
+		sceneProvider: os.Getenv(imageSceneProviderEnv),
+		http:          &http.Client{Timeout: 30 * time.Second},
+	}
 }
 
 // imageAPIError carries the platform's own error taxonomy so callers can act on it rather than on a
@@ -289,23 +315,28 @@ func (c *imageClient) requestGeneration(ctx context.Context, identityID, idempot
 // authored, so a pack would be several images we did not ask for and an identity we have nothing to
 // anchor.
 //
-// provider_id is deliberately NOT pinned, though their doc notes pinning `bfl` resolves the BFL
-// scene route. Which provider satisfies scene_capable is the platform's routing decision, not ours
-// (D-3, mirrored): pinning it here would freeze their router from the outside and rot the day they
-// add a better scene model. If their routing sends this to a mock provider the portraits' own
-// lesson applies — the provenance check catches it immediately, and #58's reap makes the later flip
-// self-healing.
+// provider_id is sent only when DREAMCHAT_IMAGE_SCENE_PROVIDER is set, and unset is the default.
+// Which provider satisfies scene_capable is the platform's routing decision, not ours (D-3,
+// mirrored) — but measured against the live platform, an unpinned scene request resolves MOCK even
+// with real keys configured, so the knob exists and the deployment sets it. See
+// imageSceneProviderEnv for the routing evidence and why this is config rather than a constant.
 //
 // Same envelope discipline as requestGeneration: the caller pins issued_at and stores it with the
 // key, because their idempotency key hashes the whole body.
 func (c *imageClient) requestSceneGeneration(ctx context.Context, subjectID, worldID, styleID, description, idempotencyKey string, env govEnvelope) (string, error) {
-	var acc generationAccepted
-	err := c.do(ctx, http.MethodPost, "/v1/artifacts/"+subjectID+"/generate", map[string]any{
+	body := map[string]any{
 		"governance":       env,
 		"world_id":         worldID,
 		"style_profile_id": styleID,
 		"description":      description,
-	}, idempotencyKey, &acc)
+	}
+	// Included only when set, so an unpinned deployment sends a body with no provider_id at all
+	// rather than an explicit null their strict decoder would have to interpret.
+	if c.sceneProvider != "" {
+		body["provider_id"] = c.sceneProvider
+	}
+	var acc generationAccepted
+	err := c.do(ctx, http.MethodPost, "/v1/artifacts/"+subjectID+"/generate", body, idempotencyKey, &acc)
 	if err != nil {
 		return "", fmt.Errorf("requestSceneGeneration: %w", err)
 	}

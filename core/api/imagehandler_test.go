@@ -723,9 +723,10 @@ func TestFillScenes_ArchivedBackdropsAreReapedToo(t *testing.T) {
 //
 //   - The description sent is the world's OWN authored line, verbatim. Anything else — a template, a
 //     name, a composed "a {mood} {kind}" — would be this service writing fiction (GA-2).
-//   - provider_id is NOT pinned. Their doc notes pinning `bfl` resolves the BFL scene route, but
-//     which provider satisfies scene_capable is their routing decision (D-3, mirrored). Pinning it
-//     from here freezes their router from the outside and rots the day they add a better model.
+//   - provider_id is absent by DEFAULT: which provider satisfies scene_capable is their routing
+//     decision (D-3, mirrored). It is sent only when DREAMCHAT_IMAGE_SCENE_PROVIDER is set, which a
+//     deployment must do while their router still defaults scene work to mock — asserted both ways
+//     below, because "unpinned" and "pinned" are each a real deployment and each can break alone.
 func TestFillScenes_SendsAuthoredFictionVerbatimAndPinsNoProvider(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
@@ -757,6 +758,21 @@ func TestFillScenes_SendsAuthoredFictionVerbatimAndPinsNoProvider(t *testing.T) 
 	}
 	if f.sceneCalls != 1 {
 		t.Fatalf("scene route called %d times, want exactly 1", f.sceneCalls)
+	}
+
+	// Pinned: the deployment names a provider and it reaches the wire verbatim. Without this the
+	// live platform resolves `mock` for every backdrop and the founder is looking at mosaics again.
+	if _, err := pool.Exec(ctx, `UPDATE image_slot SET asset_id=NULL WHERE world_id=$1`, worldID); err != nil {
+		t.Fatalf("clear slot: %v", err)
+	}
+	f2 := newFakePlatform()
+	c := testImageClient(t, f2)
+	c.sceneProvider = "bfl"
+	if _, err := fillScenes(ctx, pool, c, worldID, 5); err != nil {
+		t.Fatalf("pinned fillScenes: %v", err)
+	}
+	if f2.lastScenePinnedProvider == nil || *f2.lastScenePinnedProvider != "bfl" {
+		t.Fatalf("pinned provider = %v, want bfl to reach the wire", f2.lastScenePinnedProvider)
 	}
 }
 
