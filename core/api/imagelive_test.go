@@ -223,3 +223,126 @@ func TestLive_PortraitsAreRealArt(t *testing.T) {
 		t.Fatal("no portrait was verified end to end")
 	}
 }
+
+// The LIVE scene batch: world cover + place backdrops for the play world, over the platform's
+// scene_capable route, then every image fetched back through THIS service's own endpoint and its
+// bytes decoded. Same gating and same proof standard as TestLive_PortraitsAreRealArt, and it SPENDS
+// MONEY — one generation per authored place plus one for the cover, paid once each thereafter.
+//
+//	DREAMCHAT_IMAGE_LIVE=1 DREAMCHAT_IMAGE_SCENE_BATCH=1 \
+//	DREAMCHAT_IMAGE_BASE_URL=http://localhost:8081 DREAMCHAT_IMAGE_API_TOKEN=... \
+//	DATABASE_URL=... go test -run TestLive_SceneBackdropsAreRealArt -timeout 30m -v .
+func TestLive_SceneBackdropsAreRealArt(t *testing.T) {
+	if os.Getenv("DREAMCHAT_IMAGE_LIVE") == "" || os.Getenv("DREAMCHAT_IMAGE_SCENE_BATCH") == "" {
+		t.Skip("needs DREAMCHAT_IMAGE_LIVE and DREAMCHAT_IMAGE_SCENE_BATCH — this one spends money")
+	}
+	client := newImageClientFromEnv()
+	if client == nil {
+		t.Fatal("DREAMCHAT_IMAGE_BASE_URL / DREAMCHAT_IMAGE_API_TOKEN not set")
+	}
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	const worldID = "22222222-2222-2222-2222-222222222222"
+
+	// The batch is capped at the platform's concurrency default, so drain it in rounds rather than
+	// raising the cap: the cap is the reason one call cannot outrun them.
+	for round := 1; round <= 4; round++ {
+		res, err := fillScenes(ctx, pool, client, worldID, imageBatchLimit)
+		if err != nil {
+			t.Fatalf("fillScenes round %d: %v", round, err)
+		}
+		fmt.Printf("LIVE scenes round %d: %+v\n", round, res)
+		if res.Requested == 0 && res.Reclaimed == 0 {
+			break
+		}
+	}
+
+	rows, err := pool.Query(ctx, `
+		SELECT s.owner_kind, s.owner_id::text, coalesce(s.asset_id,''), coalesce(s.last_error,''),
+		       coalesce(er.canonical_name, w.display_name, '?')
+		  FROM image_slot s
+		  LEFT JOIN entity_registry er ON er.world_id = s.world_id AND er.entity_id = s.owner_id
+		  LEFT JOIN world w ON w.world_id = s.owner_id
+		 WHERE s.world_id = $1 AND s.owner_kind IN ('world','location')
+		 ORDER BY s.owner_kind DESC, 5`, worldID)
+	if err != nil {
+		t.Fatalf("read slots: %v", err)
+	}
+	type slot struct{ kind, id, asset, lastErr, name string }
+	var slots []slot
+	for rows.Next() {
+		var s slot
+		if err := rows.Scan(&s.kind, &s.id, &s.asset, &s.lastErr, &s.name); err != nil {
+			rows.Close()
+			t.Fatalf("scan: %v", err)
+		}
+		slots = append(slots, s)
+	}
+	rows.Close()
+
+	h := NewImageHandler(pool, client, true)
+	checked := 0
+	for _, s := range slots {
+		if s.asset == "" {
+			t.Errorf("%s %q has no asset (last_error=%q)", s.kind, s.name, s.lastErr)
+			continue
+		}
+		var a struct {
+			Status     string `json:"status"`
+			ProviderID string `json:"provider_id"`
+			ModelID    string `json:"model_id"`
+		}
+		if err := client.do(ctx, http.MethodGet, "/v1/assets/"+s.asset, nil, "", &a); err != nil {
+			t.Errorf("asset %s: %v", s.asset, err)
+			continue
+		}
+		if a.Status == "archived" || a.Status == "failed" {
+			t.Errorf("%s %q still names a %s asset", s.kind, s.name, a.Status)
+		}
+		if a.ProviderID == "mock" || a.ModelID == "pm_mock_v1" {
+			t.Errorf("%s %q is mock art: provider=%s model=%s — the router did not resolve a real "+
+				"scene_capable route", s.kind, s.name, a.ProviderID, a.ModelID)
+		}
+
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet,
+			"/worlds/"+worldID+"/images/"+s.asset+"?tier=preview", nil))
+		if rec.Code != http.StatusFound {
+			t.Errorf("fetch %s: status %d, want 302", s.asset, rec.Code)
+			continue
+		}
+		resp, err := http.Get(rec.Header().Get("Location"))
+		if err != nil {
+			t.Errorf("follow redirect for %s: %v", s.asset, err)
+			continue
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		img, err := png.Decode(bytes.NewReader(raw))
+		if err != nil {
+			t.Errorf("decode %s: %v (%d bytes)", s.asset, err, len(raw))
+			continue
+		}
+		colours := map[uint32]struct{}{}
+		b := img.Bounds()
+		for y := b.Min.Y; y < b.Max.Y; y += 2 {
+			for x := b.Min.X; x < b.Max.X; x += 2 {
+				r, g, bl, _ := img.At(x, y).RGBA()
+				colours[r>>8<<16|g>>8<<8|bl>>8] = struct{}{}
+			}
+		}
+		fmt.Printf("LIVE %-8s %-24s asset=%s provider=%s model=%s status=%s %dx%d %d bytes %d colours\n",
+			s.kind, s.name, s.asset, a.ProviderID, a.ModelID, a.Status, b.Dx(), b.Dy(), len(raw), len(colours))
+		if len(colours) < 256 {
+			t.Errorf("%s %q renders %d distinct colours — that is a colour grid, not a backdrop",
+				s.kind, s.name, len(colours))
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("no backdrop was verified end to end")
+	}
+	fmt.Printf("LIVE scene batch verified: %d image(s)\n", checked)
+}
