@@ -40,45 +40,46 @@ SELECT is(
 );
 
 -- (e) THE REGRESSION: the fan-out writes what the holder perceived, not what the referee wrote.
---     Commit a Communicated event whose summary names Jonas, then read Kade's own perception row.
---     'told' requires Kade as an addressed listener.
+--     An ActorMoved event, which is the shape the founder's leak actually took — the polluted rows
+--     on the live world were ActorMoved and AttributeChanged, not speech. Speech is deliberately NOT
+--     used here: since SPEC-033 an utterance TEACHES the names in it (see 26_hearing_teaches), so a
+--     Communicated fixture would test the learning path while claiming to test the wall.
 -- Separate statements on purpose: a data-modifying CTE is not visible to a function called in the
 -- same statement, so generate_perceptions would see no participants and write nothing.
 WITH ins AS (
   INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin)
-  VALUES (:'w'::uuid, 'Communicated',
-          'Jonas warns the stranger away from Mara.', 900, 0, 'accepted', 'freeform')
+  VALUES (:'w'::uuid, 'ActorMoved',
+          'Jonas steps into the stranger''s path, blocking the way to Mara.', 900, 0, 'accepted', 'freeform')
   RETURNING event_id
 )
 SELECT event_id INTO TEMP ev FROM ins;
 
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
-SELECT ev.event_id, x.id, 'actor', x.role FROM ev,
-  (VALUES (:'mara'::uuid, 'speaker'), (:'kade'::uuid, 'listener')) AS x(id, role);
+SELECT ev.event_id, :'kade'::uuid, 'actor', 'instigator' FROM ev;
 
 SELECT generate_perceptions((SELECT event_id FROM ev));
 
 SELECT is(
   (SELECT content FROM perception_record
     WHERE world_id = :'w'::uuid AND holder_id = :'kade'::uuid AND acquired_tick = 900),
-  'the muscle by the bar warns the stranger away from Mara.',
-  '(e) generate_perceptions renders the listener''s row in the LISTENER''S vocabulary'
+  'the muscle by the bar steps into the stranger''s path, blocking the way to Mara.',
+  '(e) generate_perceptions renders the mover''s row in the MOVER''S vocabulary'
 );
 
 -- (f) canon is untouched: the referee's true account keeps the canonical name (immutability, D-1;
 --     I-1 replay reads canon, not this projection)
 SELECT is(
   (SELECT summary FROM canon_event WHERE world_id = :'w'::uuid AND in_world_tick = 900),
-  'Jonas warns the stranger away from Mara.',
+  'Jonas steps into the stranger''s path, blocking the way to Mara.',
   '(f) canon_event.summary still says Jonas — the wall bounds perception, it does not rewrite truth'
 );
 
--- (g) the speaker earned every name in her own line, so her row is unchanged
+-- (g) the same sentence for a holder who HAS earned the name is left alone — per-viewer, not a
+--     global censor.
 SELECT is(
-  (SELECT content FROM perception_record
-    WHERE world_id = :'w'::uuid AND holder_id = :'mara'::uuid AND acquired_tick = 900),
-  'Jonas warns the stranger away from Mara.',
-  '(g) the speaker''s own row is not scrubbed of names she holds'
+  fn_viewer_text(:'w'::uuid, :'mara'::uuid, 'Jonas steps into the path, blocking the way.'),
+  'Jonas steps into the path, blocking the way.',
+  '(g) Mara knows him, so her rendering keeps the name'
 );
 
 -- (h) THE BALLAST CRATE. The registry says "Ballast Crate"; Kade's label is "the ballast crate".
