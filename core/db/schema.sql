@@ -2274,6 +2274,38 @@ $$;
 
 
 --
+-- Name: fn_unearned_names(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) RETURNS TABLE(canonical_name text, label text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT er.canonical_name, fn_display_name(p_world_id, p_viewer, er.entity_id)
+  FROM entity_registry er
+  WHERE er.world_id = p_world_id
+    AND er.canonical_name IS NOT NULL
+    AND er.canonical_name <> ''
+    -- A holder always knows who HE is: rewriting a man's own name to the descriptor strangers use
+    -- for him is not perception, it is amnesia.
+    AND er.entity_id IS DISTINCT FROM p_viewer
+    -- No knowledge path: fn_display_name fell through to something other than the registry name.
+    -- When they AGREE the name is either earned or the only label the world has, and inventing a
+    -- placeholder for the latter would fabricate a perception.
+    AND fn_display_name(p_world_id, p_viewer, er.entity_id) IS DISTINCT FROM er.canonical_name
+    -- ...and the label does not already contain the name (the Ballast Crate case).
+    AND position(lower(er.canonical_name) IN lower(coalesce(fn_display_name(p_world_id, p_viewer, er.entity_id), ''))) = 0
+  ORDER BY length(er.canonical_name) DESC  -- longest first: "Hooded Companion" before "Hooded"
+$$;
+
+
+--
+-- Name: FUNCTION fn_unearned_names(p_world_id uuid, p_viewer uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) IS 'The canonical names a viewer has NOT earned, with the label he holds instead. The single definition behind both the perception seam (fn_viewer_text) and the API-boundary belt (NamingWall in core/api) — naming reach, RULINGS-2026-07-23 §3.';
+
+
+--
 -- Name: fn_viewer_text(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2288,34 +2320,12 @@ BEGIN
     RETURN p_text;
   END IF;
 
-  -- Longest name first: "Hooded Companion" must be rewritten before "Hooded" can match inside it and
-  -- leave a mangled remainder.
-  FOR r IN
-    SELECT er.canonical_name AS canon,
-           fn_display_name(p_world_id, p_holder, er.entity_id) AS label
-    FROM entity_registry er
-    WHERE er.world_id = p_world_id
-      AND er.canonical_name IS NOT NULL
-      AND er.canonical_name <> ''
-      -- A holder always knows who HE is. Without this, Mara's own memory of an event reads "Jonas
-      -- warns the stranger away from the keeper" — her own name replaced by the descriptor strangers
-      -- use for her, which is not a perception, it is amnesia. (fn_perceived_name has no self→self
-      -- row for seeded actors, so the general rule below would otherwise catch every holder in his
-      -- own text.) For the player this also produces better prose: his own name survives into the
-      -- narrate payload, where the YOU ARE block binds it to "you".
-      AND er.entity_id <> p_holder
-      -- Nothing to do when the holder has earned the name, and nothing SAFE to do when the world
-      -- offers no other label (fn_display_name falls back to canonical): rewriting it to a
-      -- placeholder would invent a perception. The Go-side belt reports that case rather than hiding
-      -- it, so a cast member seeded without a descriptor is a loud data defect, not a silent leak.
-      AND fn_display_name(p_world_id, p_holder, er.entity_id) IS DISTINCT FROM er.canonical_name
-    ORDER BY length(er.canonical_name) DESC
-  LOOP
-    -- \m..\M are word boundaries: a name must not be rewritten inside a longer word. The name is
-    -- regexp-escaped because it is world data — an actor called "St. John" would otherwise be a
-    -- pattern. 'gi' because prose capitalises freely at a sentence start.
+  FOR r IN SELECT * FROM fn_unearned_names(p_world_id, p_holder) LOOP
+    -- \m..\M are word boundaries so a name is never rewritten inside a longer word; the name is
+    -- regexp-escaped because it is world data (an actor called "St. John" would otherwise be a
+    -- pattern); 'gi' because prose capitalises freely at a sentence start.
     outtxt := regexp_replace(outtxt,
-                             '\m' || regexp_replace(r.canon, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') || '\M',
+                             '\m' || regexp_replace(r.canonical_name, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') || '\M',
                              r.label, 'gi');
   END LOOP;
 
@@ -3989,4 +3999,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090002'),
     ('20260809090003'),
     ('20260809090004'),
-    ('20260809090005');
+    ('20260809090005'),
+    ('20260809090006');

@@ -4,7 +4,7 @@
 -- that name. The narrator was faithful — his OWN perception rows carried it, because both fan-out
 -- writers copied one canonically-named string into every holder's row.
 BEGIN;
-SELECT plan(7);
+SELECT plan(9);
 
 \set w '22222222-2222-2222-2222-222222222222'
 \set kade '2ac70000-0000-0000-0000-0000000000a1'
@@ -79,6 +79,23 @@ SELECT is(
     WHERE world_id = :'w'::uuid AND holder_id = :'mara'::uuid AND acquired_tick = 900),
   'Jonas warns the stranger away from Mara.',
   '(g) the speaker''s own row is not scrubbed of names she holds'
+);
+
+-- (h) THE BALLAST CRATE. The registry says "Ballast Crate"; Kade's label is "the ballast crate".
+--     They differ by an article, so the name carries no knowledge he lacks — and the belt rejected a
+--     correct narration line over it in live play before fn_unearned_names got the containment rule.
+SELECT is(
+  fn_viewer_text(:'w'::uuid, :'kade'::uuid, 'He shoves past the ballast crate.'),
+  'He shoves past the ballast crate.',
+  '(h) a label that already CONTAINS the canonical name is not a breach'
+);
+
+-- (i) ...and the narrow reading is kept: a name the label does NOT contain is still guarded, which is
+--     why this is a containment rule and not "artifacts are exempt".
+SELECT ok(
+  EXISTS (SELECT 1 FROM fn_unearned_names(:'w'::uuid, :'kade'::uuid) WHERE canonical_name = 'Jonas')
+  AND NOT EXISTS (SELECT 1 FROM fn_unearned_names(:'w'::uuid, :'kade'::uuid) WHERE canonical_name = 'Ballast Crate'),
+  '(i) fn_unearned_names guards Jonas and releases Ballast Crate — one definition, both callers'
 );
 
 SELECT * FROM finish();
