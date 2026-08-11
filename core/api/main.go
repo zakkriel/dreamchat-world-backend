@@ -106,7 +106,13 @@ func main() {
 	}
 	handler := withCORS(mux, corsAllowed)
 
+	// The port is assigned by the platform in a hosted deployment (Railway injects PORT) and fixed
+	// at 8080 everywhere else — local dev, compose, stack.sh and every runbook say 8080, so that
+	// stays the default rather than becoming a thing you have to remember to set.
 	addr := ":8080"
+	if p := os.Getenv("PORT"); p != "" {
+		addr = ":" + p
+	}
 	if len(corsAllowed) == 0 {
 		log.Printf("CORS: disabled (%s unset) — browsers on other origins cannot call this API", corsOriginsEnv)
 	} else {
