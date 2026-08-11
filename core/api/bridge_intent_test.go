@@ -178,7 +178,11 @@ func TestFakeIntent_RefusesWithoutASchema(t *testing.T) {
 func TestFakeBridge_FactoryBuiltSeatsProduceTheirOwnShape(t *testing.T) {
 	t.Setenv("DREAMCHAT_BRIDGE", "fake")
 
-	bridge, err := NewBridge(defaultSeatConfig(), DefaultDriverFactory,
+	cfg, err := seatConfig(osLookup)
+	if err != nil {
+		t.Fatalf("seatConfig: %v", err)
+	}
+	bridge, err := NewBridge(cfg, DefaultDriverFactory,
 		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor)
 	if err != nil {
 		t.Fatalf("NewBridge with the fake seat config: %v", err)
