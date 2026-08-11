@@ -48,6 +48,8 @@ const (
 	seatRoutingEnvFmt = "DREAMCHAT_SEAT_ROUTING_%s"
 	// Per-seat completion budget. Same precedence rule as routing.
 	seatMaxTokensEnvFmt = "DREAMCHAT_SEAT_MAX_TOKENS_%s"
+	// Per-seat sampling temperature. Same precedence rule again.
+	seatTemperatureEnvFmt = "DREAMCHAT_SEAT_TEMPERATURE_%s"
 
 	// dialectOpenAICompat is the lingua franca: chat/completions as popularised by OpenAI and spoken
 	// by most hosted providers. It is the default because assuming it is right far more often than
@@ -190,6 +192,7 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 	}
 	routing := routingFor(seat, provider, lookup)
 	maxTokens := perSeatOrProvider(seat, provider, "MAX_TOKENS", seatMaxTokensEnvFmt, lookup)
+	temperature := perSeatOrProvider(seat, provider, "TEMPERATURE", seatTemperatureEnvFmt, lookup)
 	dialect := env("DIALECT")
 	if dialect == "" {
 		dialect = dialectOpenAICompat
@@ -216,6 +219,9 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 			// Completion budget. Empty means the driver's default; see the driver for why sending
 			// one at all is not optional against an aggregator.
 			"max_tokens": maxTokens,
+			// Sampling temperature. Empty means "do not send one" — the provider's default stands.
+			// Set it to 0 on the seats whose output is a classification rather than a performance.
+			"temperature": temperature,
 		}
 		return DriverConfig{Provider: dialect, Model: model, Params: params}, nil
 	case dialectAnthropic:
