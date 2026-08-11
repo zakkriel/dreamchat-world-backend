@@ -54,6 +54,14 @@ type openAICompatDriver struct {
 	// case the field is omitted entirely rather than sent empty — a plain provider does not know
 	// what "provider" means and some reject unknown fields.
 	routing json.RawMessage
+	// reasoning is the aggregator's reasoning-control object, validated as JSON at construction and
+	// sent verbatim. Unset leaves the MODEL'S OWN default in force, and that default is not neutral:
+	// the mechanical model here advertises default_effort "high", which spends roughly 80% of
+	// max_tokens thinking before a token of answer exists. Measured live, that is exactly how
+	// decompose died twice in front of the founder — finish_reason "length", content null, the whole
+	// 1024-token budget consumed by reasoning. With {"effort":"none"} the same call returns 0
+	// reasoning tokens, 54 completion tokens and a valid chain.
+	reasoning json.RawMessage
 	// maxTokens is the completion budget sent on every request. NOT optional against an aggregator:
 	// with no max_tokens it reserves the MODEL'S FULL completion window up front and refuses the
 	// call if the account cannot afford that reservation — measured live, a request with no cap was
@@ -134,6 +142,13 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		}
 		routing = json.RawMessage(r)
 	}
+	var reasoning json.RawMessage
+	if r := strings.TrimSpace(dc.Params["reasoning"]); r != "" {
+		if !json.Valid([]byte(r)) {
+			return nil, fmt.Errorf("openai-compat: reasoning policy is not valid JSON: %.80s", r)
+		}
+		reasoning = json.RawMessage(r)
+	}
 	return &openAICompatDriver{
 		name:        alias + ":" + model,
 		model:       model,
@@ -141,6 +156,7 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		apiKey:      apiKey,
 		jsonMode:    jsonMode,
 		routing:     routing,
+		reasoning:   reasoning,
 		maxTokens:   maxTokens,
 		temperature: temperature,
 		client:      &http.Client{Timeout: 60 * time.Second},
@@ -171,6 +187,9 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	}
 	if o.temperature != nil {
 		body["temperature"] = *o.temperature
+	}
+	if o.reasoning != nil {
+		body["reasoning"] = o.reasoning
 	}
 	// The routing policy rides EVERY request, structured or not: a free-text narration is exactly as
 	// subject to "which jurisdiction, which retention policy" as a schema'd one.
