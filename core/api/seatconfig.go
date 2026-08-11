@@ -44,6 +44,8 @@ const (
 	seatDefaultEnv = "DREAMCHAT_SEAT_DEFAULT"
 	seatsEnv       = "DREAMCHAT_SEATS"
 	providerEnvFmt = "DREAMCHAT_PROVIDER_%s_%s"
+	// Per-seat routing override. Wins over the provider-level policy when both are set.
+	seatRoutingEnvFmt = "DREAMCHAT_SEAT_ROUTING_%s"
 
 	// dialectOpenAICompat is the lingua franca: chat/completions as popularised by OpenAI and spoken
 	// by most hosted providers. It is the default because assuming it is right far more often than
@@ -88,7 +90,7 @@ func seatConfigFromEnv(lookup func(string) string) (SeatConfig, error) {
 		if !ok {
 			spec = def
 		}
-		dc, err := driverConfigFor(spec, lookup)
+		dc, err := driverConfigForSeat(name, spec, lookup)
 		if err != nil {
 			return nil, fmt.Errorf("seat %q: %w", name, err)
 		}
@@ -133,7 +135,36 @@ func knownSeat(name string) bool {
 // driverConfigFor turns "provider:model" plus that provider's environment into a DriverConfig.
 // A model may itself contain colons (some providers namespace as "vendor/model:tag"), so only the
 // FIRST colon separates.
+// routingFor resolves the request-routing policy for a seat: an aggregator such as OpenRouter takes
+// a preferences object that decides WHICH underlying host serves the request — data-retention
+// policy, jurisdiction, which companies are excluded, whether an endpoint must support the
+// parameters we send.
+//
+// It is CONFIGURATION and never a constant, for the same reason provider names are. The founder's
+// current policy is US/EU hosts only, data_collection deny, one company excluded — but that is a
+// commercial and legal judgement that will change without this code changing, and a policy compiled
+// into a binary is a policy nobody can correct without a deploy. The seat-level knob wins over the
+// provider-level one, because a narrative seat may want to trade price for throughput while the
+// mechanical seats do not.
+//
+// The value is passed through verbatim as JSON rather than modelled as a struct: the aggregator owns
+// that schema, it gains fields regularly, and a struct here would silently drop any field this repo
+// had not heard of — turning "policy not yet supported" into "policy silently not applied", which is
+// the worst possible failure for a field whose whole job is compliance.
+func routingFor(seat, provider string, lookup func(string) string) string {
+	if seat != "" {
+		if v := strings.TrimSpace(lookup(fmt.Sprintf(seatRoutingEnvFmt, envKey(seat)))); v != "" {
+			return v
+		}
+	}
+	return strings.TrimSpace(lookup(fmt.Sprintf(providerEnvFmt, envKey(provider), "ROUTING")))
+}
+
 func driverConfigFor(spec string, lookup func(string) string) (DriverConfig, error) {
+	return driverConfigForSeat("", spec, lookup)
+}
+
+func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverConfig, error) {
 	provider, model, ok := strings.Cut(strings.TrimSpace(spec), ":")
 	provider, model = strings.TrimSpace(provider), strings.TrimSpace(model)
 	if !ok || provider == "" || model == "" {
@@ -148,6 +179,7 @@ func driverConfigFor(spec string, lookup func(string) string) (DriverConfig, err
 	env := func(suffix string) string {
 		return strings.TrimSpace(lookup(fmt.Sprintf(providerEnvFmt, envKey(provider), suffix)))
 	}
+	routing := routingFor(seat, provider, lookup)
 	dialect := env("DIALECT")
 	if dialect == "" {
 		dialect = dialectOpenAICompat
@@ -168,6 +200,9 @@ func driverConfigFor(spec string, lookup func(string) string) (DriverConfig, err
 			// Carried so a driver's Name(), and therefore every log line and trace frame, says which
 			// provider answered. Without it four seats on four providers are indistinguishable.
 			"provider_alias": provider,
+			// Routing policy, verbatim JSON, merged into the request body as an extra field. See
+			// routingFor for why it is configuration and not a constant.
+			"routing": routing,
 		}
 		return DriverConfig{Provider: dialect, Model: model, Params: params}, nil
 	case dialectAnthropic:
@@ -210,7 +245,11 @@ func describeSeatConfig(cfg SeatConfig) string {
 		if a := dc.Params["provider_alias"]; a != "" {
 			alias = a
 		}
-		parts = append(parts, fmt.Sprintf("%s=%s:%s", seat, alias, dc.Model))
+		policy := "unrouted"
+		if dc.Params["routing"] != "" {
+			policy = "routed"
+		}
+		parts = append(parts, fmt.Sprintf("%s=%s:%s(%s)", seat, alias, dc.Model, policy))
 	}
 	sort.Strings(parts)
 	return strings.Join(parts, " ")

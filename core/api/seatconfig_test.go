@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -260,5 +261,121 @@ func TestOpenAICompat_SatisfiesEveryStructuredSeat(t *testing.T) {
 		if _, err := BindSeat(seat, d); err != nil {
 			t.Fatalf("seat %s will not bind: %v", seat.Name, err)
 		}
+	}
+}
+
+// ── routing policy ──────────────────────────────────────────────────────────────────────────────
+
+// The founder's policy — US/EU hosts only, no data collection, one company excluded — must reach the
+// wire verbatim on EVERY request, and must be configuration rather than a constant. This pins both:
+// the provider-level policy applies to seats that do not override, and a seat-level policy wins.
+func TestSeatConfig_RoutingPolicyIsPerSeatConfiguration(t *testing.T) {
+	const providerPolicy = `{"only":["deepinfra","parasail"],"data_collection":"deny","ignore":["deepseek"],"require_parameters":true}`
+	const narratePolicy = `{"only":["novita"],"data_collection":"deny","ignore":["deepseek"],"sort":"throughput"}`
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":            "route:cheap-model",
+		"DREAMCHAT_SEATS":                   "narrate=route:big-model",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL": "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_API_KEY":  "sk-x",
+		"DREAMCHAT_PROVIDER_ROUTE_ROUTING":  providerPolicy,
+		"DREAMCHAT_SEAT_ROUTING_NARRATE":    narratePolicy,
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["routing"]; got != providerPolicy {
+		t.Fatalf("decompose routing = %s, want the provider policy", got)
+	}
+	if got := cfg["narrate"].Params["routing"]; got != narratePolicy {
+		t.Fatalf("narrate routing = %s, want the seat override to win", got)
+	}
+	// Every seat must be policed — an unrouted seat is a compliance hole, and the boot line says so.
+	for seat, dc := range cfg {
+		if dc.Params["routing"] == "" {
+			t.Fatalf("seat %s carries no routing policy", seat)
+		}
+	}
+	if d := describeSeatConfig(cfg); !strings.Contains(d, "narrate=route:big-model(routed)") {
+		t.Fatalf("describeSeatConfig = %q, want each seat's policy state visible at boot", d)
+	}
+}
+
+// An unpoliced seat must be VISIBLE rather than silently permissive: the boot line is the only place
+// an operator finds out before a request leaves the building.
+func TestSeatConfig_UnroutedSeatIsVisibleAtBoot(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":        "p:m",
+		"DREAMCHAT_PROVIDER_P_BASE_URL": "https://p.example/v1",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if !strings.Contains(describeSeatConfig(cfg), "(unrouted)") {
+		t.Fatal("a seat with no routing policy must announce itself at boot")
+	}
+}
+
+// The policy reaches the wire VERBATIM under "provider", on structured and free-text requests alike:
+// a narration is exactly as subject to jurisdiction and retention rules as a schema'd call.
+func TestOpenAICompat_SendsRoutingPolicyOnEveryRequest(t *testing.T) {
+	const policy = `{"only":["deepinfra"],"data_collection":"deny","ignore":["deepseek"],"require_parameters":true}`
+	for _, structured := range []bool{true, false} {
+		var got map[string]any
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_ = json.NewDecoder(r.Body).Decode(&got)
+			_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+		}))
+		defer srv.Close()
+		d, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+			"base_url": srv.URL, "routing": policy, "provider_alias": "route"}})
+		if err != nil {
+			t.Fatalf("newOpenAICompatDriver: %v", err)
+		}
+		req := GenRequest{Prompt: "p"}
+		if structured {
+			req.Schema = json.RawMessage(`{"type":"object"}`)
+		}
+		if _, err := d.Generate(t.Context(), req); err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		sent, err := json.Marshal(got["provider"])
+		if err != nil {
+			t.Fatalf("marshal provider block: %v", err)
+		}
+		var want, have any
+		_ = json.Unmarshal([]byte(policy), &want)
+		_ = json.Unmarshal(sent, &have)
+		if fmt.Sprint(want) != fmt.Sprint(have) {
+			t.Fatalf("structured=%v: provider block = %s, want the policy verbatim", structured, sent)
+		}
+	}
+}
+
+// No policy configured must send NO provider field at all. A plain provider does not know what
+// "provider" means and some reject unknown fields outright.
+func TestOpenAICompat_OmitsTheProviderFieldWhenUnrouted(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if _, present := got["provider"]; present {
+		t.Fatal("an unrouted driver must omit the provider field entirely")
+	}
+}
+
+// Malformed policy fails at CONSTRUCTION — i.e. at boot with the seat named — not with a 400 in the
+// middle of a founder playtest. Compliance config that fails late fails in front of the person it
+// was meant to protect.
+func TestOpenAICompat_RejectsMalformedRoutingAtConstruction(t *testing.T) {
+	_, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": "https://x.example/v1", "routing": `{"only":["deepinfra"`}})
+	if err == nil || !strings.Contains(err.Error(), "routing policy") {
+		t.Fatalf("err = %v, want a malformed policy rejected at construction", err)
 	}
 }
