@@ -1382,6 +1382,7 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 		rawRuling, genErr := o.Resolve.Generate(ctx, GenRequest{
 			Schema: json.RawMessage(rulingV2SchemaJSON),
 			Prompt: p,
+			Repair: retry > 0,
 		})
 		if genErr != nil {
 			log.Printf("adjudicate: resolve Generate failed (seat=%s, actors=%v, attempt=%d/2): %v", o.Resolve.Name(), actorIDs, retry+1, genErr)

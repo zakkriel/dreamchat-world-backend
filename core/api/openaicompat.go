@@ -18,6 +18,7 @@ package main
 //   "api_key"  — bearer token
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -177,6 +178,12 @@ const (
 	jsonModeOff = "off"
 )
 
+// repairTemperature is what a pinned-to-zero seat uses on a RETRY, so the second attempt can differ
+// from the first. Small on purpose: the seat is still mechanical, it just must not be stuck.
+const repairTemperature = 0.3
+
+const ()
+
 func (o *openAICompatDriver) Name() string { return o.name }
 
 // Capabilities reports CapStructuredOutput because this driver ENFORCES it, which is the distinction
@@ -189,13 +196,23 @@ func (o *openAICompatDriver) Capabilities() CapabilitySet {
 	return CapabilitySet{CapStructuredOutput: true}
 }
 
-func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+// requestBody assembles the chat/completions body for this seat. Shared by Generate and
+// GenerateStream so the two can never drift on the parts that matter — the leash, the routing
+// policy, the budget, the reasoning directive.
+func (o *openAICompatDriver) requestBody(req GenRequest) (map[string]any, error) {
 	body := map[string]any{
 		"model":      o.model,
 		"max_tokens": o.maxTokens,
 	}
 	if o.temperature != nil {
-		body["temperature"] = *o.temperature
+		t := *o.temperature
+		// A repair at temperature 0 re-asks a deterministic model the same question and gets the same
+		// refusal — see GenRequest.Repair. The nudge is deliberately small: enough to explore a
+		// different phrasing, not enough to turn a mechanical seat into a creative one.
+		if req.Repair && t == 0 {
+			t = repairTemperature
+		}
+		body["temperature"] = t
 	}
 	if o.reasoning != nil {
 		body["reasoning"] = o.reasoning
@@ -224,11 +241,7 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 		}
 		// jsonModeOff: the leash is the system message plus the belt, and nothing constrains decoding.
 		if o.jsonMode == jsonModeOff {
-			raw, err := o.post(ctx, body)
-			if err != nil {
-				return "", err
-			}
-			return o.content(raw)
+			return body, nil
 		}
 		// json_object CANNOT express an array-rooted schema — the mode's whole contract is "the reply
 		// is a JSON object". Measured live: beat_chain/2 is array-rooted, and under json_object the
@@ -237,7 +250,7 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 		// a response-format mismatch, and cost a live debugging session to see through. Refuse the
 		// combination instead of sending a request that cannot succeed.
 		if o.jsonMode == jsonModeObject && schemaRootIsArray(req.Schema) {
-			return "", fmt.Errorf("openai-compat: this seat's schema is array-rooted and json_mode is "+
+			return nil, fmt.Errorf("openai-compat: this seat's schema is array-rooted and json_mode is "+
 				"%s, which mandates an object — set JSON_MODE=%s for this provider", jsonModeObject, jsonModeSchema)
 		}
 		if o.jsonMode == jsonModeSchema {
@@ -262,6 +275,14 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 		}
 	}
 
+	return body, nil
+}
+
+func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	body, err := o.requestBody(req)
+	if err != nil {
+		return "", err
+	}
 	raw, err := o.post(ctx, body)
 	if err != nil {
 		return "", err
@@ -375,4 +396,83 @@ func schemaRootIsArray(schema json.RawMessage) bool {
 		}
 	}
 	return false
+}
+
+// GenerateStream is the same request with stream:true, delivering each content delta to onDelta as it
+// arrives and returning the accumulated text — the identical contract Generate honours, plus the
+// callback. Implementing it is what turns the narrate seat's existing line-by-line path on
+// (beatsstream.narrateStream): the frames it emits are the SAME narration frames a non-streaming beat
+// emits, just as soon as each line closes instead of after the whole reply. No new frame kind, no
+// contract change — and the belts still run per line BEFORE anything reaches the wire, which is the
+// property that made line-level acceptable where token-level deltas were not.
+func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest, onDelta func(string)) (string, error) {
+	body, err := o.requestBody(req)
+	if err != nil {
+		return "", err
+	}
+	body["stream"] = true
+
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return "", fmt.Errorf("openai-compat: marshal: %w", err)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(buf))
+	if err != nil {
+		return "", fmt.Errorf("openai-compat: build request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if o.apiKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+o.apiKey)
+	}
+
+	res, err := o.client.Do(httpReq)
+	if err != nil {
+		return "", fmt.Errorf("openai-compat: request: %w", err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		out, _ := io.ReadAll(io.LimitReader(res.Body, 4<<10))
+		return "", fmt.Errorf("openai-compat: status %d: %s", res.StatusCode, out)
+	}
+
+	var full strings.Builder
+	sc := bufio.NewScanner(res.Body)
+	// A single SSE frame can carry a whole paragraph; the default 64 KiB token limit would truncate
+	// mid-stream and look like a model that stopped talking.
+	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
+	for sc.Scan() {
+		line := strings.TrimSpace(sc.Text())
+		if !strings.HasPrefix(line, "data:") {
+			continue // comments, keep-alives and blank separators
+		}
+		payload := strings.TrimSpace(line[5:])
+		if payload == "[DONE]" {
+			break
+		}
+		var chunk struct {
+			Choices []struct {
+				Delta struct {
+					Content string `json:"content"`
+				} `json:"delta"`
+				FinishReason string `json:"finish_reason"`
+			} `json:"choices"`
+		}
+		// A malformed chunk is skipped rather than fatal: the stream is still delivering, and killing
+		// a beat over one unparseable frame would trade a whole narration for a hiccup.
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil || len(chunk.Choices) == 0 {
+			continue
+		}
+		if d := chunk.Choices[0].Delta.Content; d != "" {
+			full.WriteString(d)
+			onDelta(d)
+		}
+	}
+	if err := sc.Err(); err != nil {
+		return full.String(), fmt.Errorf("openai-compat: read stream: %w", err)
+	}
+	if full.Len() == 0 {
+		return "", fmt.Errorf("openai-compat: stream produced no content")
+	}
+	return full.String(), nil
 }

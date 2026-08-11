@@ -414,7 +414,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt > 0 && lastErr != nil {
 				prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
 			}
-			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)})
+			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON), Repair: attempt > 0})
 			if genErr != nil {
 				log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
 				lastErr = genErr
