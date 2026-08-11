@@ -592,3 +592,55 @@ func (f *inlineCommitCognitionDriver) Generate(_ context.Context, req GenRequest
 	}
 	return f.json, nil
 }
+
+// The counters that decide whether the generate/commit split is worth 6-8h against the D-1 seam.
+// They are instrumentation, so what matters is that they cannot mislead: the fan-out must count the
+// adjudicated width of a batch and ignore passthrough and "none", and it must keep the WIDEST batch
+// rather than the last, because one wide batch in a beat is the case worth parallelising.
+func TestOrchestrator_NPCFanoutCountsOnlyAdjudicatedWidth(t *testing.T) {
+	o := &Orchestrator{}
+	if adj, fan := o.BeatCounters(); adj != 0 || fan != 0 {
+		t.Fatalf("a fresh beat starts at 0/0, got %d/%d", adj, fan)
+	}
+
+	// A wide batch, then a narrow one: the maximum must survive.
+	o.noteNPCFanout(3)
+	o.noteNPCFanout(1)
+	if _, fan := o.BeatCounters(); fan != 3 {
+		t.Fatalf("npc_fanout = %d, want the widest batch (3) — a later narrow batch does not undo it", fan)
+	}
+
+	o.adjudications.Add(1)
+	o.adjudications.Add(1)
+	if adj, _ := o.BeatCounters(); adj != 2 {
+		t.Fatalf("adjudications = %d, want 2", adj)
+	}
+}
+
+// The width counted must be the number of decisions that will each cost a resolve round trip:
+// passthrough types are gated structurally and never reach the seat, and "none" is a skip.
+func TestOrchestrator_FanoutIgnoresPassthroughAndNone(t *testing.T) {
+	adjudicatedWidth := func(decisions []NPCDecision) int {
+		n := 0
+		for _, dec := range decisions {
+			if dec.Reaction != nil && dec.Reaction.CommitKind == "commit" {
+				switch dec.Reaction.Attempt.Type {
+				case "ActorMoved", "Communicated", "ObjectRelocated":
+				default:
+					n++
+				}
+			}
+		}
+		return n
+	}
+	decisions := []NPCDecision{
+		{Reaction: nil}, // none
+		{Reaction: &NPCReaction{CommitKind: "commit", Attempt: Attempt{Type: "ActorMoved"}}},          // passthrough
+		{Reaction: &NPCReaction{CommitKind: "commit", Attempt: Attempt{Type: "AttributeChanged"}}},    // adjudicated
+		{Reaction: &NPCReaction{CommitKind: "commit", Attempt: Attempt{Type: "EntityDestroyed"}}},     // adjudicated
+		{Reaction: &NPCReaction{CommitKind: "telegraph", Attempt: Attempt{Type: "AttributeChanged"}}}, // telegraph, not a ruling
+	}
+	if got := adjudicatedWidth(decisions); got != 2 {
+		t.Fatalf("adjudicated width = %d, want 2 — only the two that cost a resolve round trip", got)
+	}
+}

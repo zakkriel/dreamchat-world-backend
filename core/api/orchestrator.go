@@ -7,6 +7,7 @@ import (
 	"log"
 	"math"
 	"sort"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,6 +33,42 @@ type Orchestrator struct {
 	CognitionIsolated Driver
 	WorldActor        Driver
 	PlaceAuthor       Driver
+
+	// ── the parallelism question, instrumented instead of guessed ───────────────────────────────
+	// Parallelising the resolve fan-out was approved on my reading of a three-beat log and withdrawn
+	// once the code showed adjudicate GENERATES AND COMMITS in one call, at (tick, localSeq), against
+	// a UNIQUE index on (world_id, in_world_tick, beat_seq). Doing it safely means splitting generate
+	// from commit — a refactor of the seam every D-1 ruling passes through — and it is only worth
+	// that if a real session actually produces beats with several adjudications to overlap.
+	//
+	// These two counters answer that from play rather than from argument:
+	//   adjudications  every adjudicate call this beat, wherever it came from — the cost.
+	//   npcFanout      the WIDEST single applyNPCDecisions batch — the parallelisable width, and the
+	//                  only number that decides the refactor. The player's own chain is sequential by
+	//                  construction (attempt N+1's tick depends on attempt N's duration), so its
+	//                  adjudications can never overlap however many there are.
+	// A fanout that is habitually 0 or 1 means there is nothing to overlap and the answer is no.
+	//
+	// Atomic because this counter exists to inform a decision about concurrency: the day someone does
+	// fan these out, a plain int here would be the data race their new code trips over.
+	adjudications atomic.Int64
+	npcFanout     atomic.Int64
+}
+
+// BeatCounters reports this beat's adjudication shape for the timing log.
+func (o *Orchestrator) BeatCounters() (adjudications, npcFanout int64) {
+	return o.adjudications.Load(), o.npcFanout.Load()
+}
+
+// noteNPCFanout records the widest adjudicated batch seen, keeping the maximum rather than the last:
+// one wide batch in a beat is the case worth parallelising, and a later narrow one does not undo it.
+func (o *Orchestrator) noteNPCFanout(n int) {
+	for {
+		cur := o.npcFanout.Load()
+		if int64(n) <= cur || o.npcFanout.CompareAndSwap(cur, int64(n)) {
+			return
+		}
+	}
 }
 
 // BeatOutcome is the result of RunBeat.
@@ -855,6 +892,20 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 // this stub with the held-outcome write + beat-end).
 func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, decisions []NPCDecision, tick int64, startSeq int, res *worldFirstResult, trace *BeatTrace) (int, error) {
 	localSeq := startSeq
+	// The parallelisable width: decisions in THIS batch that will each take a resolve round trip.
+	// Counted before the loop so it measures the batch, not how far the loop got before an error.
+	adjudicated := 0
+	for _, dec := range decisions {
+		if dec.Reaction != nil && dec.Reaction.CommitKind == "commit" {
+			switch dec.Reaction.Attempt.Type {
+			case "ActorMoved", "Communicated", "ObjectRelocated": // passthrough — no ruling
+			default:
+				adjudicated++
+			}
+		}
+	}
+	o.noteNPCFanout(adjudicated)
+
 	for _, dec := range decisions {
 		if dec.Reaction == nil {
 			continue // "none" — the mind does nothing this moment
@@ -1268,6 +1319,7 @@ func collectParticipantIDsFromAttempts(attempts []Attempt) []string {
 // playerAnswer is empty on every call except RunReactionBeat's empty-chain branch
 // (RULINGS-2026-07-24 §7) — see buildResolvePrompt for the rendering rule.
 func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []ActorAttempt, resolveHeldIDs []string, tick int64, curSeq int, playerAnswer string, postCommit postCommitFn, trace *BeatTrace) (adjResult, error) {
+	o.adjudications.Add(1)
 	// Flatten the raw attempts for participant-ID collection and slice gathering.
 	attempts := make([]Attempt, 0, len(set))
 	for _, aa := range set {
