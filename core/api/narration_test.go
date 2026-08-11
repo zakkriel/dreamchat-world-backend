@@ -73,12 +73,15 @@ func TestDecodeAndValidateNarration_NarrationWithSpeakerRejected(t *testing.T) {
 	}
 }
 
-// Empty text is rejected (schema minLength 1, re-enforced by the belt).
+// A narration with no words in it is rejected (schema minLength 1, re-enforced by the belt). A blank
+// segment ALONGSIDE real prose is now dropped rather than fatal — see
+// TestNarration_BlankSegmentsAreDroppedNotFatal — but a narration that is nothing but blanks said
+// nothing, and the caller must fall back rather than emit silence.
 func TestDecodeAndValidateNarration_EmptyTextRejected(t *testing.T) {
 	raw := `[{"speaker_id":null,"kind":"narration","text":""}]`
 	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
-	if err == nil || !strings.Contains(err.Error(), "empty") {
-		t.Fatalf("empty text must be rejected, got err=%v", err)
+	if err == nil || !strings.Contains(err.Error(), "no segment with any text") {
+		t.Fatalf("a wholly empty narration must be rejected, got err=%v", err)
 	}
 }
 
@@ -186,5 +189,41 @@ func TestNarratorFactSheet_BandsAndSurvivesGarbage(t *testing.T) {
 	// passes through rather than costing the beat its answer.
 	if got := narratorFactSheet(json.RawMessage(`not json`)); got != "not json" {
 		t.Fatalf("unparseable fact sheet = %q, want it passed through verbatim", got)
+	}
+}
+
+// A blank segment is DROPPED, not fatal. Strict json_schema decoding requires every declared
+// property on every element, so a model with nothing to say in a slot cannot omit it — it emits
+// `"text": ""`. Measured live: refusing the array for that cost three narrate calls and ~12s of dead
+// air to render a paragraph that had arrived correctly on the first one.
+func TestNarration_BlankSegmentsAreDroppedNotFatal(t *testing.T) {
+	raw := `[{"speaker_id":null,"kind":"narration","text":""},
+	         {"speaker_id":null,"kind":"narration","text":"The tide mutters against the quay."}]`
+	segs, err := DecodeAndValidateNarration(raw, nil, nil)
+	if err != nil {
+		t.Fatalf("a blank leading segment must not cost the whole narration: %v", err)
+	}
+	if len(segs) != 1 || segs[0].Text != "The tide mutters against the quay." {
+		t.Fatalf("segments = %+v, want just the one with words in it", segs)
+	}
+}
+
+// All-blank is a model that genuinely said nothing, and that IS an error — the widening is about
+// what counts as an acceptable ARRAY, never about accepting an empty narration.
+func TestNarration_AllBlankIsStillAnError(t *testing.T) {
+	_, err := DecodeAndValidateNarration(
+		`[{"speaker_id":null,"kind":"narration","text":""},{"speaker_id":null,"kind":"narration","text":"   "}]`, nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "no segment with any text") {
+		t.Fatalf("err = %v, want an all-blank narration rejected", err)
+	}
+}
+
+// The belts still run on what survives: a blank segment must not become a way to smuggle a ghost
+// speaker past the wall by hiding behind an earlier empty element.
+func TestNarration_BeltsStillRunAfterDropping(t *testing.T) {
+	raw := `[{"speaker_id":null,"kind":"narration","text":""},
+	         {"speaker_id":"11111111-1111-1111-1111-111111111111","kind":"speech","text":"I never said this."}]`
+	if _, err := DecodeAndValidateNarration(raw, nil, nil); err == nil {
+		t.Fatal("a ghost speaker after a dropped blank must still be refused")
 	}
 }
