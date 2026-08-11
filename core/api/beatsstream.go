@@ -267,8 +267,18 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (timedDriver) say where it went; this says what he waited. Deferred so it is logged on EVERY
 	// exit including the error frames, because a beat that died slowly is the one worth knowing about.
 	beatStart := time.Now()
+	orc := &Orchestrator{
+		DB:                h.pool,
+		Resolve:           h.bridge.Driver(SeatResolve.Name),
+		CognitionBatch:    h.bridge.Driver(SeatCognitionBatch.Name),
+		CognitionIsolated: h.bridge.Driver(SeatCognitionIsolated.Name),
+		WorldActor:        h.bridge.Driver(SeatWorldActor.Name),
+		PlaceAuthor:       h.bridge.Driver(SeatPlaceAuthor.Name),
+	}
 	defer func() {
-		log.Printf("beat timing: total_ms=%d world=%s continue=%v", time.Since(beatStart).Milliseconds(), worldID, continuePress)
+		adj, fanout := orc.BeatCounters()
+		log.Printf("beat timing: total_ms=%d world=%s continue=%v adjudications=%d npc_fanout=%d",
+			time.Since(beatStart).Milliseconds(), worldID, continuePress, adj, fanout)
 	}()
 
 	frames, ok := newFrameWriter(w)
@@ -313,15 +323,6 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if err := frames.emit("interpretation", interpretationFrame{Chain: chain}); err != nil {
 		log.Printf("beats stream: interpretation frame: %v", err)
 		return
-	}
-
-	orc := &Orchestrator{
-		DB:                h.pool,
-		Resolve:           h.bridge.Driver(SeatResolve.Name),
-		CognitionBatch:    h.bridge.Driver(SeatCognitionBatch.Name),
-		CognitionIsolated: h.bridge.Driver(SeatCognitionIsolated.Name),
-		WorldActor:        h.bridge.Driver(SeatWorldActor.Name),
-		PlaceAuthor:       h.bridge.Driver(SeatPlaceAuthor.Name),
 	}
 
 	var startTick int64
