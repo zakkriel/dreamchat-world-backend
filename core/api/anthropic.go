@@ -40,13 +40,22 @@ type anthropicDriver struct {
 }
 
 func newAnthropicDriver(dc DriverConfig) (Driver, error) {
-	model := dc.Model
-	if model == "" {
-		model = "claude-opus-4-8"
+	// No default model. There used to be a hardcoded one here, which is how "provider-neutral"
+	// quietly became "Anthropic unless you say otherwise": a config that named no model still got a
+	// working Claude. The seat config always supplies provider:model now, so an empty one is a bug
+	// worth saying out loud.
+	if dc.Model == "" {
+		return nil, fmt.Errorf("anthropic: Model is required")
+	}
+	// The key rides Params like every other provider's, so one scheme configures all of them.
+	// ANTHROPIC_API_KEY stays as a fallback because it is what an operator will reach for first.
+	apiKey := dc.Params["api_key"]
+	if apiKey == "" {
+		apiKey = os.Getenv("ANTHROPIC_API_KEY")
 	}
 	return &anthropicDriver{
-		model:  model,
-		apiKey: os.Getenv("ANTHROPIC_API_KEY"),
+		model:  dc.Model,
+		apiKey: apiKey,
 		client: &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
@@ -55,7 +64,9 @@ func (a *anthropicDriver) Name() string { return "anthropic:" + a.model }
 
 // Reports structured output: the binding contract is satisfied via forced tool-use below. A seat with
 // CapStructuredOutput required (decompose) therefore binds; the actual constraint is applied per call.
-func (a *anthropicDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (a *anthropicDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (a *anthropicDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	if a.apiKey == "" {
@@ -94,7 +105,7 @@ func (a *anthropicDriver) Generate(ctx context.Context, req GenRequest) (string,
 	if err != nil {
 		return "", err
 	}
-if req.Schema != nil {
+	if req.Schema != nil {
 		input, err := extractToolInput(resp, "emit_beat_chain")
 		if err != nil {
 			return "", err

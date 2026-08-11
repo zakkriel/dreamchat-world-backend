@@ -32,7 +32,22 @@ type openAICompatDriver struct {
 	model   string
 	baseURL string
 	apiKey  string
-	client  *http.Client
+	// jsonMode is how a structured request is constrained on the wire. Two values, both real:
+	//
+	//   json_object  universal. Every provider that speaks this dialect supports it. The schema
+	//                travels in the system message and the model is told to answer with one JSON
+	//                document; the Go validator decides whether it did.
+	//   json_schema  strict, where the provider implements it: the schema goes in the request as a
+	//                first-class field and the provider constrains decoding to it. Strictly better
+	//                when available, and a 400 from a provider that does not implement it — which is
+	//                why it is opt-in per provider rather than assumed.
+	//
+	// Tool-call forcing is deliberately NOT a third path here. It is the anthropic driver's leash
+	// because that dialect has no JSON mode; for this dialect it would reach the same place by a
+	// longer road, and an unexercised third branch on the seat path is exactly the kind of surface
+	// that hides a defect until a live beat finds it.
+	jsonMode string
+	client   *http.Client
 }
 
 // newOpenAICompatDriver constructs an openai-compat driver from DriverConfig.
@@ -51,19 +66,43 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 	if model == "" {
 		return nil, fmt.Errorf("openai-compat: Model is required")
 	}
+	jsonMode := dc.Params["json_mode"]
+	if jsonMode == "" {
+		jsonMode = jsonModeObject
+	}
+	if jsonMode != jsonModeObject && jsonMode != jsonModeSchema {
+		return nil, fmt.Errorf("openai-compat: unknown json_mode %q (known: %s, %s)",
+			jsonMode, jsonModeObject, jsonModeSchema)
+	}
+	// The name is what every log line, error and trace frame says about who answered. With four
+	// seats on four providers, "openai-compat:<model>" alone cannot tell you which one failed.
+	alias := dc.Params["provider_alias"]
+	if alias == "" {
+		alias = "openai-compat"
+	}
 	return &openAICompatDriver{
-		name:    "openai-compat:" + model,
-		model:   model,
-		baseURL: baseURL,
-		apiKey:  apiKey,
-		client:  &http.Client{Timeout: 60 * time.Second},
+		name:     alias + ":" + model,
+		model:    model,
+		baseURL:  baseURL,
+		apiKey:   apiKey,
+		jsonMode: jsonMode,
+		client:   &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
 
+const (
+	jsonModeObject = "json_object"
+	jsonModeSchema = "json_schema"
+)
+
 func (o *openAICompatDriver) Name() string { return o.name }
 
-// Capabilities reports CapStructuredOutput: the json_object flag + the Go validation belt + the
-// repair path form the enforcement chain — same trust class as the anthropic driver (D-13).
+// Capabilities reports CapStructuredOutput because this driver ENFORCES it, which is the distinction
+// bridge.go insists on: a capability is a report of what a driver does, never a label from config.
+// What it does is send the schema as the leash (in the request under json_schema, in the system
+// message under json_object), and the Go validator plus the caller's retry decide acceptance. A
+// provider that ignores the flag entirely does not slip through — it fails validation and the seat
+// rejects it, which is the same trust class as the anthropic driver's tool-use leash (D-13).
 func (o *openAICompatDriver) Capabilities() CapabilitySet {
 	return CapabilitySet{CapStructuredOutput: true}
 }
@@ -80,7 +119,21 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 			map[string]any{"role": "system", "content": systemContent},
 			map[string]any{"role": "user", "content": req.Prompt},
 		}
-		body["response_format"] = map[string]any{"type": "json_object"}
+		if o.jsonMode == jsonModeSchema {
+			// The provider constrains decoding itself. The system-message leash above stays anyway:
+			// it costs a few tokens and it is what the model reads if the provider's strict mode is
+			// advisory rather than enforced, which is not something we can tell from out here.
+			body["response_format"] = map[string]any{
+				"type": jsonModeSchema,
+				"json_schema": map[string]any{
+					"name":   "seat_output",
+					"schema": json.RawMessage(req.Schema),
+					"strict": true,
+				},
+			}
+		} else {
+			body["response_format"] = map[string]any{"type": jsonModeObject}
+		}
 	} else {
 		// Free-text: single user message, no response_format.
 		body["messages"] = []any{
