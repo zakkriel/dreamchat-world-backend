@@ -379,3 +379,74 @@ func TestOpenAICompat_RejectsMalformedRoutingAtConstruction(t *testing.T) {
 		t.Fatalf("err = %v, want a malformed policy rejected at construction", err)
 	}
 }
+
+// Every request must carry a completion budget. Measured live: with no max_tokens an aggregator
+// reserves the model's FULL completion window and refuses the call — 402 "you requested up to 65536
+// tokens, but can only afford 11478" on an account with money in it. It is also the only ceiling on
+// a reasoning model's spend, since reasoning tokens bill at the completion rate.
+func TestOpenAICompat_AlwaysSendsACompletionBudget(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got["max_tokens"] != float64(defaultMaxTokens) {
+		t.Fatalf("max_tokens = %v, want the default %d — an uncapped request is refused outright", got["max_tokens"], defaultMaxTokens)
+	}
+
+	d2, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "max_tokens": "4096"}})
+	if _, err := d2.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got["max_tokens"] != float64(4096) {
+		t.Fatalf("max_tokens = %v, want the configured 4096", got["max_tokens"])
+	}
+
+	if _, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "max_tokens": "lots"}}); err == nil {
+		t.Fatal("a non-numeric max_tokens must be rejected at construction")
+	}
+}
+
+// A reasoning model can spend its whole budget thinking and return null content. That must be an
+// error that NAMES the cause, not an empty string that surfaces as a schema failure two retries
+// later, blaming the model for what is a budget problem.
+func TestOpenAICompat_NullContentNamesTheBudget(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":null},"finish_reason":"length"}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	_, err := d.Generate(t.Context(), GenRequest{Prompt: "p"})
+	if err == nil || !strings.Contains(err.Error(), "max_tokens") || !strings.Contains(err.Error(), "length") {
+		t.Fatalf("err = %v, want it to name both the finish reason and the budget", err)
+	}
+}
+
+// The budget follows the same seat-beats-provider precedence as the routing policy: narration needs
+// more room than a schema'd seat, and that is a per-seat fact.
+func TestSeatConfig_MaxTokensIsPerSeatConfiguration(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":              "route:cheap",
+		"DREAMCHAT_SEATS":                     "narrate=route:big",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":   "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_MAX_TOKENS": "1024",
+		"DREAMCHAT_SEAT_MAX_TOKENS_NARRATE":   "3072",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["max_tokens"]; got != "1024" {
+		t.Fatalf("decompose max_tokens = %q, want the provider default", got)
+	}
+	if got := cfg["narrate"].Params["max_tokens"]; got != "3072" {
+		t.Fatalf("narrate max_tokens = %q, want the seat override", got)
+	}
+}
