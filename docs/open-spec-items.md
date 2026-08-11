@@ -827,6 +827,33 @@ around.
 handover makes it permanent.
 
 ## SPEC-033 — Learning a name by earshot
+**Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
+the viewer's perceived scene becomes earned — direct address and introduction included; overhearing
+across the room counts only when the world says the viewer could hear it. Implemented in migration
+`20260809090007`: `name_knowledge` (perception layer, never canon) + `fn_perceived_name` reading it
+alongside genesis-seeded knowledge, with the learning write inside `generate_perceptions` — the same
+fan-out the naming wall renders through, so the two cannot drift.
+
+**"Could hear" is not re-decided**: it is exactly "the fan-out wrote this holder a perception row for
+the utterance", which today means the speaker and the ADDRESSED listeners. Co-present overhearers
+remain the documented §3 deferral — when that rule lands, hearing-teaches follows it for free.
+
+**Ordering is the design**: name-knowledge is written BEFORE the holder's content is rendered, so
+`fn_viewer_text` sees a name he has just earned and leaves it standing. The wall keeps its single
+rule and needs no exemption for speech. Proven by `26_hearing_teaches_test.sql` (8 assertions) and
+`TestNamingWall_AdmitsANameTheViewerJustLearned`.
+
+**One honest limit, deliberately unresolved**: a Communicated event's perception content is the whole
+line the engine wrote, and the repo's own belt already treats it as carrying the spoken words
+(`beathandler.go:148-156`). So a name appearing anywhere in that line is taught. When a summary is a
+referee paraphrase rather than verbatim speech ("Mara acknowledges him with a dry question"), a third
+party named in it is taught slightly too easily. Narrowing it needs a structured spoken-text field on
+the event, which the thin slice does not have — noted rather than guessed at.
+
+---
+
+### Original entry (the question, before the ruling)
+
 `fn_viewer_text` (migration `20260809090005`) renders perception content in the holder's own
 vocabulary, and it does so for **speech as well as narration**. That closes the naming-wall breach
 the founder caught in play, and it leaves one honest gap behind it: when an NPC says a name **aloud

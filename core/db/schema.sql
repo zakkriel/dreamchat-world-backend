@@ -1952,6 +1952,22 @@ $$;
 
 
 --
+-- Name: fn_names_in_text(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_names_in_text(p_world_id uuid, p_text text) RETURNS TABLE(entity_id uuid, canonical_name text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT er.entity_id, er.canonical_name
+  FROM entity_registry er
+  WHERE er.world_id = p_world_id
+    AND er.canonical_name IS NOT NULL
+    AND er.canonical_name <> ''
+    AND p_text ~* ('\m' || fn_regexp_quote(er.canonical_name) || '\M')
+$$;
+
+
+--
 -- Name: fn_nearest_common_parent(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2034,12 +2050,18 @@ $$;
 CREATE FUNCTION public.fn_perceived_name(p_world_id uuid, p_viewer_id uuid, p_entity_id uuid) RETURNS text
     LANGUAGE sql STABLE
     AS $$
-  SELECT vp.content
-  FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
-  JOIN perception_subject ps ON ps.perception_id = vp.perception_id AND ps.entity_id = p_entity_id
-  JOIN canon_event ce ON ce.event_id = vp.source_event_id
-  WHERE ce.event_type = 'world_genesis'
-  ORDER BY vp.acquired_tick
+  SELECT nm FROM (
+    SELECT vp.content AS nm, vp.acquired_tick AS t
+    FROM fn_visible_perceptions(p_world_id, p_viewer_id) vp
+    JOIN perception_subject ps ON ps.perception_id = vp.perception_id AND ps.entity_id = p_entity_id
+    JOIN canon_event ce ON ce.event_id = vp.source_event_id
+    WHERE ce.event_type = 'world_genesis'
+    UNION ALL
+    SELECT nk.name, nk.learned_tick
+    FROM name_knowledge nk
+    WHERE nk.world_id = p_world_id AND nk.holder_id = p_viewer_id AND nk.entity_id = p_entity_id
+  ) sources
+  ORDER BY t
   LIMIT 1;
 $$;
 
@@ -2205,6 +2227,15 @@ $$;
 
 
 --
+-- Name: fn_regexp_quote(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_regexp_quote(p_text text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT
+    AS $_$ SELECT regexp_replace(p_text, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') $_$;
+
+
+--
 -- Name: fn_target_position(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2311,7 +2342,7 @@ COMMENT ON FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) IS 
 
 CREATE FUNCTION public.fn_viewer_text(p_world_id uuid, p_holder uuid, p_text text) RETURNS text
     LANGUAGE plpgsql STABLE
-    AS $_$
+    AS $$
 DECLARE
   r      record;
   outtxt text := p_text;
@@ -2321,16 +2352,13 @@ BEGIN
   END IF;
 
   FOR r IN SELECT * FROM fn_unearned_names(p_world_id, p_holder) LOOP
-    -- \m..\M are word boundaries so a name is never rewritten inside a longer word; the name is
-    -- regexp-escaped because it is world data (an actor called "St. John" would otherwise be a
-    -- pattern); 'gi' because prose capitalises freely at a sentence start.
     outtxt := regexp_replace(outtxt,
-                             '\m' || regexp_replace(r.canonical_name, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') || '\M',
+                             '\m' || fn_regexp_quote(r.canonical_name) || '\M',
                              r.label, 'gi');
   END LOOP;
 
   RETURN outtxt;
-END $_$;
+END $$;
 
 
 --
@@ -2670,12 +2698,18 @@ BEGIN
     SELECT entity_id INTO spk FROM event_participant
       WHERE event_id = p_event_id AND role_qualifier = 'speaker' LIMIT 1;
     IF spk IS NOT NULL THEN
+      -- SPEC-033: a name in what was said is earned by whoever heard it said.
+      INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
+      SELECT ev.world_id, spk, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
+        FROM fn_names_in_text(ev.world_id, ev.summary) t
+       WHERE t.entity_id <> spk
+      ON CONFLICT DO NOTHING;
+
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
       VALUES (ev.world_id, spk, p_event_id, fn_viewer_text(ev.world_id, spk, ev.summary), 'shared',
               ev.in_world_tick, ev.in_world_tick)
       RETURNING perception_id INTO pid;
-      -- about-ness: subjects = the source event's participants (RULINGS-2026-07-23 §6).
       INSERT INTO perception_subject (perception_id, entity_id, world_id)
       SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
       WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
@@ -2683,6 +2717,13 @@ BEGIN
     END IF;
     FOR lst IN SELECT entity_id FROM event_participant
                  WHERE event_id = p_event_id AND role_qualifier = 'listener' LOOP
+      -- SPEC-033, the reported case: Mara says "Jonas" where Kade can hear it, and Kade learns it.
+      INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
+      SELECT ev.world_id, lst, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
+        FROM fn_names_in_text(ev.world_id, ev.summary) t
+       WHERE t.entity_id <> lst
+      ON CONFLICT DO NOTHING;
+
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
       VALUES (ev.world_id, lst, p_event_id, fn_viewer_text(ev.world_id, lst, ev.summary), 'told',
@@ -2696,7 +2737,6 @@ BEGIN
   END IF;
 
   IF ev.event_type IN ('move', 'ActorMoved') THEN
-    -- mover + destination, from the move's own location mutation.
     DECLARE
       mover uuid;
       dest  uuid;
@@ -2708,20 +2748,15 @@ BEGIN
       SELECT (new_value #>> '{}')::uuid INTO dest FROM state_mutation
         WHERE event_id = p_event_id AND attribute_path = 'attrs.location_id' LIMIT 1;
       IF mover IS NOT NULL THEN
-        -- witnessing: the mover perceives their own move ('direct').
         INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                        acquired_tick, valid_tick)
         VALUES (ev.world_id, mover, p_event_id, fn_viewer_text(ev.world_id, mover, ev.summary),
                 'direct', ev.in_world_tick, ev.in_world_tick)
         RETURNING perception_id INTO pid;
-        -- about-ness: subjects = the source event's participants (RULINGS-2026-07-23 §6).
         INSERT INTO perception_subject (perception_id, entity_id, world_id)
         SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
         WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
         n := n + 1;
-        -- discovery-on-arrival (§4 trigger 2): the mover perceives each actor ALREADY at dest
-        -- (exclude self). Each carries an explicit subject link → the stop-check reads about-ness.
-        -- UNTOUCHED: this loop already wrote subjects before this migration.
         IF dest IS NOT NULL THEN
           FOR other IN SELECT entity_id FROM fn_actors_at(ev.world_id, dest)
                         WHERE entity_id <> mover LOOP
@@ -3119,6 +3154,28 @@ CREATE TABLE public.movement_type (
 
 
 --
+-- Name: name_knowledge; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.name_knowledge (
+    world_id uuid NOT NULL,
+    holder_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    name text NOT NULL,
+    learned_tick bigint NOT NULL,
+    source_event_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE name_knowledge; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.name_knowledge IS 'Names a holder has learned IN PLAY (SPEC-033). Genesis-seeded name-knowledge stays in perception_record; fn_perceived_name reads both. Perception layer, never canon.';
+
+
+--
 -- Name: perception_subject; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3424,6 +3481,14 @@ ALTER TABLE ONLY public.location_state
 
 ALTER TABLE ONLY public.movement_type
     ADD CONSTRAINT movement_type_pkey PRIMARY KEY (world_id, movement_type_id);
+
+
+--
+-- Name: name_knowledge name_knowledge_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.name_knowledge
+    ADD CONSTRAINT name_knowledge_pkey PRIMARY KEY (world_id, holder_id, entity_id);
 
 
 --
@@ -3884,6 +3949,14 @@ ALTER TABLE ONLY public.movement_type
 
 
 --
+-- Name: name_knowledge name_knowledge_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.name_knowledge
+    ADD CONSTRAINT name_knowledge_source_event_id_fkey FOREIGN KEY (source_event_id) REFERENCES public.canon_event(event_id);
+
+
+--
 -- Name: perception_record perception_record_source_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4000,4 +4073,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090003'),
     ('20260809090004'),
     ('20260809090005'),
-    ('20260809090006');
+    ('20260809090006'),
+    ('20260809090007');
