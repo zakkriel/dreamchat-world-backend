@@ -501,3 +501,61 @@ func TestSchemaRootIsArray(t *testing.T) {
 		}
 	}
 }
+
+// Temperature is a SEAT property and the seats genuinely differ, so it is configured, not constant.
+// Measured twice on the same input at the provider default: the founder's "I look around, who is
+// there?" decomposed once to QUERY committing nothing, and once to ActorMoved committing three canon
+// events — a question that moved the player. A mechanical seat left at a sampling default is a coin
+// flip wearing a schema.
+func TestSeatConfig_TemperatureIsPerSeatConfiguration(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":               "route:m",
+		"DREAMCHAT_SEATS":                      "narrate=route:big",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":    "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_TEMPERATURE": "0",
+		"DREAMCHAT_SEAT_TEMPERATURE_NARRATE":   "0.9",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["temperature"]; got != "0" {
+		t.Fatalf("decompose temperature = %q, want the provider default 0", got)
+	}
+	if got := cfg["narrate"].Params["temperature"]; got != "0.9" {
+		t.Fatalf("narrate temperature = %q, want the seat override — prose is a performance", got)
+	}
+}
+
+// Unset means UNSENT: the provider's own default stands rather than this service imposing a value
+// on a seat nobody has reasoned about.
+func TestOpenAICompat_TemperatureOnlyWhenConfigured(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if _, present := got["temperature"]; present {
+		t.Fatal("an unconfigured temperature must not be sent")
+	}
+
+	// Zero is a REAL value, not an absent one — the whole point for a mechanical seat.
+	d0, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "temperature": "0"}})
+	if _, err := d0.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got["temperature"] != float64(0) {
+		t.Fatalf("temperature = %v, want a literal 0 on the wire", got["temperature"])
+	}
+
+	if _, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "temperature": "hot"}}); err == nil {
+		t.Fatal("a non-numeric temperature must be rejected at construction")
+	}
+}

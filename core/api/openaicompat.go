@@ -61,7 +61,17 @@ type openAICompatDriver struct {
 	// money in it. It is also the only ceiling on a reasoning model's spend: the strong DeepSeek
 	// variant emits reasoning tokens billed at the completion rate before it writes a word.
 	maxTokens int
-	client    *http.Client
+	// temperature is sent only when configured; nil leaves the provider's default in place.
+	//
+	// It is configuration rather than a constant because the right value is a SEAT property, and the
+	// seats genuinely differ: decompose and resolve turn a sentence into a classification and want no
+	// sampling variety at all, while narrate is a performance and would be duller for it. Measured,
+	// twice, on the same input with the default temperature: the founder's "I look around, who is
+	// there?" decomposed once to QUERY committing nothing, and once to ActorMoved committing three
+	// canon events — a question that moved the player. A mechanical seat left at a sampling default
+	// is a coin flip wearing a schema.
+	temperature *float64
+	client      *http.Client
 }
 
 // defaultMaxTokens is deliberately generous enough for a narration segment plus a reasoning
@@ -109,6 +119,14 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		}
 		maxTokens = n
 	}
+	var temperature *float64
+	if v := strings.TrimSpace(dc.Params["temperature"]); v != "" {
+		f, err := strconv.ParseFloat(v, 64)
+		if err != nil || f < 0 {
+			return nil, fmt.Errorf("openai-compat: temperature %q is not a non-negative number", v)
+		}
+		temperature = &f
+	}
 	var routing json.RawMessage
 	if r := strings.TrimSpace(dc.Params["routing"]); r != "" {
 		if !json.Valid([]byte(r)) {
@@ -117,14 +135,15 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		routing = json.RawMessage(r)
 	}
 	return &openAICompatDriver{
-		name:      alias + ":" + model,
-		model:     model,
-		baseURL:   baseURL,
-		apiKey:    apiKey,
-		jsonMode:  jsonMode,
-		routing:   routing,
-		maxTokens: maxTokens,
-		client:    &http.Client{Timeout: 60 * time.Second},
+		name:        alias + ":" + model,
+		model:       model,
+		baseURL:     baseURL,
+		apiKey:      apiKey,
+		jsonMode:    jsonMode,
+		routing:     routing,
+		maxTokens:   maxTokens,
+		temperature: temperature,
+		client:      &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
 
@@ -149,6 +168,9 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	body := map[string]any{
 		"model":      o.model,
 		"max_tokens": o.maxTokens,
+	}
+	if o.temperature != nil {
+		body["temperature"] = *o.temperature
 	}
 	// The routing policy rides EVERY request, structured or not: a free-text narration is exactly as
 	// subject to "which jurisdiction, which retention policy" as a schema'd one.
