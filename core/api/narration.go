@@ -54,9 +54,21 @@ func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map
 	for _, id := range presentIDs {
 		present[id] = true
 	}
+	// A BLANK SEGMENT IS DROPPED, not fatal. Strict json_schema decoding requires every declared
+	// property on every element, so a model with nothing to say in a slot cannot omit the slot — it
+	// emits `"text": ""` and satisfies the structure. Refusing the whole array for that discards the
+	// prose that came with it and buys two repair attempts that fail the same way: measured live on
+	// Railway, three narrate calls and ~12s of founder-visible dead air to render one paragraph that
+	// arrived correctly on the first call.
+	//
+	// A blank carries no content, so dropping it loses nothing and hides nothing — and if EVERY
+	// segment is blank the model genuinely said nothing, which is still an error below. Every other
+	// belt (ghost speaker, verbatim speech, kind/speaker correlation) runs unchanged on what survives:
+	// this widens what counts as an acceptable ARRAY, never what counts as an acceptable segment.
+	kept := segs[:0]
 	for i, s := range segs {
 		if strings.TrimSpace(s.Text) == "" {
-			return nil, fmt.Errorf("segment %d: text is empty (minLength 1)", i)
+			continue
 		}
 		switch s.Kind {
 		case "narration":
@@ -76,8 +88,12 @@ func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map
 		default:
 			return nil, fmt.Errorf("segment %d: kind %q outside {narration,speech,action}", i, s.Kind)
 		}
+		kept = append(kept, s)
 	}
-	return segs, nil
+	if len(kept) == 0 {
+		return nil, fmt.Errorf("narration/1 carried no segment with any text (%d blank)", len(segs))
+	}
+	return kept, nil
 }
 
 // speechIsVerbatim passes when text is an exact or substring match of one of the speaker's speech
