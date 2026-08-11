@@ -450,3 +450,54 @@ func TestSeatConfig_MaxTokensIsPerSeatConfiguration(t *testing.T) {
 		t.Fatalf("narrate max_tokens = %q, want the seat override", got)
 	}
 }
+
+// The combination that cost a live debugging session: json_object mandates an object reply, so an
+// array-rooted schema cannot be satisfied under it. The model returned a bare object, the belt
+// rejected it as "outside the closed vocabulary", and the error blamed the model's vocabulary for
+// what was a response-format mismatch. Refuse the combination up front.
+func TestOpenAICompat_RefusesJSONObjectForAnArrayRootedSchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("a request that cannot succeed must never reach the provider")
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"{}"}}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "json_mode": jsonModeObject}})
+	_, err := d.Generate(t.Context(), GenRequest{
+		Prompt: "p", Schema: json.RawMessage(`{"type":"array","items":{"type":"object"}}`)})
+	if err == nil || !strings.Contains(err.Error(), jsonModeSchema) {
+		t.Fatalf("err = %v, want a refusal naming the mode that does work", err)
+	}
+}
+
+// The same schema under json_schema mode goes through: that is the documented remedy, and it is
+// what the live deployment runs.
+func TestOpenAICompat_ArrayRootedSchemaWorksUnderJSONSchema(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[]"}}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "json_mode": jsonModeSchema}})
+	out, err := d.Generate(t.Context(), GenRequest{
+		Prompt: "p", Schema: json.RawMessage(`{"type":"array","items":{"type":"object"}}`)})
+	if err != nil || out != "[]" {
+		t.Fatalf("out=%q err=%v, want the array-rooted call to succeed", out, err)
+	}
+}
+
+func TestSchemaRootIsArray(t *testing.T) {
+	for _, tc := range []struct {
+		schema string
+		want   bool
+	}{
+		{`{"type":"array"}`, true},
+		{`{"type":["array","null"]}`, true},
+		{`{"type":"object"}`, false},
+		{`not json`, false},
+	} {
+		if got := schemaRootIsArray(json.RawMessage(tc.schema)); got != tc.want {
+			t.Fatalf("schemaRootIsArray(%s) = %v, want %v", tc.schema, got, tc.want)
+		}
+	}
+}

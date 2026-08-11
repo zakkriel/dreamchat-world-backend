@@ -163,6 +163,16 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 			map[string]any{"role": "system", "content": systemContent},
 			map[string]any{"role": "user", "content": req.Prompt},
 		}
+		// json_object CANNOT express an array-rooted schema — the mode's whole contract is "the reply
+		// is a JSON object". Measured live: beat_chain/2 is array-rooted, and under json_object the
+		// model returned a bare {"type":"QUERY",…} instead of [{…}], which the belt then rejected as
+		// "outside the closed vocabulary" — an error that blames the model's vocabulary for what is
+		// a response-format mismatch, and cost a live debugging session to see through. Refuse the
+		// combination instead of sending a request that cannot succeed.
+		if o.jsonMode == jsonModeObject && schemaRootIsArray(req.Schema) {
+			return "", fmt.Errorf("openai-compat: this seat's schema is array-rooted and json_mode is "+
+				"%s, which mandates an object — set JSON_MODE=%s for this provider", jsonModeObject, jsonModeSchema)
+		}
 		if o.jsonMode == jsonModeSchema {
 			// The provider constrains decoding itself. The system-message leash above stays anyway:
 			// it costs a few tokens and it is what the model reads if the provider's strict mode is
@@ -249,4 +259,27 @@ func (o *openAICompatDriver) post(ctx context.Context, body map[string]any) ([]b
 		return nil, fmt.Errorf("openai-compat: status %d: %s", res.StatusCode, snippet)
 	}
 	return out, nil
+}
+
+// schemaRootIsArray reports whether a JSON Schema describes an array at its root. Only the root
+// "type" is inspected: that is the one fact json_object mode conflicts with, and a deeper walk would
+// be guessing at intent.
+func schemaRootIsArray(schema json.RawMessage) bool {
+	var head struct {
+		Type any `json:"type"`
+	}
+	if err := json.Unmarshal(schema, &head); err != nil {
+		return false
+	}
+	switch t := head.Type.(type) {
+	case string:
+		return t == "array"
+	case []any: // a union such as ["array","null"]
+		for _, v := range t {
+			if s, ok := v.(string); ok && s == "array" {
+				return true
+			}
+		}
+	}
+	return false
 }
