@@ -94,3 +94,61 @@ bug); a missing endpoint names the exact variable; alias normalisation; models c
 fake bridge needing no configuration. Plus the driver's recorded wire shapes for both structured
 modes, free text sending no `response_format`, an unknown `json_mode` rejected at construction, and
 every structured seat binding on the driver.
+
+
+---
+
+# Amendment (2026-08-11): one aggregator, and a routing policy that is configuration
+
+Founder ruling refining the above: a single live endpoint — an OpenAI-compatible aggregator — with a
+**required routing policy on every request**: US/EU hosts only, `data_collection: deny`, and
+DeepSeek-the-company excluded as an underlying host (open weights are fine; that company's pods are
+not).
+
+## The policy is per-seat config, never a constant
+
+The aggregator takes a `provider` preferences object deciding WHICH host serves a request. It is
+carried as `Params["routing"]`, resolved from
+`DREAMCHAT_PROVIDER_<NAME>_ROUTING` with a per-seat override at
+`DREAMCHAT_SEAT_ROUTING_<SEAT>`, and merged into every request body verbatim.
+
+Three decisions worth stating:
+
+- **Configuration, not a constant.** Jurisdiction and retention rules are commercial and legal
+  judgements that change without this code changing. A policy compiled into a binary is one nobody
+  can correct without a deploy.
+- **Passed through as raw JSON, not modelled as a struct.** The aggregator owns that schema and adds
+  fields regularly. A struct here would silently drop any field this repo had not heard of, turning
+  *"policy not yet supported"* into *"policy silently not applied"* — the worst failure mode for a
+  field whose entire job is compliance.
+- **Validated at construction.** A malformed policy is a boot failure naming the seat, not a 400 in
+  the middle of a playtest. Compliance config that fails late fails in front of the person it was
+  meant to protect.
+
+Every request carries it, structured or free-text alike: a narration is exactly as subject to
+jurisdiction and retention rules as a schema'd call. An unrouted seat is not silently permissive —
+the boot line prints `seat=alias:model(routed|unrouted)`.
+
+## What "US/EU only" can and cannot mean here
+
+**Verified against the aggregator's own API, not assumed.** Its provider records expose
+`headquarters` — and that is **company HQ, not data-centre location**. There is no per-endpoint
+region field in the standard preferences object; true in-region routing is an enterprise feature
+behind a sales contact.
+
+So "US/EU hosts only" is implemented as an explicit `only:[…]` allowlist derived from HQ, filtered
+further to hosts whose published data policy is *no training and no prompt retention*, and
+intersected with the endpoints that actually advertise structured output for the chosen models.
+That is the strongest available enforcement short of the enterprise tier, and its limit should be
+stated to the founder rather than papered over.
+
+`require_parameters: true` is not decoration. One compliant endpoint for the strong model
+(BaseTen, v4-pro) does **not** advertise structured output; without that flag the aggregator could
+route a schema'd seat to it and the leash would fail at validation instead of at routing.
+
+## Quantization is a quality lever nobody asked about yet
+
+Compliant endpoints differ in quantization: the two cheapest for the mechanical model are `fp4`, the
+cheapest for the narrative model is `fp8`. The preferences object takes a `quantizations` filter.
+Left unset for now — the narrative seat happens to land on `fp8` anyway — but if narration reads
+thin during the founder's week of play, that is the first knob to try before changing model.

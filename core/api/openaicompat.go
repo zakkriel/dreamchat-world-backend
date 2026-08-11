@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 )
 
@@ -47,7 +48,12 @@ type openAICompatDriver struct {
 	// longer road, and an unexercised third branch on the seat path is exactly the kind of surface
 	// that hides a defect until a live beat finds it.
 	jsonMode string
-	client   *http.Client
+	// routing is the aggregator's provider-preferences object, already validated as JSON at
+	// construction and sent verbatim under "provider" on every request. nil when unset, in which
+	// case the field is omitted entirely rather than sent empty — a plain provider does not know
+	// what "provider" means and some reject unknown fields.
+	routing json.RawMessage
+	client  *http.Client
 }
 
 // newOpenAICompatDriver constructs an openai-compat driver from DriverConfig.
@@ -80,12 +86,23 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 	if alias == "" {
 		alias = "openai-compat"
 	}
+	// Validated HERE so a malformed policy is a boot failure with the seat named, not a 400 on the
+	// first beat of a founder playtest. Compliance config that fails late is compliance config that
+	// fails in front of the person it was meant to protect.
+	var routing json.RawMessage
+	if r := strings.TrimSpace(dc.Params["routing"]); r != "" {
+		if !json.Valid([]byte(r)) {
+			return nil, fmt.Errorf("openai-compat: routing policy is not valid JSON: %.80s", r)
+		}
+		routing = json.RawMessage(r)
+	}
 	return &openAICompatDriver{
 		name:     alias + ":" + model,
 		model:    model,
 		baseURL:  baseURL,
 		apiKey:   apiKey,
 		jsonMode: jsonMode,
+		routing:  routing,
 		client:   &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
@@ -110,6 +127,11 @@ func (o *openAICompatDriver) Capabilities() CapabilitySet {
 func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	body := map[string]any{
 		"model": o.model,
+	}
+	// The routing policy rides EVERY request, structured or not: a free-text narration is exactly as
+	// subject to "which jurisdiction, which retention policy" as a schema'd one.
+	if o.routing != nil {
+		body["provider"] = o.routing
 	}
 
 	if req.Schema != nil {
