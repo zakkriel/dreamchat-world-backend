@@ -54,6 +54,18 @@ type GenRequest struct {
 	Payload PerceptionPayload
 	Prompt  string
 	Schema  json.RawMessage // non-nil ⇒ constrained/structured generation (the leash)
+	// Repair marks a RETRY of a call whose previous answer was refused. It exists because of a trap
+	// this repo has already been bitten by once and I walked straight back into: "determinism plus a
+	// fatal path equals a permanent trap — any retry of a deterministic decision that failed will
+	// fail the same way" (2026-08-08 handover §6, the journey livelock).
+	//
+	// Setting temperature 0 on the mechanical seats fixed decompose, which has no repair loop and is
+	// a pure classification. Resolve DOES have a repair loop, so temperature 0 turned a flaky seat
+	// into one that failed identically twice: measured live, `AttributeChanged requires target_id`
+	// rejected on attempt 1/2 and again on 2/2, ~14s spent asking the same question of a model that
+	// had no reason to answer differently. A driver that pins temperature honours this flag by
+	// letting the repair explore.
+	Repair bool
 }
 
 // Driver is one bound model. Drivers live only in this bridge layer (D-13) — never in core/db.

@@ -719,3 +719,106 @@ func TestStripCodeFence(t *testing.T) {
 		}
 	}
 }
+
+// A repair at temperature 0 re-asks a deterministic model the same question and gets the same
+// refusal. This repo has been bitten by that shape once already (the journey livelock: "any retry of
+// a deterministic decision that failed will fail the same way"), and pinning the mechanical seats to
+// 0 walked back into it — measured live, resolve refused `AttributeChanged requires target_id` on
+// attempt 1/2 and again on 2/2, ~14s of dead air asking twice.
+func TestOpenAICompat_ARepairIsAllowedToDiffer(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "temperature": "0"}})
+
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if got["temperature"] != float64(0) {
+		t.Fatalf("first attempt temperature = %v, want the configured 0 — the first answer must be reproducible", got["temperature"])
+	}
+
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p", Repair: true}); err != nil {
+		t.Fatalf("Generate(repair): %v", err)
+	}
+	if got["temperature"] != repairTemperature {
+		t.Fatalf("repair temperature = %v, want %v — a retry that cannot differ is not a retry", got["temperature"], repairTemperature)
+	}
+}
+
+// A seat that never pinned temperature is untouched by the repair rule: the provider's default was
+// already free to differ, and this must not start imposing a value on it.
+func TestOpenAICompat_RepairDoesNotInventATemperature(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p", Repair: true}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if _, present := got["temperature"]; present {
+		t.Fatal("a repair must not invent a temperature for a seat that never pinned one")
+	}
+}
+
+// Streaming is what turns the narrate seat's existing line-by-line path on. The driver must report
+// it, deliver each delta, and return the accumulated text — the same contract Generate honours.
+func TestOpenAICompat_GenerateStreamDeliversDeltasAndAccumulates(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if body["stream"] != true {
+			t.Errorf("stream flag = %v, want true", body["stream"])
+		}
+		fl, _ := w.(http.Flusher)
+		for _, c := range []string{`{"choices":[{"delta":{"content":"[{\"a\":"}}]}`,
+			`{"choices":[{"delta":{"content":"1}]"}}]}`,
+			`{"choices":[{"delta":{}}]}`, // an empty delta must not break the stream
+			`not json`,                   // nor must a malformed frame
+		} {
+			_, _ = w.Write([]byte("data: " + c + "\n\n"))
+			if fl != nil {
+				fl.Flush()
+			}
+		}
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	sd, ok := d.(StreamingDriver)
+	if !ok {
+		t.Fatal("the driver must report streaming, or the narrate seat silently keeps waiting for the whole reply")
+	}
+	var deltas []string
+	out, err := sd.GenerateStream(t.Context(), GenRequest{Prompt: "p"}, func(s string) { deltas = append(deltas, s) })
+	if err != nil {
+		t.Fatalf("GenerateStream: %v", err)
+	}
+	if out != `[{"a":1}]` {
+		t.Fatalf("accumulated = %q, want the whole reply", out)
+	}
+	if len(deltas) != 2 {
+		t.Fatalf("deltas = %v, want the two content chunks and nothing else", deltas)
+	}
+}
+
+// A stream that carries no content at all is an error, not an empty narration: the caller must fall
+// back rather than emit silence.
+func TestOpenAICompat_EmptyStreamIsAnError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("data: [DONE]\n\n"))
+	}))
+	defer srv.Close()
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.(StreamingDriver).GenerateStream(t.Context(), GenRequest{Prompt: "p"}, func(string) {}); err == nil {
+		t.Fatal("an empty stream must be an error")
+	}
+}
