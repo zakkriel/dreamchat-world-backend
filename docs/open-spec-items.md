@@ -825,3 +825,33 @@ around.
 
 **Firing trigger:** fired — the FE's carrying overlay reaches it today, and the first in-play
 handover makes it permanent.
+
+## SPEC-033 — Learning a name by earshot
+`fn_viewer_text` (migration `20260809090005`) renders perception content in the holder's own
+vocabulary, and it does so for **speech as well as narration**. That closes the naming-wall breach
+the founder caught in play, and it leaves one honest gap behind it: when an NPC says a name **aloud
+in the player's presence**, the player should *learn* it.
+
+Today he does not. The utterance's summary is rewritten to the label he already holds, so the name
+never reaches him and no knowledge path is recorded either — the fiction quietly drops a way people
+actually learn names.
+
+The exemption was deliberately **not** taken. Passing the raw name through for `Communicated` events
+would grant the knowledge without recording it: `fn_perceived_name` would still return nothing, every
+later beat would still render "the muscle by the bar", and the player would have been told a name the
+world does not believe he knows. That is the same breach with a nicer story, and it is unfalsifiable
+from inside the data.
+
+**Owner:** BE, write-side — the `generate_perceptions` epistemic rules, alongside SPEC-032's
+`ObjectRelocated` branch.
+
+**Expected outcome:** hearing a name spoken WRITES name-knowledge (a perception row that
+`fn_perceived_name` reads), after which `fn_viewer_text` stops rewriting it for that holder and the
+name appears in his prose because he has earned it. The open questions are the ones that need a
+ruling rather than a mechanism (anti-drift): does the speaker have to be **addressing** him, or is
+being co-present enough (the overhearer question `generate_perceptions` already defers on)? Does a
+name heard **about** an absent third party attach to anyone? And does a name heard once stick, or
+does it decay like any other unconfirmed perception?
+
+**Firing trigger:** the first playtest where an NPC introduces another by name and the player
+notices the world did not hear it.

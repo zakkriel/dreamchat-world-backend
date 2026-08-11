@@ -21,7 +21,7 @@ func TestDecodeAndValidateNarration_HappyPath(t *testing.T) {
 	  {"speaker_id":"m1","kind":"speech","text":"The tide turns at dusk."},
 	  {"speaker_id":"m1","kind":"action","text":"Mara sets a tankard on the bar."}
 	]`
-	segs, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	segs, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err != nil {
 		t.Fatalf("happy path rejected: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestDecodeAndValidateNarration_HappyPath(t *testing.T) {
 // A speech segment attributed to someone NOT in the present roster is a ghost speaker — rejected.
 func TestDecodeAndValidateNarration_GhostSpeakerRejected(t *testing.T) {
 	raw := `[{"speaker_id":"99999999-9999-9999-9999-999999999999","kind":"speech","text":"The tide turns at dusk."}]`
-	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err == nil || !strings.Contains(err.Error(), "ghost speaker") {
 		t.Fatalf("ghost speaker must be rejected, got err=%v", err)
 	}
@@ -49,7 +49,7 @@ func TestDecodeAndValidateNarration_GhostSpeakerRejected(t *testing.T) {
 // actual perception line — NPC speech must be the mind's exact words.
 func TestDecodeAndValidateNarration_ParaphrasedSpeechRejected(t *testing.T) {
 	raw := `[{"speaker_id":"m1","kind":"speech","text":"The sea shifts when night comes."}]`
-	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err == nil || !strings.Contains(err.Error(), "not verbatim") {
 		t.Fatalf("paraphrased speech must be rejected by the belt, got err=%v", err)
 	}
@@ -58,7 +58,7 @@ func TestDecodeAndValidateNarration_ParaphrasedSpeechRejected(t *testing.T) {
 // The speaker_id↔kind correlation: a null speaker with kind=speech is invalid (speech must be attributed).
 func TestDecodeAndValidateNarration_NullSpeakerSpeechRejected(t *testing.T) {
 	raw := `[{"speaker_id":null,"kind":"speech","text":"The tide turns at dusk."}]`
-	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err == nil || !strings.Contains(err.Error(), "non-null speaker_id") {
 		t.Fatalf("null-speaker speech must be rejected, got err=%v", err)
 	}
@@ -67,7 +67,7 @@ func TestDecodeAndValidateNarration_NullSpeakerSpeechRejected(t *testing.T) {
 // The other half of the correlation: a narrator segment (kind=narration) may not carry a speaker_id.
 func TestDecodeAndValidateNarration_NarrationWithSpeakerRejected(t *testing.T) {
 	raw := `[{"speaker_id":"m1","kind":"narration","text":"The room is dim."}]`
-	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err == nil || !strings.Contains(err.Error(), "speaker_id null") {
 		t.Fatalf("narration-with-speaker must be rejected, got err=%v", err)
 	}
@@ -79,7 +79,7 @@ func TestDecodeAndValidateNarration_NarrationWithSpeakerRejected(t *testing.T) {
 // nothing, and the caller must fall back rather than emit silence.
 func TestDecodeAndValidateNarration_EmptyTextRejected(t *testing.T) {
 	raw := `[{"speaker_id":null,"kind":"narration","text":""}]`
-	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts)
+	_, err := DecodeAndValidateNarration(raw, unitPresentIDs, unitSpeechTexts, nil)
 	if err == nil || !strings.Contains(err.Error(), "no segment with any text") {
 		t.Fatalf("a wholly empty narration must be rejected, got err=%v", err)
 	}
@@ -199,7 +199,7 @@ func TestNarratorFactSheet_BandsAndSurvivesGarbage(t *testing.T) {
 func TestNarration_BlankSegmentsAreDroppedNotFatal(t *testing.T) {
 	raw := `[{"speaker_id":null,"kind":"narration","text":""},
 	         {"speaker_id":null,"kind":"narration","text":"The tide mutters against the quay."}]`
-	segs, err := DecodeAndValidateNarration(raw, nil, nil)
+	segs, err := DecodeAndValidateNarration(raw, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("a blank leading segment must not cost the whole narration: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestNarration_BlankSegmentsAreDroppedNotFatal(t *testing.T) {
 // what counts as an acceptable ARRAY, never about accepting an empty narration.
 func TestNarration_AllBlankIsStillAnError(t *testing.T) {
 	_, err := DecodeAndValidateNarration(
-		`[{"speaker_id":null,"kind":"narration","text":""},{"speaker_id":null,"kind":"narration","text":"   "}]`, nil, nil)
+		`[{"speaker_id":null,"kind":"narration","text":""},{"speaker_id":null,"kind":"narration","text":"   "}]`, nil, nil, nil)
 	if err == nil || !strings.Contains(err.Error(), "no segment with any text") {
 		t.Fatalf("err = %v, want an all-blank narration rejected", err)
 	}
@@ -223,7 +223,7 @@ func TestNarration_AllBlankIsStillAnError(t *testing.T) {
 func TestNarration_BeltsStillRunAfterDropping(t *testing.T) {
 	raw := `[{"speaker_id":null,"kind":"narration","text":""},
 	         {"speaker_id":"11111111-1111-1111-1111-111111111111","kind":"speech","text":"I never said this."}]`
-	if _, err := DecodeAndValidateNarration(raw, nil, nil); err == nil {
+	if _, err := DecodeAndValidateNarration(raw, nil, nil, nil); err == nil {
 		t.Fatal("a ghost speaker after a dropped blank must still be refused")
 	}
 }

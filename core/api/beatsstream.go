@@ -369,6 +369,17 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	presentIDs, labelFor := narrateRoster(post, viewerID)
+	// THE NAMING WALL (B-1, I-3, naming reach §3). The source seam renders perception content per
+	// holder, so a clean world hands the narrator nothing to leak; this is the belt for what the seat
+	// invents on its own. Loaded once per beat — the set only changes when the viewer learns a name,
+	// which is itself a canon event.
+	wall, err := loadNamingWall(ctx, bh.pool, worldID, viewerID)
+	if err != nil {
+		// Fail CLOSED is not an option (it would kill the beat over a projection read) and fail-silent
+		// is what got us here, so: fail LOUD and keep the source-seam fix, which is the real guarantee.
+		log.Printf("beats stream: NAMING WALL could not be loaded (%v) — narration belt is DOWN this beat", err)
+		wall = nil
+	}
 	speechTexts, err := bh.speechTexts(ctx, worldID, viewerID, startTick)
 	if err != nil {
 		log.Printf("beats stream: speechTexts lookup failed (belt runs with no evidence): %v", err)
@@ -395,7 +406,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if sd, ok := nd.(StreamingDriver); ok {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
 		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)}
-		segs, err := narrateStream(ctx, sd, req, presentIDs, speechTexts, labelFor, frames)
+		segs, err := narrateStream(ctx, sd, req, presentIDs, speechTexts, labelFor, wall, frames)
 		switch {
 		case err != nil && len(segs) == 0:
 			log.Printf("beats stream: streaming narrate produced no valid line (%v), falling back to the ordinary attempt loop", err)
@@ -421,7 +432,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lastErr = genErr
 				continue
 			}
-			segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts)
+			segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts, wall)
 			if decErr != nil {
 				log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
 				lastErr = decErr
@@ -436,6 +447,14 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				log.Printf("beats stream: narrate plain fallback Generate failed: %v", genErr)
 				_ = frames.emit("error", errorFrame{Message: "the narrator could not find words"})
 				return
+			}
+			// The plain fallback bypasses every belt by design (it exists because the structured path
+			// failed), so the wall is applied here as a SCRUB rather than a rejection: there is no third
+			// attempt to spend, and a breach must not reach the player just because the narrator is
+			// already having a bad beat.
+			if v := wall.Violations(raw); len(v) > 0 {
+				log.Printf("NAMING WALL: plain fallback narration leaked %v for viewer %s — scrubbed before emit", v, viewerID)
+				raw = wall.Scrub(raw)
 			}
 			segments = []NarrationSegment{{Kind: "narration", Text: raw}}
 		}
@@ -490,6 +509,12 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("beats stream: labelCandidates: %v", err)
 		_ = frames.emit("error", errorFrame{Message: "the world could not name what you meant"})
 		return
+	}
+	// NPC telegraph wind-ups are cognition-seat text (`Attempt.Stated`) travelling straight to the
+	// player with no validation loop of their own — the second path the founder's leak could have
+	// taken. No model to re-ask here, so the wall scrubs and reports.
+	if breached := wall.scrubAll(outcome.Telegraphs); len(breached) > 0 {
+		log.Printf("NAMING WALL: telegraph text leaked %v for viewer %s — scrubbed before emit", breached, viewerID)
 	}
 	result := resultBlock{
 		Committed:            outcome.Committed,
@@ -586,7 +611,7 @@ func (s *narrationLineSplitter) feed(delta string) []string {
 // run to completion. Returns the segments it emitted; the caller (ServeHTTP) treats a zero-segment,
 // no-error-yet-nothing-emitted result as "nothing reached the wire, fall back to the ordinary
 // generate → validate → emit loop", and a non-nil error the SAME way once nothing was emitted.
-func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, presentIDs []string, speechTexts map[string][]string, labelFor map[string]string, frames *frameWriter) ([]NarrationSegment, error) {
+func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, presentIDs []string, speechTexts map[string][]string, labelFor map[string]string, wall *NamingWall, frames *frameWriter) ([]NarrationSegment, error) {
 	splitter := newNarrationLineSplitter()
 	var segments []NarrationSegment
 	var emitErr error
@@ -595,7 +620,7 @@ func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, pres
 			return
 		}
 		for _, raw := range splitter.feed(delta) {
-			segs, err := DecodeAndValidateNarration("["+raw+"]", presentIDs, speechTexts)
+			segs, err := DecodeAndValidateNarration("["+raw+"]", presentIDs, speechTexts, wall)
 			if err != nil {
 				log.Printf("beats stream: streamed narration line rejected (never emitted): %v", err)
 				continue

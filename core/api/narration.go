@@ -45,7 +45,11 @@ type NarrationSegment struct {
 // Plus the schema's structural rules, restated so a rogue/misbound driver still trips them: kind in the
 // closed set, text non-empty, and the speaker_id↔kind correlation (null ⇔ narration; non-null ⇔
 // speech|action).
-func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map[string][]string) ([]NarrationSegment, error) {
+// wall enforces naming reach on every segment before it can reach the player: a canonical name the
+// viewer has not earned is a first-law breach (B-1, I-3), so it is rejected here and the seat is
+// asked again — a model rewrites the sentence better than any substitution can. nil disables the
+// check (direct unit calls with no viewer in hand); the emit boundary still scrubs as the backstop.
+func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map[string][]string, wall *NamingWall) ([]NarrationSegment, error) {
 	var segs []NarrationSegment
 	if err := json.Unmarshal([]byte(raw), &segs); err != nil {
 		return nil, fmt.Errorf("narration/1 not valid JSON: %w", err)
@@ -87,6 +91,12 @@ func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map
 			}
 		default:
 			return nil, fmt.Errorf("segment %d: kind %q outside {narration,speech,action}", i, s.Kind)
+		}
+		// THE NAMING WALL. Runs on every kind: narration prose is the reported case, and speech is no
+		// safer — an NPC who says a name the player has not earned teaches it without a knowledge path,
+		// which is the same breach wearing quotation marks (see SPEC-033 for learning-by-earshot).
+		if v := wall.Violations(s.Text); len(v) > 0 {
+			return nil, namingWallError(i, v)
 		}
 		kept = append(kept, s)
 	}
