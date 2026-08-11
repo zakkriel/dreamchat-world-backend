@@ -106,9 +106,9 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 	if jsonMode == "" {
 		jsonMode = jsonModeObject
 	}
-	if jsonMode != jsonModeObject && jsonMode != jsonModeSchema {
-		return nil, fmt.Errorf("openai-compat: unknown json_mode %q (known: %s, %s)",
-			jsonMode, jsonModeObject, jsonModeSchema)
+	if jsonMode != jsonModeObject && jsonMode != jsonModeSchema && jsonMode != jsonModeOff {
+		return nil, fmt.Errorf("openai-compat: unknown json_mode %q (known: %s, %s, %s)",
+			jsonMode, jsonModeObject, jsonModeSchema, jsonModeOff)
 	}
 	// The name is what every log line, error and trace frame says about who answered. With four
 	// seats on four providers, "openai-compat:<model>" alone cannot tell you which one failed.
@@ -166,6 +166,15 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 const (
 	jsonModeObject = "json_object"
 	jsonModeSchema = "json_schema"
+	// jsonModeOff sends NO response_format at all: the schema rides the system message, as it does in
+	// every mode, and the Go belt is the only enforcement. It exists because strict decoding is not
+	// universally better and narration/1 proved it — measured live, that schema under json_schema
+	// came back with every segment structurally perfect and textually EMPTY ("3 blank", "6 blank",
+	// 59-character replies that were pure shape), three times a beat, because a constrained decoder
+	// that cannot satisfy the item-level oneOf still has to emit the required keys and fills them
+	// with "". Constrained decoding guarantees a shape, which is exactly worthless when the shape was
+	// never the hard part; the belt has always been what decides acceptance.
+	jsonModeOff = "off"
 )
 
 func (o *openAICompatDriver) Name() string { return o.name }
@@ -199,10 +208,27 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 
 	if req.Schema != nil {
 		// Structured: system message with schema leash + user message; constrain to json_object.
-		systemContent := "You are a quarantined seat in a play loop. Propose only; never assert canon. Answer ONLY with a single JSON document valid against this JSON Schema:\n" + string(req.Schema)
+		// "a single JSON document" is ambiguous for an array-rooted schema, and models resolve the
+		// ambiguity by reaching for an object: measured live, this exact prompt with narration/1 came
+		// back as {"array":[…]} — correct prose inside a wrapper nothing asked for. Naming the root
+		// costs one word and removes the guess.
+		root := "JSON document"
+		if schemaRootIsArray(req.Schema) {
+			root = "JSON ARRAY (a bare [ … ], not an object wrapping one)"
+		}
+		systemContent := "You are a quarantined seat in a play loop. Propose only; never assert canon. Answer ONLY with a single " +
+			root + " valid against this JSON Schema:\n" + string(req.Schema)
 		body["messages"] = []any{
 			map[string]any{"role": "system", "content": systemContent},
 			map[string]any{"role": "user", "content": req.Prompt},
+		}
+		// jsonModeOff: the leash is the system message plus the belt, and nothing constrains decoding.
+		if o.jsonMode == jsonModeOff {
+			raw, err := o.post(ctx, body)
+			if err != nil {
+				return "", err
+			}
+			return o.content(raw)
 		}
 		// json_object CANNOT express an array-rooted schema — the mode's whole contract is "the reply
 		// is a JSON object". Measured live: beat_chain/2 is array-rooted, and under json_object the
@@ -240,8 +266,12 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	if err != nil {
 		return "", err
 	}
+	return o.content(raw)
+}
 
-	// Parse choices[0].message.content and return verbatim.
+// content extracts choices[0].message.content verbatim. One place, because every json_mode returns
+// through it and a second copy is a second chance to disagree about what an empty reply means.
+func (o *openAICompatDriver) content(raw []byte) (string, error) {
 	var resp struct {
 		Choices []struct {
 			Message struct {
@@ -264,7 +294,29 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 			"raise max_tokens (currently %d) if this is a reasoning model",
 			resp.Choices[0].FinishReason, o.maxTokens)
 	}
-	return resp.Choices[0].Message.Content, nil
+	return stripCodeFence(resp.Choices[0].Message.Content), nil
+}
+
+// stripCodeFence removes a ```…``` wrapper when a model volunteers one. Without constrained decoding
+// some replies arrive fenced and some do not — measured live, two identical narrate calls, one bare
+// array and one wrapped in ```json — and a fence is a MARKDOWN transport wrapper, not content: the
+// document inside is exactly what was asked for. Stripping it is not leniency about what the model
+// said, which is still the belt's business; it is refusing to fail over punctuation.
+func stripCodeFence(s string) string {
+	t := strings.TrimSpace(s)
+	if !strings.HasPrefix(t, "```") {
+		return s
+	}
+	// Drop the opening fence and its optional language tag, then the closing fence.
+	if i := strings.IndexByte(t, '\n'); i >= 0 {
+		t = t[i+1:]
+	} else {
+		return s
+	}
+	if j := strings.LastIndex(t, "```"); j >= 0 {
+		t = t[:j]
+	}
+	return strings.TrimSpace(t)
 }
 
 func (o *openAICompatDriver) post(ctx context.Context, body map[string]any) ([]byte, error) {
