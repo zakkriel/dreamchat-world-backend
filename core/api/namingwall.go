@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"regexp"
-	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -32,17 +31,17 @@ type NamingWall struct {
 // loadNamingWall reads the unearned names for one viewer. Called once per beat: the set changes only
 // when the viewer learns a name, which is itself a canon event.
 //
-// "Unearned" is exactly fn_display_name disagreeing with the registry: the viewer has no name
-// knowledge and the world offers a descriptor instead. When they AGREE the name is either earned or
-// the only label that exists, and in both cases there is nothing to enforce — see the migration for
-// why inventing a placeholder for the latter would be worse than saying the name.
+// "Unearned" is defined once, in SQL (fn_unearned_names): no knowledge path, not the viewer himself,
+// and the label he holds does not already contain the name. That last clause is why "the ballast
+// crate" is not a breach of "Ballast Crate" — see migration 20260809090006, which was written after
+// the belt rejected exactly that sentence in live play.
 func loadNamingWall(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string) (*NamingWall, error) {
+	// fn_unearned_names is the SHARED definition — the same function the perception seam
+	// (fn_viewer_text) rewrites from. Restating the predicate here is what produced the "ballast
+	// crate" false positive in the first hour: the belt must check the seam against the seam's own
+	// rule, or it is checking something else.
 	rows, err := pool.Query(ctx,
-		`SELECT er.canonical_name, fn_display_name($1, $2::uuid, er.entity_id)
-		   FROM entity_registry er
-		  WHERE er.world_id = $1
-		    AND er.canonical_name IS NOT NULL AND er.canonical_name <> ''
-		    AND fn_display_name($1, $2::uuid, er.entity_id) IS DISTINCT FROM er.canonical_name`,
+		`SELECT canonical_name, label FROM fn_unearned_names($1, $2::uuid)`,
 		worldID, viewerID)
 	if err != nil {
 		return nil, err
@@ -66,8 +65,8 @@ func loadNamingWall(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID s
 		return w, nil // a viewer who has earned every name: Violations is empty, Scrub is identity
 	}
 
-	// Longest first so "Hooded Companion" is matched and replaced before "Hooded" can bite into it.
-	sort.Slice(names, func(i, j int) bool { return len(names[i]) > len(names[j]) })
+	// Already longest-first from fn_unearned_names, so "Hooded Companion" is matched before "Hooded"
+	// can bite into it — the ORDER BY is part of the shared definition, not an incidental detail.
 	quoted := make([]string, len(names))
 	for i, n := range names {
 		quoted[i] = regexp.QuoteMeta(n)
