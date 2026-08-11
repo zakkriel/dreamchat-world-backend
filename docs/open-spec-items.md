@@ -843,6 +843,20 @@ remain the documented §3 deferral — when that rule lands, hearing-teaches fol
 rule and needs no exemption for speech. Proven by `26_hearing_teaches_test.sql` (8 assertions) and
 `TestNamingWall_AdmitsANameTheViewerJustLearned`.
 
+**Coordinator disposition (2026-08-09): ACCEPTED AS-IS.** A referee paraphrase of a direct address
+teaching the name is within the founder's ruling and honestly matches how presence works. The
+tightening below is recorded so it is not lost, and is explicitly NOT to be built until it earns its
+place.
+
+**The tightening option, if it is ever wanted:** a structured spoken-text field on the utterance
+(canon `payload.spoken` or equivalent), so learning reads the words actually said instead of the
+line the referee wrote about them. It would also sharpen the existing verbatim-speech belt, which
+today substring-matches against the same paraphrase (`beathandler.go:148-156`) and therefore accepts
+a paraphrase as "speech" — measured live: `Communicated | "Jonas addresses the stranger, voice low
+and flat"` was emitted as a speech segment and passed, because it is a substring of its own
+perception. One field would fix both. Cost is not the column; it is that every seat writing a
+Communicated event must start populating it, and every existing row has it empty.
+
 **One honest limit, deliberately unresolved**: a Communicated event's perception content is the whole
 line the engine wrote, and the repo's own belt already treats it as carrying the spoken words
 (`beathandler.go:148-156`). So a name appearing anywhere in that line is taught. When a summary is a

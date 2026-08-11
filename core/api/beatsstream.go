@@ -399,6 +399,15 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// attempt — only the ordinary generate-then-validate-then-emit loop below retries. A streaming
 	// attempt that validates NOTHING has put nothing on the wire yet, so it falls straight through to
 	// that identical loop, unchanged.
+	// One set of belts for every attempt this beat: the same segment must be judged identically by the
+	// streaming path, the repair loop and the fallback, or a rejection becomes a matter of which code
+	// path happened to run.
+	belts := NarrationBelts{
+		PresentIDs:  presentIDs,
+		SpeechTexts: speechTexts,
+		Wall:        wall,
+		Player:      newPlayerVoice(playerText),
+	}
 	nd := h.bridge.Driver(SeatNarrate.Name)
 	var segments []NarrationSegment
 	var lastErr error
@@ -406,7 +415,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if sd, ok := nd.(StreamingDriver); ok {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
 		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)}
-		segs, err := narrateStream(ctx, sd, req, presentIDs, speechTexts, labelFor, wall, frames)
+		segs, err := narrateStream(ctx, sd, req, belts, labelFor, frames)
 		switch {
 		case err != nil && len(segs) == 0:
 			log.Printf("beats stream: streaming narrate produced no valid line (%v), falling back to the ordinary attempt loop", err)
@@ -432,7 +441,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				lastErr = genErr
 				continue
 			}
-			segs, decErr := DecodeAndValidateNarration(raw, presentIDs, speechTexts, wall)
+			segs, decErr := DecodeAndValidateNarration(raw, belts)
 			if decErr != nil {
 				log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
 				lastErr = decErr
@@ -611,7 +620,7 @@ func (s *narrationLineSplitter) feed(delta string) []string {
 // run to completion. Returns the segments it emitted; the caller (ServeHTTP) treats a zero-segment,
 // no-error-yet-nothing-emitted result as "nothing reached the wire, fall back to the ordinary
 // generate → validate → emit loop", and a non-nil error the SAME way once nothing was emitted.
-func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, presentIDs []string, speechTexts map[string][]string, labelFor map[string]string, wall *NamingWall, frames *frameWriter) ([]NarrationSegment, error) {
+func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, belts NarrationBelts, labelFor map[string]string, frames *frameWriter) ([]NarrationSegment, error) {
 	splitter := newNarrationLineSplitter()
 	var segments []NarrationSegment
 	var emitErr error
@@ -620,7 +629,7 @@ func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, pres
 			return
 		}
 		for _, raw := range splitter.feed(delta) {
-			segs, err := DecodeAndValidateNarration("["+raw+"]", presentIDs, speechTexts, wall)
+			segs, err := DecodeAndValidateNarration("["+raw+"]", belts)
 			if err != nil {
 				log.Printf("beats stream: streamed narration line rejected (never emitted): %v", err)
 				continue
