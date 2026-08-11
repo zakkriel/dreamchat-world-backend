@@ -10,6 +10,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
+	"time"
 )
 
 // --- Capabilities -----------------------------------------------------------
@@ -146,7 +148,7 @@ func NewBridge(cfg SeatConfig, factory DriverFactory, seats ...Seat) (*Bridge, e
 		if err != nil {
 			return nil, err
 		}
-		b.seats[s.Name] = bound
+		b.seats[s.Name] = instrument(s.Name, bound)
 	}
 	return b, nil
 }
@@ -163,12 +165,72 @@ func NewBridgeWithDrivers(bound map[string]Driver, seats ...Seat) (*Bridge, erro
 		if err != nil {
 			return nil, err
 		}
-		b.seats[s.Name] = bd
+		b.seats[s.Name] = instrument(s.Name, bd)
 	}
 	return b, nil
 }
 
 func (b *Bridge) Driver(seat string) Driver { return b.seats[seat] }
+
+// --- Instrumentation ---------------------------------------------------------
+// timedDriver logs how long a seat took, every time it is called.
+//
+// It exists because the founder asked "how long did one reply take" and the logs could not answer.
+// A beat fans out across up to seven seats and two of them retry, so the only honest answer is
+// per-call — a total alone cannot tell you whether a slow beat was one slow seat or four ordinary
+// ones, and the retries are invisible in a total by construction.
+//
+// A DECORATOR, applied once in the binding path, rather than a timer at each call site: the seats
+// are called from beatsstream, orchestrator and worldturn, and an instrument you have to remember to
+// add at three call sites is an instrument that will be missing from the fourth.
+type timedDriver struct {
+	Driver
+	seat string
+}
+
+func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	start := time.Now()
+	out, err := t.Driver.Generate(ctx, req)
+	ms := time.Since(start).Milliseconds()
+	// Outcome, not just duration: a 6-second failure and a 6-second success are the same number and
+	// very different problems, and the retry that follows a failure is the founder's dead air.
+	status := "ok"
+	if err != nil {
+		status = "ERR"
+	}
+	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d",
+		t.seat, t.Driver.Name(), ms, status, len(out))
+	return out, err
+}
+
+// GenerateStream keeps the streaming capability visible through the decorator. Without this the type
+// assertion in the narrate path fails and a streaming-capable driver silently loses streaming — the
+// exact class of bug where an instrument changes the thing it measures.
+func (t timedDriver) GenerateStream(ctx context.Context, req GenRequest, onDelta func(string)) (string, error) {
+	sd, ok := t.Driver.(StreamingDriver)
+	if !ok {
+		return "", fmt.Errorf("seat %s: driver %s does not stream", t.seat, t.Driver.Name())
+	}
+	start := time.Now()
+	out, err := sd.GenerateStream(ctx, req, onDelta)
+	status := "ok"
+	if err != nil {
+		status = "ERR"
+	}
+	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d streamed=true",
+		t.seat, t.Driver.Name(), time.Since(start).Milliseconds(), status, len(out))
+	return out, err
+}
+
+// instrument wraps a bound driver, preserving streaming only when the underlying driver has it —
+// wrapping a non-streaming driver in a type that advertises GenerateStream would make every seat
+// claim a capability it does not have.
+func instrument(seat string, d Driver) Driver {
+	if _, ok := d.(StreamingDriver); ok {
+		return timedDriver{Driver: d, seat: seat}
+	}
+	return struct{ Driver }{timedDriver{Driver: d, seat: seat}}
+}
 
 // DefaultDriverFactory is the provider registry. "anthropic" is the production default (Claude via the
 // Anthropic API; structured output / strict tool-use as the leash). "fake-*" are CI deterministic

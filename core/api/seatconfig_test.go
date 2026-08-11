@@ -559,3 +559,89 @@ func TestOpenAICompat_TemperatureOnlyWhenConfigured(t *testing.T) {
 		t.Fatal("a non-numeric temperature must be rejected at construction")
 	}
 }
+
+// The reasoning policy is per-seat config for the same reason routing and temperature are — and it
+// is the one whose ABSENCE is most expensive. Unset leaves the model's own default in force, and the
+// mechanical model here advertises default_effort "high": roughly 80% of max_tokens spent thinking
+// before a token of answer. That is how decompose died twice in front of the founder.
+func TestSeatConfig_ReasoningIsPerSeatConfiguration(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":             "route:m",
+		"DREAMCHAT_SEATS":                    "narrate=route:big",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":  "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_REASONING": `{"effort":"none"}`,
+		"DREAMCHAT_SEAT_REASONING_NARRATE":   `{"effort":"low"}`,
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["reasoning"]; got != `{"effort":"none"}` {
+		t.Fatalf("decompose reasoning = %q, want the provider policy", got)
+	}
+	if got := cfg["narrate"].Params["reasoning"]; got != `{"effort":"low"}` {
+		t.Fatalf("narrate reasoning = %q, want the seat override", got)
+	}
+}
+
+func TestOpenAICompat_SendsReasoningPolicyWhenConfigured(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"x"}}]}`))
+	}))
+	defer srv.Close()
+
+	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
+	if _, err := d.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if _, present := got["reasoning"]; present {
+		t.Fatal("an unconfigured reasoning policy must not be sent")
+	}
+
+	d2, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "reasoning": `{"effort":"none"}`}})
+	if _, err := d2.Generate(t.Context(), GenRequest{Prompt: "p"}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	sent, _ := json.Marshal(got["reasoning"])
+	if string(sent) != `{"effort":"none"}` {
+		t.Fatalf("reasoning = %s, want the policy verbatim", sent)
+	}
+
+	if _, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "reasoning": `{"effort":`}}); err == nil {
+		t.Fatal("a malformed reasoning policy must be rejected at construction")
+	}
+}
+
+// Every seat is timed, whatever the call site — the decorator is applied where seats are BOUND, not
+// where they are called, because an instrument you must remember to add at three call sites is one
+// that will be missing from the fourth. And it must not change what it measures: a non-streaming
+// driver must not start advertising GenerateStream just because it was wrapped.
+func TestBridge_EverySeatIsTimedAndCapabilitiesAreUnchanged(t *testing.T) {
+	b, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatDecompose.Name: NewFakeStructuredDriver("fake-structured:t", nil),
+		SeatNarrate.Name:   NewFakeTextDriver("fake-text:t"),
+	}, SeatDecompose, SeatNarrate)
+	if err != nil {
+		t.Fatalf("NewBridgeWithDrivers: %v", err)
+	}
+	for _, seat := range []string{SeatDecompose.Name, SeatNarrate.Name} {
+		d := b.Driver(seat)
+		if d == nil {
+			t.Fatalf("seat %s unbound", seat)
+		}
+		if !d.Capabilities().Has() || d.Name() == "" {
+			t.Fatalf("seat %s lost its identity through the decorator", seat)
+		}
+	}
+	// The fakes do not stream, so nothing wrapped by the decorator may claim to.
+	if _, ok := b.Driver(SeatNarrate.Name).(StreamingDriver); ok {
+		t.Fatal("a non-streaming driver advertises GenerateStream after instrumentation")
+	}
+	// Structured capability survives, or every structured seat would fail to bind.
+	if !b.Driver(SeatDecompose.Name).Capabilities().Has(CapStructuredOutput) {
+		t.Fatal("the decorator dropped a reported capability")
+	}
+}

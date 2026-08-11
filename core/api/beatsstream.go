@@ -7,6 +7,7 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -244,6 +245,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// decompose call, no driver round trip, and no §7 injection surface on this path.
 	var chain []Attempt
 	var playerText string
+	var decomposeText string
 	if continuePress {
 		chain = []Attempt{}
 	} else {
@@ -258,19 +260,16 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		playerText = in.Text
 
-		raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-			GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, in.Text), Schema: json.RawMessage(beatChainV2SchemaJSON)})
-		if err != nil {
-			log.Printf("beats stream: decompose error: %v", err)
-			http.Error(w, "decompose failed", http.StatusBadGateway)
-			return
-		}
-		chain, err = DecodeAndValidateChainV2(raw)
-		if err != nil {
-			http.Error(w, "outside the closed vocabulary", http.StatusUnprocessableEntity)
-			return
-		}
+		decomposeText = in.Text
 	}
+
+	// The total the founder actually asked for: "how long did one reply take". The per-seat lines
+	// (timedDriver) say where it went; this says what he waited. Deferred so it is logged on EVERY
+	// exit including the error frames, because a beat that died slowly is the one worth knowing about.
+	beatStart := time.Now()
+	defer func() {
+		log.Printf("beat timing: total_ms=%d world=%s continue=%v", time.Since(beatStart).Milliseconds(), worldID, continuePress)
+	}()
 
 	frames, ok := newFrameWriter(w)
 	if !ok {
@@ -281,6 +280,33 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.WriteHeader(http.StatusOK)
+
+	// DECOMPOSE RUNS INSIDE THE STREAM, and that is the point of it being here rather than above.
+	//
+	// It used to run before the stream existed and answer a failure with http.Error — a 502 with a
+	// text/plain body to a client that asked for text/event-stream. To a browser mid-play that is not
+	// an error, it is the connection dying: no frame, no message, and an edge proxy free to turn it
+	// into its own 502 page. The founder saw exactly this when the model spent its whole budget on
+	// reasoning tokens. Every other failure in this handler has emitted an honest `error` frame since
+	// the streaming design landed ("it just stops" is the bug this design exists to prevent); these
+	// two were simply on the wrong side of the line.
+	if !continuePress {
+		raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
+			GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, decomposeText), Schema: json.RawMessage(beatChainV2SchemaJSON)})
+		if err != nil {
+			log.Printf("beats stream: decompose error: %v", err)
+			_ = frames.emit("error", errorFrame{Message: "the world could not read that"})
+			return
+		}
+		chain, err = DecodeAndValidateChainV2(raw)
+		if err != nil {
+			// The leash refusing a chain is a REAL answer about this input, not a broken server, and
+			// the player is owed a sentence rather than a status code.
+			log.Printf("beats stream: decompose produced an invalid chain: %v", err)
+			_ = frames.emit("error", errorFrame{Message: "the world could not make sense of that — try saying it another way"})
+			return
+		}
+	}
 
 	// From here on, status 200 is already on the wire — every failure path chooses an `error` frame
 	// and returns; "it just stops" is the bug this design exists to prevent (plan Task 3).

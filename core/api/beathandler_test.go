@@ -16,8 +16,10 @@ import (
 // still rejects out-of-vocab → 422, even if a bound driver misbehaves.
 type rogueStructuredDriver struct{}
 
-func (rogueStructuredDriver) Name() string                { return "rogue-structured" }
-func (rogueStructuredDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (rogueStructuredDriver) Name() string { return "rogue-structured" }
+func (rogueStructuredDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (rogueStructuredDriver) Generate(context.Context, GenRequest) (string, error) {
 	return `[{"type":"attack","to":"x"}]`, nil
 }
@@ -158,8 +160,10 @@ type scriptedNarrateDriver struct {
 	calls   int
 }
 
-func (d *scriptedNarrateDriver) Name() string                { return d.name }
-func (d *scriptedNarrateDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (d *scriptedNarrateDriver) Name() string { return d.name }
+func (d *scriptedNarrateDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (d *scriptedNarrateDriver) Generate(_ context.Context, _ GenRequest) (string, error) {
 	i := d.calls
 	d.calls++
@@ -450,17 +454,63 @@ func TestPayload_PerceivedCandidates_OtherLocationExcluded(t *testing.T) {
 }
 
 // Defense-in-depth: a misbehaving structured driver that emits out-of-vocab is rejected by the
-// handler's belt → 422 (the primary leash is the capability floor + constrained decoding; this is
-// the backstop, SPEC-015/D-1).
+// handler's belt (the primary leash is the capability floor + constrained decoding; this is the
+// backstop, SPEC-015/D-1).
+//
+// The REJECTION is unchanged; the transport is. It used to be a 422 with a text/plain body, sent to
+// a client that asked for text/event-stream — which a browser mid-play does not experience as an
+// error message but as the connection dying, with an edge proxy free to substitute its own page.
+// Decompose now runs inside the stream and refuses with an honest `error` frame, like every other
+// failure in this handler. What must not change, and is asserted here, is that nothing reaches canon
+// and the player is told something.
 func TestBeat_OutOfVocabularyRejectedByBelt(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
+	ctx := context.Background()
+	var before int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM canon_event WHERE world_id=$1`, worldID).Scan(&before); err != nil {
+		t.Fatalf("count canon before: %v", err)
+	}
+
 	h := NewBeatsStreamHandler(pool, true, mustBridge(t, rogueStructuredDriver{}, NewFakeTextDriver("fake-text:test")))
 	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+playerID,
 		strings.NewReader(`{"text":"anything"}`))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
-	if rec.Code != 422 {
-		t.Fatalf("status = %d, want 422 (belt rejects out-of-vocab; SPEC-015)", rec.Code)
+
+	if rec.Code != 200 {
+		t.Fatalf("status = %d, want 200 — the refusal rides the stream as a frame", rec.Code)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/event-stream" {
+		t.Fatalf("content-type = %q, want text/event-stream", ct)
+	}
+	var kinds []string
+	for _, line := range strings.Split(rec.Body.String(), "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "data:") {
+			continue
+		}
+		var f struct {
+			Kind    string `json:"kind"`
+			Message string `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(strings.TrimSpace(line[5:])), &f); err != nil {
+			continue
+		}
+		kinds = append(kinds, f.Kind)
+		if f.Kind == "error" && strings.TrimSpace(f.Message) == "" {
+			t.Fatal("the error frame carries no message — a silent refusal is the bug this replaces")
+		}
+	}
+	if len(kinds) != 1 || kinds[0] != "error" {
+		t.Fatalf("frames = %v, want exactly one error frame (no interpretation frame for a chain the belt refused)", kinds)
+	}
+
+	var after int
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM canon_event WHERE world_id=$1`, worldID).Scan(&after); err != nil {
+		t.Fatalf("count canon after: %v", err)
+	}
+	if after != before {
+		t.Fatalf("canon grew %d→%d — an out-of-vocabulary chain reached the world", before, after)
 	}
 }
