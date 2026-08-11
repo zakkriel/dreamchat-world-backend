@@ -194,20 +194,28 @@ func TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate(t *testing.T) {
 		t.Fatalf("narrate prompt missing the question text %q:\n%s", q, p)
 	}
 
-	// The PERCEIVED fact sheet the narrator must answer FROM, embedded VERBATIM (mirrors factSheetJSON:
-	// jsonb scanned to bytes). Its distance (8 m) is the answer to "how long to the bar?".
-	var wantSheetBytes []byte
+	// The narrator answers FROM the perceived fact sheet — but not from its raw geometry. The sheet
+	// reaches the prompt with distance_m/move_duration_s replaced by a staging band (see
+	// narratorFactSheet): the founder's first live beat proved that a narrator handed "8 m / 6 s"
+	// reads it out, and a room is not a range table. The perceptible fields still ride verbatim.
+	var sheetBytes []byte
 	if err := pool.QueryRow(ctx,
 		`SELECT fn_fact_sheet($1::uuid,$2::uuid,ARRAY[$3]::uuid[],false)`,
-		id.World, id.K, id.Bar).Scan(&wantSheetBytes); err != nil {
+		id.World, id.K, id.Bar).Scan(&sheetBytes); err != nil {
 		t.Fatalf("compute expected perceived fact sheet: %v", err)
 	}
-	wantSheet := string(wantSheetBytes)
-	if !strings.Contains(p, wantSheet) {
-		t.Fatalf("narrate prompt missing the query's perceived fact sheet\nwant:\n%s\n\nprompt:\n%s", wantSheet, p)
+	if want := narratorFactSheet(sheetBytes); !strings.Contains(p, want) {
+		t.Fatalf("narrate prompt missing the query's perceived fact sheet\nwant:\n%s\n\nprompt:\n%s", want, p)
 	}
-	// Fixture sanity: the geometry produced a REAL distance/duration (8 m / 6 s), so the assertion is
-	// not vacuous against a degenerate all-null sheet.
+	for _, banned := range []string{"distance_m", "move_duration_s"} {
+		if strings.Contains(p, banned) {
+			t.Fatalf("raw geometry %q reached the narrator:\n%s", banned, p)
+		}
+	}
+
+	// Fixture sanity: the geometry produced a REAL distance/duration (8 m / 6 s), so the assertion
+	// above is not vacuous against a degenerate all-null sheet — and 8 m is what must come through
+	// as "across the room" rather than as the number eight.
 	var distStr, durStr string
 	if err := pool.QueryRow(ctx, `
 		SELECT (fs->'targets'->0->>'distance_m'), (fs->'targets'->0->>'move_duration_s')
@@ -218,6 +226,9 @@ func TestQueryBeat_PureQuery_NoCanon_NoReferee_AnswersToNarrate(t *testing.T) {
 	// distance_m is jsonb numeric (renders "8.0000000000000000"); duration is bigint ("6").
 	if !strings.HasPrefix(distStr, "8") || durStr != "6" {
 		t.Fatalf("fixture sanity: bar distance/duration = %q/%q, want ~8/6", distStr, durStr)
+	}
+	if !strings.Contains(p, "across the room") {
+		t.Fatalf("the 8 m bar did not reach the narrator as a staging band:\n%s", p)
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, 0)

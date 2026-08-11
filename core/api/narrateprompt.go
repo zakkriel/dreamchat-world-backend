@@ -2,6 +2,7 @@ package main
 
 import (
 	_ "embed"
+	"encoding/json"
 	"strings"
 )
 
@@ -159,12 +160,22 @@ func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[str
 	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'), with its
 	// Tier-2 description when present. PRESENT — "label [id]" per actor, the VIEWER dropped (Defect A);
 	// the id lets a speech/action segment attribute to a present NPC, never to the person narrated TO.
+	// PLACE is matched BY ID against the room the viewer stands in. It used to be "the last candidate
+	// of kind location", which was correct only while exactly one location could ever be a candidate.
+	// SPEC-030 widened the whitelist to the portals of this room and the rooms on their far side, and
+	// buildScene was fixed for exactly this reason — the narrator was not, so it has been setting
+	// scenes in a neighbouring room ever since. Live symptom: the founder's look-around beat in the
+	// tavern opened "The dim cellar air presses close around you". The Cellar is through the hatch.
 	var place, placeDesc string
 	entries := make([]string, 0, len(payload.Candidates))
 	for _, c := range payload.Candidates {
 		if c.Kind == "location" {
-			place = c.Name
-			placeDesc = c.Description
+			// No Here (a direct unit call, or an unplaced viewer): fall back to the old behaviour
+			// rather than rendering a placeless scene.
+			if payload.Here == "" || c.ID == payload.Here {
+				place = c.Name
+				placeDesc = c.Description
+			}
 			continue
 		}
 		if c.ID == viewerID {
@@ -249,9 +260,74 @@ func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[str
 			sb.WriteString("- ")
 			sb.WriteString(qa.Stated)
 			sb.WriteString("\n  facts: ")
-			sb.Write(qa.FactSheet)
+			sb.WriteString(narratorFactSheet(qa.FactSheet))
 			sb.WriteString("\n")
 		}
 	}
 	return sb.String()
+}
+
+// narratorFactSheet rewrites a fact sheet for the NARRATOR: measured geometry becomes a staging
+// band, and the raw numbers never reach the prompt.
+//
+// The engine measures the world in metres and seconds because the cognition and resolve seats need
+// to reason with them — and the cognition path still gets them, untouched. The narrator does not.
+// Handed distance_m and move_duration_s it recites them, because that is the only honest thing to
+// do with a number you have been given: the founder's first live beat came back "maybe nine strides
+// off — close to a seven-count", "barely five meters distant, a mere four-second walk". Accurate,
+// and a range table rather than a room.
+//
+// So the numbers are translated here, at the narrator's boundary and nowhere else. Proximity still
+// informs staging — who is close, who is across the room — which is what the geometry was FOR; what
+// is removed is the ability to read it out. Every other field (open, locked, contents, reachable,
+// weight) passes through untouched: those are perceptible facts a person could state, not
+// instrument readings.
+//
+// Unparseable input is returned verbatim. A fact sheet the narrator cannot read is a worse failure
+// than one it reads too literally, and this function must never be the reason a beat has no answer.
+func narratorFactSheet(raw json.RawMessage) string {
+	var sheet map[string]any
+	if err := json.Unmarshal(raw, &sheet); err != nil {
+		return string(raw)
+	}
+	targets, ok := sheet["targets"].([]any)
+	if !ok {
+		return string(raw)
+	}
+	for _, t := range targets {
+		tm, ok := t.(map[string]any)
+		if !ok {
+			continue
+		}
+		if d, ok := tm["distance_m"].(float64); ok {
+			tm["proximity"] = proximityBand(d)
+		}
+		// Deleted rather than banded: a duration is the one number with no staging value at all —
+		// "how many seconds to walk there" is not something a person senses, it is a stopwatch.
+		delete(tm, "distance_m")
+		delete(tm, "move_duration_s")
+	}
+	out, err := json.Marshal(sheet)
+	if err != nil {
+		return string(raw)
+	}
+	return string(out)
+}
+
+// proximityBand renders a measured distance as the narrator's own vocabulary. The thresholds are
+// scene-scaled, not universal: the seeded tavern is roughly ten metres across, so "across the room"
+// has to reach about that far to mean what it says.
+func proximityBand(metres float64) string {
+	switch {
+	case metres <= 1.5:
+		return "within arm's reach"
+	case metres <= 4:
+		return "a few steps away"
+	case metres <= 12:
+		return "across the room"
+	case metres <= 40:
+		return "some way off"
+	default:
+		return "far off"
+	}
 }

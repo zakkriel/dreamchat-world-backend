@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -103,5 +104,87 @@ func TestBuildNarratePrompt_CarriesSegmentContractAndSpeakerIDs(t *testing.T) {
 	}
 	if !strings.Contains(plain, "prose only") {
 		t.Fatalf("plain fallback must demand prose only:\n%s", plain)
+	}
+}
+
+// ── the founder's first live beat, as two regressions ───────────────────────────────────────────
+
+// PLACE was "the last candidate of kind location", correct only while exactly one location could be
+// a candidate. SPEC-030 widened the whitelist to this room's portals AND the rooms beyond them;
+// buildScene was fixed for exactly this reason and the narrator was not. Live symptom: a
+// look-around in the tavern opened "The dim cellar air presses close around you".
+func TestNarratePrompt_SetsTheSceneInTheRoomTheViewerIsIn(t *testing.T) {
+	payload := PerceptionPayload{
+		Here: "loc-tavern",
+		Candidates: []Candidate{
+			{ID: "loc-tavern", Kind: "location", Name: "The Drowned Lantern", Description: "Low beams, salt-rot, one hearth."},
+			{ID: "loc-cellar", Kind: "location", Name: "Cellar", Description: "A cold stone undercroft."},
+			{ID: "npc-1", Kind: "actor", Name: "Mara"},
+		},
+	}
+	got := buildNarratePlainPrompt(payload, "viewer-1", nil, "completed")
+	if !strings.Contains(got, "PLACE: The Drowned Lantern") {
+		t.Fatalf("prompt does not set the scene in the viewer's own room:\n%s", got)
+	}
+	if strings.Contains(got, "PLACE: Cellar") || strings.Contains(got, "cold stone undercroft") {
+		t.Fatalf("a neighbouring room reached the PLACE block:\n%s", got)
+	}
+}
+
+// With no Here — a direct unit call or an unplaced viewer — the old behaviour stands rather than
+// rendering a placeless scene.
+func TestNarratePrompt_FallsBackWhenTheViewerHasNoRoom(t *testing.T) {
+	payload := PerceptionPayload{Candidates: []Candidate{
+		{ID: "loc-tavern", Kind: "location", Name: "The Drowned Lantern"},
+	}}
+	if got := buildNarratePlainPrompt(payload, "viewer-1", nil, "completed"); !strings.Contains(got, "PLACE: The Drowned Lantern") {
+		t.Fatalf("a placeless payload lost its only location:\n%s", got)
+	}
+}
+
+// The narrator was handed distance_m and move_duration_s verbatim and did the only honest thing with
+// a number: read it out. "maybe nine strides off — close to a seven-count", "barely five meters
+// distant, a mere four-second walk". Accurate, and a range table rather than a room.
+func TestNarratePrompt_GeometryBecomesStagingNotAReadout(t *testing.T) {
+	fs := json.RawMessage(`{"targets":[
+		{"id":"a","name":"Mara","distance_m":11.66,"move_duration_s":9,"reachable":true,"locked":null},
+		{"id":"b","name":"the bar","distance_m":0.9,"move_duration_s":1,"open":true}],"budget_remaining":null}`)
+	got := buildNarratePlainPrompt(PerceptionPayload{Here: "loc-1", Candidates: []Candidate{
+		{ID: "loc-1", Kind: "location", Name: "The Drowned Lantern"}}},
+		"viewer-1", nil, "completed", QueryAnswer{Stated: "who is there?", FactSheet: fs})
+
+	for _, banned := range []string{"distance_m", "move_duration_s", "11.66", "0.9"} {
+		if strings.Contains(got, banned) {
+			t.Fatalf("reciteable geometry reached the narrator (%q):\n%s", banned, got)
+		}
+	}
+	// Proximity survives, because staging is what the measurement was FOR.
+	if !strings.Contains(got, "across the room") || !strings.Contains(got, "within arm's reach") {
+		t.Fatalf("staging bands missing — the narrator can no longer tell near from far:\n%s", got)
+	}
+	// Perceptible facts are untouched: a person can say a door is open; they cannot say it is 11.66m away.
+	for _, kept := range []string{`"reachable":true`, `"open":true`, "Mara"} {
+		if !strings.Contains(got, kept) {
+			t.Fatalf("a perceptible fact was stripped along with the numbers (%q):\n%s", kept, got)
+		}
+	}
+}
+
+func TestNarratorFactSheet_BandsAndSurvivesGarbage(t *testing.T) {
+	for _, tc := range []struct {
+		m    float64
+		want string
+	}{
+		{0.5, "within arm's reach"}, {3, "a few steps away"},
+		{11.66, "across the room"}, {25, "some way off"}, {500, "far off"},
+	} {
+		if got := proximityBand(tc.m); got != tc.want {
+			t.Fatalf("proximityBand(%v) = %q, want %q", tc.m, got, tc.want)
+		}
+	}
+	// A fact sheet the narrator cannot read is a worse failure than one it reads too literally: junk
+	// passes through rather than costing the beat its answer.
+	if got := narratorFactSheet(json.RawMessage(`not json`)); got != "not json" {
+		t.Fatalf("unparseable fact sheet = %q, want it passed through verbatim", got)
 	}
 }
