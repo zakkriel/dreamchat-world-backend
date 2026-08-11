@@ -21,7 +21,7 @@ func TestNamingWall_RefusesTheFoundersLeak(t *testing.T) {
 	}
 
 	leak := `[{"speaker_id":null,"kind":"narration","text":"Mara is behind the bar now, Jonas planted between her and the room."}]`
-	if _, err := DecodeAndValidateNarration(leak, nil, nil, wall); err == nil {
+	if _, err := DecodeAndValidateNarration(leak, NarrationBelts{Wall: wall}); err == nil {
 		t.Fatal("the founder's leaked narration was accepted — the wall is not enforcing")
 	} else if !strings.Contains(err.Error(), "Jonas") || !strings.Contains(err.Error(), "has not earned") {
 		t.Fatalf("rejection must name the offending word so the repair prompt can use it, got: %v", err)
@@ -30,7 +30,7 @@ func TestNamingWall_RefusesTheFoundersLeak(t *testing.T) {
 	// Mara IS earned (Kade holds name-knowledge of her): the same sentence without Jonas must pass,
 	// or the wall is just censoring every capital letter.
 	clean := `[{"speaker_id":null,"kind":"narration","text":"Mara is behind the bar now, the muscle by the bar planted between her and the room."}]`
-	if _, err := DecodeAndValidateNarration(clean, nil, nil, wall); err != nil {
+	if _, err := DecodeAndValidateNarration(clean, NarrationBelts{Wall: wall}); err != nil {
 		t.Fatalf("a segment naming only what the viewer HAS earned must pass, got: %v", err)
 	}
 }

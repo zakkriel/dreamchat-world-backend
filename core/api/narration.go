@@ -45,11 +45,22 @@ type NarrationSegment struct {
 // Plus the schema's structural rules, restated so a rogue/misbound driver still trips them: kind in the
 // closed set, text non-empty, and the speaker_id↔kind correlation (null ⇔ narration; non-null ⇔
 // speech|action).
-// wall enforces naming reach on every segment before it can reach the player: a canonical name the
-// viewer has not earned is a first-law breach (B-1, I-3), so it is rejected here and the seat is
-// asked again — a model rewrites the sentence better than any substitution can. nil disables the
-// check (direct unit calls with no viewer in hand); the emit boundary still scrubs as the backstop.
-func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map[string][]string, wall *NamingWall) ([]NarrationSegment, error) {
+// NarrationBelts is everything a segment is checked against. It is a struct rather than four
+// positional arguments because it grew to four in two days and each one is optional in a different
+// way — a direct unit call has no viewer, a first beat has no speech, and a nil belt must mean
+// "not checked" rather than "silently passes something it should not".
+type NarrationBelts struct {
+	PresentIDs  []string            // ghost-speaker check: who can be attributed at all
+	SpeechTexts map[string][]string // verbatim check: what each speaker actually said, per speaker id
+	Wall        *NamingWall         // naming reach (B-1, I-3): names this viewer has not earned
+	Player      *PlayerVoice        // the player's own words and acts, which no NPC may perform
+}
+
+// DecodeAndValidateNarration is the gate every segment passes before it can become a frame. A
+// rejection is not a failure mode — it is the seat being asked again, which is the cheapest correct
+// answer available when a model writes something the world forbids.
+func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegment, error) {
+	presentIDs, speechTexts, wall := b.PresentIDs, b.SpeechTexts, b.Wall
 	var segs []NarrationSegment
 	if err := json.Unmarshal([]byte(raw), &segs); err != nil {
 		return nil, fmt.Errorf("narration/1 not valid JSON: %w", err)
@@ -88,6 +99,17 @@ func DecodeAndValidateNarration(raw string, presentIDs []string, speechTexts map
 			}
 			if s.Kind == "speech" && !speechIsVerbatim(*s.SpeakerID, s.Text, speechTexts) {
 				return nil, fmt.Errorf("segment %d: speech %q is not verbatim — it does not appear in speaker %s's spoken words this beat", i, s.Text, *s.SpeakerID)
+			}
+			// THE PLAYER'S OWN VOICE. An attributed segment may not perform the player's act or quote
+			// his words: he is never in PRESENT, so the only way his line lands under someone's id is
+			// the narrator reaching for the nearest available id. Live symptom: the founder's
+			// "I raise both hands, empty. 'Easy. I mean no trouble.'" came back as a hooded figure's
+			// action. `action` segments carry no verbatim requirement — deliberately, since an act is
+			// viewer-relative prose — which left this the one attributed shape with nothing checking it.
+			if echo := b.Player.Echoes(s.Text); echo != "" {
+				return nil, fmt.Errorf("segment %d: attributed to %s but repeats the PLAYER's own words/act (%q) — "+
+					"the player is never in PRESENT; render his own moment as a narration segment in second person",
+					i, *s.SpeakerID, echo)
 			}
 		default:
 			return nil, fmt.Errorf("segment %d: kind %q outside {narration,speech,action}", i, s.Kind)
