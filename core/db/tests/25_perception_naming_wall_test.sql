@@ -1,0 +1,85 @@
+-- The naming wall at the perception seam (B-1, I-3, naming reach RULINGS-2026-07-23 §3).
+--
+-- Reported live: narration told Kade "Jonas planted between her and the room". Kade has never earned
+-- that name. The narrator was faithful — his OWN perception rows carried it, because both fan-out
+-- writers copied one canonically-named string into every holder's row.
+BEGIN;
+SELECT plan(7);
+
+\set w '22222222-2222-2222-2222-222222222222'
+\set kade '2ac70000-0000-0000-0000-0000000000a1'
+\set mara '2ac70000-0000-0000-0000-0000000000a2'
+
+-- (a) the reported sentence, rendered for the viewer who has not earned the name
+SELECT is(
+  fn_viewer_text(:'w'::uuid, :'kade'::uuid,
+    'Jonas pushes off the bar and steps between Kade and Mara, blocking the way.'),
+  'the muscle by the bar pushes off the bar and steps between Kade and Mara, blocking the way.',
+  '(a) Kade sees "the muscle by the bar"; Mara he has EARNED and his OWN name he obviously holds'
+);
+
+-- (b) viewer-relative both ways: Mara knows Jonas, so nothing is rewritten for her
+SELECT is(
+  fn_viewer_text(:'w'::uuid, :'mara'::uuid, 'Jonas pushes off the bar.'),
+  'Jonas pushes off the bar.',
+  '(b) a holder who has earned the name reads the name — the wall is per-viewer, not a global censor'
+);
+
+-- (c) case-insensitive: prose capitalises at a sentence start
+SELECT is(
+  fn_viewer_text(:'w'::uuid, :'kade'::uuid, 'JONAS planted himself there. jonas did not move.'),
+  'the muscle by the bar planted himself there. the muscle by the bar did not move.',
+  '(c) every casing of an unearned name is rewritten'
+);
+
+-- (d) word boundaries: a name must not be rewritten inside a longer word
+SELECT is(
+  fn_viewer_text(:'w'::uuid, :'kade'::uuid, 'The jonasberry pie and Maras cup sat untouched.'),
+  'The jonasberry pie and Maras cup sat untouched.',
+  '(d) "jonasberry" is not Jonas'
+);
+
+-- (e) THE REGRESSION: the fan-out writes what the holder perceived, not what the referee wrote.
+--     Commit a Communicated event whose summary names Jonas, then read Kade's own perception row.
+--     'told' requires Kade as an addressed listener.
+-- Separate statements on purpose: a data-modifying CTE is not visible to a function called in the
+-- same statement, so generate_perceptions would see no participants and write nothing.
+WITH ins AS (
+  INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin)
+  VALUES (:'w'::uuid, 'Communicated',
+          'Jonas warns the stranger away from Mara.', 900, 0, 'accepted', 'freeform')
+  RETURNING event_id
+)
+SELECT event_id INTO TEMP ev FROM ins;
+
+INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+SELECT ev.event_id, x.id, 'actor', x.role FROM ev,
+  (VALUES (:'mara'::uuid, 'speaker'), (:'kade'::uuid, 'listener')) AS x(id, role);
+
+SELECT generate_perceptions((SELECT event_id FROM ev));
+
+SELECT is(
+  (SELECT content FROM perception_record
+    WHERE world_id = :'w'::uuid AND holder_id = :'kade'::uuid AND acquired_tick = 900),
+  'the muscle by the bar warns the stranger away from Mara.',
+  '(e) generate_perceptions renders the listener''s row in the LISTENER''S vocabulary'
+);
+
+-- (f) canon is untouched: the referee's true account keeps the canonical name (immutability, D-1;
+--     I-1 replay reads canon, not this projection)
+SELECT is(
+  (SELECT summary FROM canon_event WHERE world_id = :'w'::uuid AND in_world_tick = 900),
+  'Jonas warns the stranger away from Mara.',
+  '(f) canon_event.summary still says Jonas — the wall bounds perception, it does not rewrite truth'
+);
+
+-- (g) the speaker earned every name in her own line, so her row is unchanged
+SELECT is(
+  (SELECT content FROM perception_record
+    WHERE world_id = :'w'::uuid AND holder_id = :'mara'::uuid AND acquired_tick = 900),
+  'Jonas warns the stranger away from Mara.',
+  '(g) the speaker''s own row is not scrubbed of names she holds'
+);
+
+SELECT * FROM finish();
+ROLLBACK;
