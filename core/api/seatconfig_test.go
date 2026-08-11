@@ -645,3 +645,77 @@ func TestBridge_EverySeatIsTimedAndCapabilitiesAreUnchanged(t *testing.T) {
 		t.Fatal("the decorator dropped a reported capability")
 	}
 }
+
+// json_mode is the one setting where the seats provably disagree, so it is per-seat like the rest:
+// decompose is reliable under strict decoding and narrate is destroyed by it.
+func TestSeatConfig_JSONModeIsPerSeatConfiguration(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":             "route:m",
+		"DREAMCHAT_SEATS":                    "narrate=route:big",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":  "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_JSON_MODE": jsonModeSchema,
+		"DREAMCHAT_SEAT_JSON_MODE_NARRATE":   jsonModeOff,
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["json_mode"]; got != jsonModeSchema {
+		t.Fatalf("decompose json_mode = %q, want strict", got)
+	}
+	if got := cfg["narrate"].Params["json_mode"]; got != jsonModeOff {
+		t.Fatalf("narrate json_mode = %q, want the seat override", got)
+	}
+}
+
+// jsonModeOff sends no response_format and leaves the belt as the only enforcement — the point being
+// that constrained decoding guarantees a SHAPE, which is worthless when the shape was never the hard
+// part. Measured: narration/1 under strict decoding returned every segment structurally perfect and
+// textually empty.
+func TestOpenAICompat_OffModeSendsNoResponseFormatButKeepsTheLeash(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"content":"[{\"a\":1}]"}}]}`))
+	}))
+	defer srv.Close()
+	d, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "json_mode": jsonModeOff}})
+	if err != nil {
+		t.Fatalf("newOpenAICompatDriver: %v", err)
+	}
+	out, err := d.Generate(t.Context(), GenRequest{Prompt: "p", Schema: json.RawMessage(`{"type":"array"}`)})
+	if err != nil || out != `[{"a":1}]` {
+		t.Fatalf("out=%q err=%v", out, err)
+	}
+	if _, present := got["response_format"]; present {
+		t.Fatal("off mode must send no response_format")
+	}
+	// The schema still rides the system message — off is not "no leash", it is "no constrained
+	// decoding" — and it names the ROOT, because "a single JSON document" makes a model reach for an
+	// object: measured live, narration/1 came back as {"array":[…]} until the wording was fixed.
+	msgs, _ := got["messages"].([]any)
+	sys, _ := msgs[0].(map[string]any)
+	content, _ := sys["content"].(string)
+	if !strings.Contains(content, `"type":"array"`) {
+		t.Fatal("the schema leash is missing from the system message in off mode")
+	}
+	if !strings.Contains(content, "JSON ARRAY") {
+		t.Fatalf("an array-rooted schema must name its root in the leash:\n%s", content)
+	}
+}
+
+// A model without constrained decoding volunteers a markdown fence about half the time. That is a
+// transport wrapper, not content — failing over punctuation would cost a retry and 4-8s of dead air.
+func TestStripCodeFence(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"```json\n[{\"a\":1}]\n```", `[{"a":1}]`},
+		{"```\n[1]\n```", `[1]`},
+		{`[{"a":1}]`, `[{"a":1}]`},
+		{"no fence here", "no fence here"},
+		{"```unterminated", "```unterminated"},
+	} {
+		if got := stripCodeFence(tc.in); got != tc.want {
+			t.Fatalf("stripCodeFence(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

@@ -52,6 +52,9 @@ const (
 	seatTemperatureEnvFmt = "DREAMCHAT_SEAT_TEMPERATURE_%s"
 	// Per-seat reasoning policy. Same precedence rule again.
 	seatReasoningEnvFmt = "DREAMCHAT_SEAT_REASONING_%s"
+	// Per-seat structured-output mode. Same precedence rule again — and the one setting where the
+	// seats provably disagree: see the driver's jsonModeOff.
+	seatJSONModeEnvFmt = "DREAMCHAT_SEAT_JSON_MODE_%s"
 
 	// dialectOpenAICompat is the lingua franca: chat/completions as popularised by OpenAI and spoken
 	// by most hosted providers. It is the default because assuming it is right far more often than
@@ -212,7 +215,7 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 			"base_url": baseURL,
 			"api_key":  env("API_KEY"),
 			// Empty is fine — the driver defaults it, and every provider supports the default.
-			"json_mode": env("JSON_MODE"),
+			"json_mode": perSeatOrProvider(seat, provider, "JSON_MODE", seatJSONModeEnvFmt, lookup),
 			// Carried so a driver's Name(), and therefore every log line and trace frame, says which
 			// provider answered. Without it four seats on four providers are indistinguishable.
 			"provider_alias": provider,
