@@ -46,6 +46,8 @@ const (
 	providerEnvFmt = "DREAMCHAT_PROVIDER_%s_%s"
 	// Per-seat routing override. Wins over the provider-level policy when both are set.
 	seatRoutingEnvFmt = "DREAMCHAT_SEAT_ROUTING_%s"
+	// Per-seat completion budget. Same precedence rule as routing.
+	seatMaxTokensEnvFmt = "DREAMCHAT_SEAT_MAX_TOKENS_%s"
 
 	// dialectOpenAICompat is the lingua franca: chat/completions as popularised by OpenAI and spoken
 	// by most hosted providers. It is the default because assuming it is right far more often than
@@ -152,12 +154,19 @@ func knownSeat(name string) bool {
 // had not heard of — turning "policy not yet supported" into "policy silently not applied", which is
 // the worst possible failure for a field whose whole job is compliance.
 func routingFor(seat, provider string, lookup func(string) string) string {
+	return perSeatOrProvider(seat, provider, "ROUTING", seatRoutingEnvFmt, lookup)
+}
+
+// perSeatOrProvider reads a setting that has both a per-seat and a per-provider spelling, seat
+// first. Two settings use it and both want the same precedence, so the rule lives in one place
+// rather than being re-derived and eventually diverging.
+func perSeatOrProvider(seat, provider, suffix, seatFmt string, lookup func(string) string) string {
 	if seat != "" {
-		if v := strings.TrimSpace(lookup(fmt.Sprintf(seatRoutingEnvFmt, envKey(seat)))); v != "" {
+		if v := strings.TrimSpace(lookup(fmt.Sprintf(seatFmt, envKey(seat)))); v != "" {
 			return v
 		}
 	}
-	return strings.TrimSpace(lookup(fmt.Sprintf(providerEnvFmt, envKey(provider), "ROUTING")))
+	return strings.TrimSpace(lookup(fmt.Sprintf(providerEnvFmt, envKey(provider), suffix)))
 }
 
 func driverConfigFor(spec string, lookup func(string) string) (DriverConfig, error) {
@@ -180,6 +189,7 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 		return strings.TrimSpace(lookup(fmt.Sprintf(providerEnvFmt, envKey(provider), suffix)))
 	}
 	routing := routingFor(seat, provider, lookup)
+	maxTokens := perSeatOrProvider(seat, provider, "MAX_TOKENS", seatMaxTokensEnvFmt, lookup)
 	dialect := env("DIALECT")
 	if dialect == "" {
 		dialect = dialectOpenAICompat
@@ -203,6 +213,9 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 			// Routing policy, verbatim JSON, merged into the request body as an extra field. See
 			// routingFor for why it is configuration and not a constant.
 			"routing": routing,
+			// Completion budget. Empty means the driver's default; see the driver for why sending
+			// one at all is not optional against an aggregator.
+			"max_tokens": maxTokens,
 		}
 		return DriverConfig{Provider: dialect, Model: model, Params: params}, nil
 	case dialectAnthropic:

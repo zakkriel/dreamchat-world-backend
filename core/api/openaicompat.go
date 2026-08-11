@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -53,8 +54,19 @@ type openAICompatDriver struct {
 	// case the field is omitted entirely rather than sent empty — a plain provider does not know
 	// what "provider" means and some reject unknown fields.
 	routing json.RawMessage
-	client  *http.Client
+	// maxTokens is the completion budget sent on every request. NOT optional against an aggregator:
+	// with no max_tokens it reserves the MODEL'S FULL completion window up front and refuses the
+	// call if the account cannot afford that reservation — measured live, a request with no cap was
+	// rejected 402 "you requested up to 65536 tokens, but can only afford 11478" on an account with
+	// money in it. It is also the only ceiling on a reasoning model's spend: the strong DeepSeek
+	// variant emits reasoning tokens billed at the completion rate before it writes a word.
+	maxTokens int
+	client    *http.Client
 }
+
+// defaultMaxTokens is deliberately generous enough for a narration segment plus a reasoning
+// preamble, and far below any model's window. A seat that needs more says so in config.
+const defaultMaxTokens = 2048
 
 // newOpenAICompatDriver constructs an openai-compat driver from DriverConfig.
 // base_url and api_key are read from dc.Params; model from dc.Model.
@@ -89,6 +101,14 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 	// Validated HERE so a malformed policy is a boot failure with the seat named, not a 400 on the
 	// first beat of a founder playtest. Compliance config that fails late is compliance config that
 	// fails in front of the person it was meant to protect.
+	maxTokens := defaultMaxTokens
+	if v := strings.TrimSpace(dc.Params["max_tokens"]); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n <= 0 {
+			return nil, fmt.Errorf("openai-compat: max_tokens %q is not a positive integer", v)
+		}
+		maxTokens = n
+	}
 	var routing json.RawMessage
 	if r := strings.TrimSpace(dc.Params["routing"]); r != "" {
 		if !json.Valid([]byte(r)) {
@@ -97,13 +117,14 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		routing = json.RawMessage(r)
 	}
 	return &openAICompatDriver{
-		name:     alias + ":" + model,
-		model:    model,
-		baseURL:  baseURL,
-		apiKey:   apiKey,
-		jsonMode: jsonMode,
-		routing:  routing,
-		client:   &http.Client{Timeout: 60 * time.Second},
+		name:      alias + ":" + model,
+		model:     model,
+		baseURL:   baseURL,
+		apiKey:    apiKey,
+		jsonMode:  jsonMode,
+		routing:   routing,
+		maxTokens: maxTokens,
+		client:    &http.Client{Timeout: 60 * time.Second},
 	}, nil
 }
 
@@ -126,7 +147,8 @@ func (o *openAICompatDriver) Capabilities() CapabilitySet {
 
 func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	body := map[string]any{
-		"model": o.model,
+		"model":      o.model,
+		"max_tokens": o.maxTokens,
 	}
 	// The routing policy rides EVERY request, structured or not: a free-text narration is exactly as
 	// subject to "which jurisdiction, which retention policy" as a schema'd one.
@@ -174,6 +196,7 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 			Message struct {
 				Content string `json:"content"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -181,6 +204,14 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	}
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("openai-compat: empty choices in response")
+	}
+	// A reasoning model can spend the whole completion budget thinking and return NULL content with
+	// finish_reason "length". Returning "" there would surface as a schema validation failure two
+	// retries later, blaming the model for a budget problem. Name it instead.
+	if resp.Choices[0].Message.Content == "" {
+		return "", fmt.Errorf("openai-compat: model returned no content (finish_reason=%q) — "+
+			"raise max_tokens (currently %d) if this is a reasoning model",
+			resp.Choices[0].FinishReason, o.maxTokens)
 	}
 	return resp.Choices[0].Message.Content, nil
 }
