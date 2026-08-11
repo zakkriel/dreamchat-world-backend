@@ -1,0 +1,14 @@
+# The build needs core/api and nothing else. Everything below either bloats the context or is a
+# secret that must never reach an image layer.
+.git
+.github
+.env
+.env*
+docs
+ci
+core/db
+.stack
+.claude
+.superpowers
+*.md
+docker-compose.yml
