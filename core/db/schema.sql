@@ -232,9 +232,18 @@ BEGIN
   vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
 
   INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
-                           status, accepted_at, visibility_scope, origin)
+                           status, accepted_at, visibility_scope, origin, payload)
   VALUES (ev_id, p_world_id, final_type, p_attempt->>'stated',
-          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
+          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin,
+          -- SPOKEN WORDS (SPEC-033 follow-up). `stated` is the referee's account of the utterance
+          -- ("tell her about the note"); `content` is what was actually SAID. Only the latter can back
+          -- a verbatim quote, and until now it was dropped on the floor here — so canon recorded that
+          -- someone spoke and never what they said, and every speech segment the narrator wrote was
+          -- correctly refused as unverifiable. Stored only when non-empty, and only for speech.
+          CASE WHEN ev_type = 'Communicated'
+                AND NULLIF(TRIM(COALESCE(p_attempt->>'content','')),'') IS NOT NULL
+               THEN jsonb_build_object('spoken', TRIM(p_attempt->>'content'))
+               ELSE '{}'::jsonb END);
 
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
@@ -492,9 +501,14 @@ BEGIN
   vis_scope := CASE ev_type WHEN 'Communicated' THEN 'private' ELSE 'public' END;
 
   INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
-                           status, accepted_at, visibility_scope, origin)
+                           status, accepted_at, visibility_scope, origin, payload)
   VALUES (ev_id, p_world_id, ev_type, truth_text,
-          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin);
+          p_tick, p_seq, 'accepted', now(), vis_scope, p_origin,
+          -- Same rule on the ruled path: `truth` is the referee's account, `content` is the words.
+          CASE WHEN ev_type = 'Communicated'
+                AND NULLIF(TRIM(COALESCE(p_ruled->>'content','')),'') IS NOT NULL
+               THEN jsonb_build_object('spoken', TRIM(p_ruled->>'content'))
+               ELSE '{}'::jsonb END);
 
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
@@ -2741,11 +2755,25 @@ DECLARE
   spk  uuid;
   lst  uuid;
   pid  uuid;
+  -- said = the utterance as a holder PERCEIVES it: the referee's account plus the words themselves.
+  -- Without the words in the perception line the narrator has nothing verbatim to quote, so it invents
+  -- dialogue and the belt refuses it — which is exactly the deadlock that made kind:"speech"
+  -- unreachable. The words are canon (payload.spoken); this is how they reach the person who heard them.
+  said text;
 BEGIN
   SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
   IF NOT FOUND THEN RETURN 0; END IF;
 
   IF ev.event_type IN ('private_disclosure', 'Communicated') THEN
+    said := ev.summary;
+    IF NULLIF(TRIM(COALESCE(ev.payload->>'spoken','')),'') IS NOT NULL
+       -- ...unless the account ALREADY is the words. The legacy `say` step commits with summary =
+       -- content, so appending would render 'I saw the note — "I saw the note"'. Nothing is gained by
+       -- quoting a line back to itself, and the duplication would reach the player's own transcript.
+       AND position(TRIM(ev.payload->>'spoken') IN ev.summary) = 0 THEN
+      -- Quoted so a reader — human or model — can see where the account ends and the words begin.
+      said := ev.summary || ' — "' || TRIM(ev.payload->>'spoken') || '"';
+    END IF;
     -- speaker → 'shared'; each listener → 'told' (B-7). Recipients = the addressed listeners
     -- (thin slice; co-present overhearers defer with the broader vocabulary, §3).
     SELECT entity_id INTO spk FROM event_participant
@@ -2754,13 +2782,13 @@ BEGIN
       -- SPEC-033: a name in what was said is earned by whoever heard it said.
       INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
       SELECT ev.world_id, spk, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, ev.summary) t
+        FROM fn_names_in_text(ev.world_id, said) t
        WHERE t.entity_id <> spk
       ON CONFLICT DO NOTHING;
 
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
-      VALUES (ev.world_id, spk, p_event_id, fn_viewer_text(ev.world_id, spk, ev.summary), 'shared',
+      VALUES (ev.world_id, spk, p_event_id, fn_viewer_text(ev.world_id, spk, said), 'shared',
               ev.in_world_tick, ev.in_world_tick)
       RETURNING perception_id INTO pid;
       INSERT INTO perception_subject (perception_id, entity_id, world_id)
@@ -2773,13 +2801,13 @@ BEGIN
       -- SPEC-033, the reported case: Mara says "Jonas" where Kade can hear it, and Kade learns it.
       INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
       SELECT ev.world_id, lst, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, ev.summary) t
+        FROM fn_names_in_text(ev.world_id, said) t
        WHERE t.entity_id <> lst
       ON CONFLICT DO NOTHING;
 
       INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
                                      acquired_tick, valid_tick)
-      VALUES (ev.world_id, lst, p_event_id, fn_viewer_text(ev.world_id, lst, ev.summary), 'told',
+      VALUES (ev.world_id, lst, p_event_id, fn_viewer_text(ev.world_id, lst, said), 'told',
               ev.in_world_tick, ev.in_world_tick)
       RETURNING perception_id INTO pid;
       INSERT INTO perception_subject (perception_id, entity_id, world_id)
@@ -4181,4 +4209,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090005'),
     ('20260809090006'),
     ('20260809090007'),
-    ('20260809090008');
+    ('20260809090008'),
+    ('20260809090009');

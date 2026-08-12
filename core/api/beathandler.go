@@ -167,13 +167,20 @@ func narrateMessages(segments []NarrationSegment, labelFor map[string]string) ([
 // non-legacy 'Communicated' label (the orchestrator's path, p_legacy_types=false) and the legacy
 // 'private_disclosure' label are matched, defensively.
 func (h *beatHandler) speechTexts(ctx context.Context, worldID, viewerID string, sinceTick int64) (map[string][]string, error) {
+	// The words come from CANON (payload.spoken), not from the perception line. That line is the
+	// referee's account of the utterance, and substring-matching a quote against it let a paraphrase
+	// authenticate itself: under narration/1 the narrator passed the belt by quoting the account as
+	// dialogue. The perception join stays — it is what proves this viewer HEARD it — but the evidence
+	// is now the words canon actually recorded. An utterance with no spoken words backs no quote at
+	// all, which is the honest answer: nobody knows what was said.
 	rows, err := h.pool.Query(ctx,
-		`SELECT ep.entity_id::text, pr.content
+		`SELECT ep.entity_id::text, ce.payload->>'spoken'
 		   FROM perception_record pr
 		   JOIN canon_event ce ON ce.event_id = pr.source_event_id AND ce.world_id = pr.world_id
 		   JOIN event_participant ep ON ep.event_id = ce.event_id AND ep.role_qualifier = 'speaker'
 		  WHERE pr.world_id = $1 AND pr.holder_id = $2
 		    AND ce.event_type IN ('Communicated', 'private_disclosure')
+		    AND ce.payload->>'spoken' IS NOT NULL
 		    AND pr.acquired_tick >= $3`,
 		worldID, viewerID, sinceTick)
 	if err != nil {
