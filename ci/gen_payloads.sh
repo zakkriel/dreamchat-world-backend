@@ -84,6 +84,28 @@ if [ -n "$DL" ]; then
   done
 fi
 
+# --- transcript (transcript/1): the ONE surface with no seeded rows, because history starts when
+# the feature ships and old beats are never fabricated. Left alone it would only ever produce the
+# empty envelope and every `entries[*]` field — the whole delivered-narration shape, including the
+# narration/2 speech split — would ship unvalidated: a coverage hole that reads green. So the
+# generator writes two entries of its own first (a narration+speech beat, and a journey beat with no
+# player input), then pages them: page 1 with limit=1 exercises `next_before`, page 2 exercises the
+# cursor, and the other viewer exercises the empty envelope AND the viewer-scoping.
+PSQL "INSERT INTO transcript_entry (world_id, viewer_id, in_world_tick, stated, segments, halt_reason, journey)
+      VALUES
+      ('$WORLD','$PLAYER',10,'I ask her about the note',
+       '[{\"speaker_id\":null,\"speaker_label\":\"\",\"kind\":\"narration\",\"text\":\"The common room is low and dim.\",\"quote\":null},
+         {\"speaker_id\":\"$JONAS\",\"speaker_label\":\"the muscle by the bar\",\"kind\":\"speech\",\"text\":\"he looks up from the tap\",\"quote\":\"The tide turns at dusk.\"},
+         {\"speaker_id\":\"$JONAS\",\"speaker_label\":\"the muscle by the bar\",\"kind\":\"action\",\"text\":\"he sets a tankard down.\",\"quote\":null}]'::jsonb,
+       'completed', NULL),
+      ('$WORLD','$PLAYER',12,NULL,
+       '[{\"speaker_id\":null,\"speaker_label\":\"\",\"kind\":\"narration\",\"text\":\"You walk on.\",\"quote\":null}]'::jsonb,
+       'journey', '{\"arrived\":false}'::jsonb)" >/dev/null
+save "transcript_P_page1" "SELECT fn_transcript('$WORLD','$PLAYER',NULL,1)"
+NEXT=$(PSQL "SELECT (fn_transcript('$WORLD','$PLAYER',NULL,1)->>'next_before')")
+[ -n "$NEXT" ] && save "transcript_P_page2" "SELECT fn_transcript('$WORLD','$PLAYER',$NEXT,50)"
+save "transcript_J_empty" "SELECT fn_transcript('$WORLD','$JONAS')"
+
 # --- scene/current: assembled in Go (buildScene, core/api/scenehandler.go), not a SQL function —
 # there is no fn_* this generator can call directly the way it calls fn_actor_page/fn_timeline
 # above. TestGenSceneCurrentPayloads (core/api/scenehandler_test.go) is the Go-side equivalent: gated

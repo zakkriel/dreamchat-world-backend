@@ -46,7 +46,7 @@ NULLABLE_FIELDS = {"perceived_name", "group_label", "display_label"}
 # check does not apply. They are still loaded (must be valid JSON Schema) and run through
 # Direction 2 (vacuous unless they carry a NOT-NULL projection field). Projection schemas remain
 # strictly coverage-required: a new projection schema added without a payload still fails.
-INPUT_CONTRACT_SCHEMAS = {"beat_chain/1", "beat_chain/2", "ruling/1", "ruling/2", "npc_attempts/1", "narration/1"}  # ruling/2 + narration/1: seat contracts, no payload generator
+INPUT_CONTRACT_SCHEMAS = {"beat_chain/1", "beat_chain/2", "ruling/1", "ruling/2", "npc_attempts/1", "narration/2"}  # ruling/2 + narration/2: seat contracts, no payload generator
 
 
 def load_schemas(schema_dir):

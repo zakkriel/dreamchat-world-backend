@@ -7,27 +7,33 @@ import (
 	"strings"
 )
 
-// narrationV1SchemaJSON is the structured-output leash handed to the narrate seat (founder envelope):
+// narrationV2SchemaJSON is the structured-output leash handed to the narrate seat (founder envelope):
 // the beat response stops being one narrator blob and becomes an ORDERED list of typed segments —
 // narrator prose plus attributed NPC speech and single-NPC actions. Registered as an input-contract
 // schema (ci/schema_contract.py, SPEC-011 house rule) — it is the seat's leash, not a projection
 // payload, so it has no SQL payload generator by design.
 //
-//go:embed schema/narration.v1.schema.json
-var narrationV1SchemaJSON string
+//go:embed schema/narration.v2.schema.json
+var narrationV2SchemaJSON string
 
-// NarrationSegment is one element of narration/1: narrator prose (SpeakerID nil, Kind "narration") or an
+// NarrationSegment is one element of narration/2: narrator prose (SpeakerID nil, Kind "narration") or an
 // attributed NPC line (SpeakerID non-nil, Kind "speech" for the mind's exact words, "action" for one
 // clean single-NPC act). SpeakerID is a *string so the null⇔narration correlation is decodable (an
 // absent/explicit-null speaker is distinct from the empty string).
 type NarrationSegment struct {
 	SpeakerID *string `json:"speaker_id"`
 	Kind      string  `json:"kind"`
-	Text      string  `json:"text"`
+	// Text is prose: the whole segment for narration and action, and for speech the STAGING around the
+	// line ("she leans in, her voice dropping"), which may be empty when the line is delivered bare.
+	Text string `json:"text"`
+	// Quote is the verbatim spoken words, without quotation marks or attribution — non-empty exactly
+	// when Kind is "speech". Separating it from Text is what lets the frontend format speech and lets
+	// the verbatim belt check the words claimed to be spoken instead of a sentence of narrator prose.
+	Quote *string `json:"quote"`
 }
 
 // DecodeAndValidateNarration is the DEFENSE-IN-DEPTH belt behind the narrate seat's structured-output
-// leash (schema/narration.v1.schema.json). Structured decoding makes the output schema-valid by
+// leash (schema/narration.v2.schema.json). Structured decoding makes the output schema-valid by
 // construction; this belt re-enforces the same contract AND adds two engine-grounded checks the schema
 // alone cannot express:
 //
@@ -63,7 +69,7 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 	presentIDs, speechTexts, wall := b.PresentIDs, b.SpeechTexts, b.Wall
 	var segs []NarrationSegment
 	if err := json.Unmarshal([]byte(raw), &segs); err != nil {
-		return nil, fmt.Errorf("narration/1 not valid JSON: %w", err)
+		return nil, fmt.Errorf("narration/2 not valid JSON: %w", err)
 	}
 	present := make(map[string]bool, len(presentIDs))
 	for _, id := range presentIDs {
@@ -82,13 +88,18 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 	// this widens what counts as an acceptable ARRAY, never what counts as an acceptable segment.
 	kept := segs[:0]
 	for i, s := range segs {
-		if strings.TrimSpace(s.Text) == "" {
+		// A blank segment is dropped (see above) — but a SPEECH segment with empty staging is not
+		// blank: its content is the quote, and a bare line with no stage direction is ordinary writing.
+		if strings.TrimSpace(s.Text) == "" && strings.TrimSpace(quoteOf(s)) == "" {
 			continue
 		}
 		switch s.Kind {
 		case "narration":
 			if s.SpeakerID != nil {
 				return nil, fmt.Errorf("segment %d: kind=narration requires speaker_id null (got %q)", i, *s.SpeakerID)
+			}
+			if quoteOf(s) != "" {
+				return nil, fmt.Errorf("segment %d: kind=narration carries a quote — spoken words belong to a speech segment with a speaker", i)
 			}
 		case "speech", "action":
 			if s.SpeakerID == nil {
@@ -97,8 +108,20 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 			if !present[*s.SpeakerID] {
 				return nil, fmt.Errorf("segment %d: speaker_id %q is not present this beat (ghost speaker)", i, *s.SpeakerID)
 			}
-			if s.Kind == "speech" && !speechIsVerbatim(*s.SpeakerID, s.Text, speechTexts) {
-				return nil, fmt.Errorf("segment %d: speech %q is not verbatim — it does not appear in speaker %s's spoken words this beat", i, s.Text, *s.SpeakerID)
+			// THE SPLIT (narration/2). A speech segment's words live in `quote`; an action never has
+			// words at all. The verbatim belt then checks exactly what is claimed to be SPOKEN, rather
+			// than substring-matching a whole line of narrator prose and passing whenever the staging
+			// happened to be borrowed from the perception.
+			if s.Kind == "action" && quoteOf(s) != "" {
+				return nil, fmt.Errorf("segment %d: kind=action carries a quote — an act has no spoken words; use kind=speech", i)
+			}
+			if s.Kind == "speech" {
+				if quoteOf(s) == "" {
+					return nil, fmt.Errorf("segment %d: kind=speech requires a non-empty quote — the spoken words go in `quote`, not in `text`", i)
+				}
+				if !speechIsVerbatim(*s.SpeakerID, quoteOf(s), speechTexts) {
+					return nil, fmt.Errorf("segment %d: quote %q is not verbatim — it does not appear in speaker %s's spoken words this beat", i, quoteOf(s), *s.SpeakerID)
+				}
 			}
 			// THE PLAYER'S OWN VOICE. An attributed segment may not perform the player's act or quote
 			// his words: he is never in PRESENT, so the only way his line lands under someone's id is
@@ -106,7 +129,7 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 			// "I raise both hands, empty. 'Easy. I mean no trouble.'" came back as a hooded figure's
 			// action. `action` segments carry no verbatim requirement — deliberately, since an act is
 			// viewer-relative prose — which left this the one attributed shape with nothing checking it.
-			if echo := b.Player.Echoes(s.Text); echo != "" {
+			if echo := firstNonEmpty(b.Player.Echoes(s.Text), b.Player.Echoes(quoteOf(s))); echo != "" {
 				return nil, fmt.Errorf("segment %d: attributed to %s but repeats the PLAYER's own words/act (%q) — "+
 					"the player is never in PRESENT; render his own moment as a narration segment in second person",
 					i, *s.SpeakerID, echo)
@@ -117,13 +140,13 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 		// THE NAMING WALL. Runs on every kind: narration prose is the reported case, and speech is no
 		// safer — an NPC who says a name the player has not earned teaches it without a knowledge path,
 		// which is the same breach wearing quotation marks (see SPEC-033 for learning-by-earshot).
-		if v := wall.Violations(s.Text); len(v) > 0 {
+		if v := wall.Violations(s.Text + " " + quoteOf(s)); len(v) > 0 {
 			return nil, namingWallError(i, v)
 		}
 		kept = append(kept, s)
 	}
 	if len(kept) == 0 {
-		return nil, fmt.Errorf("narration/1 carried no segment with any text (%d blank)", len(segs))
+		return nil, fmt.Errorf("narration/2 carried no segment with any text (%d blank)", len(segs))
 	}
 	return kept, nil
 }
@@ -139,4 +162,20 @@ func speechIsVerbatim(speaker, text string, speechTexts map[string][]string) boo
 		}
 	}
 	return false
+}
+
+// quoteOf reads a segment's spoken words, "" when it has none. Nil-safe so every belt can ask without
+// repeating the pointer dance.
+func quoteOf(s NarrationSegment) string {
+	if s.Quote == nil {
+		return ""
+	}
+	return *s.Quote
+}
+
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+	return b
 }

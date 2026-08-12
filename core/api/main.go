@@ -46,6 +46,10 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// segment: the carrier is the resolved viewer, which is what makes "Carrying for NPCs" (a
 		// PRD non-goal) unreachable by construction rather than by a check.
 		NewCarryingHandler(pool, debug).(matcher),
+		// GET /worlds/{w}/transcript — the persistent transcript (transcript/1). Viewer-scoped, newest
+		// first, cursor-paginated. The one read surface that is a RECORD rather than a projection: the
+		// prose a model wrote once cannot be recomputed from world state.
+		NewTranscriptHandler(pool, debug).(matcher),
 		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
 		NewSceneHandler(pool, debug).(matcher),
 		// POST /worlds/{w}/beats and POST /worlds/{w}/beats/continue — the only write path; everything

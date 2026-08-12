@@ -2305,6 +2305,59 @@ $$;
 
 
 --
+-- Name: fn_transcript(uuid, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint DEFAULT NULL::bigint, p_limit integer DEFAULT 50) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  WITH lim AS (
+    -- Bounded server-side: a client asking for a million entries gets 200. 50 when unspecified.
+    SELECT LEAST(GREATEST(COALESCE(p_limit, 50), 1), 200) AS n
+  ), page AS (
+    SELECT te.entry_no, te.in_world_tick, te.stated, te.segments, te.halt_reason, te.journey
+    FROM transcript_entry te, lim
+    WHERE te.world_id = p_world_id
+      AND te.viewer_id = p_viewer_id
+      AND (p_before IS NULL OR te.entry_no < p_before)
+    ORDER BY te.entry_no DESC
+    LIMIT (SELECT n FROM lim)
+  )
+  SELECT jsonb_build_object(
+    'schema_version', 'transcript/1',
+    'world_id',       p_world_id,
+    'viewer_id',      p_viewer_id,
+    'entries',        COALESCE((
+      SELECT jsonb_agg(jsonb_build_object(
+               'entry_no',    p.entry_no,
+               'tick',        p.in_world_tick,
+               'stated',      p.stated,
+               'halt_reason', p.halt_reason,
+               'journey',     p.journey,
+               'segments',    p.segments
+             ) ORDER BY p.entry_no DESC)
+      FROM page p), '[]'::jsonb),
+    -- The oldest entry on this page is the exclusive cursor for the next one. Null when this page
+    -- reached the beginning: no more story behind it.
+    'next_before',    (
+      SELECT CASE WHEN EXISTS (
+               SELECT 1 FROM transcript_entry older
+               WHERE older.world_id = p_world_id AND older.viewer_id = p_viewer_id
+                 AND older.entry_no < (SELECT min(entry_no) FROM page))
+             THEN (SELECT min(entry_no) FROM page) END
+      FROM page LIMIT 1)
+  );
+$$;
+
+
+--
+-- Name: FUNCTION fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint, p_limit integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint, p_limit integer) IS 'transcript/1 — one viewer''s delivered story, newest-first, cursor-paginated on entry_no. Returns stored prose verbatim: no re-labelling, no re-derivation.';
+
+
+--
 -- Name: fn_unearned_names(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3280,6 +3333,44 @@ CREATE TABLE public.trait_provenance (
 
 
 --
+-- Name: transcript_entry; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.transcript_entry (
+    entry_no bigint NOT NULL,
+    world_id uuid NOT NULL,
+    viewer_id uuid NOT NULL,
+    in_world_tick bigint NOT NULL,
+    stated text,
+    segments jsonb NOT NULL,
+    halt_reason text,
+    journey jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE transcript_entry; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.transcript_entry IS 'The viewer''s lived story as DELIVERED: rendered prose, post-belt, never retro-labelled. Not a projection — the prose is unrecoverable from world state. Viewer-scoped; entry_no orders and paginates.';
+
+
+--
+-- Name: transcript_entry_entry_no_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.transcript_entry ALTER COLUMN entry_no ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.transcript_entry_entry_no_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: watch_horizon; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -3580,6 +3671,14 @@ ALTER TABLE ONLY public.trait_provenance
 
 
 --
+-- Name: transcript_entry transcript_entry_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.transcript_entry
+    ADD CONSTRAINT transcript_entry_pkey PRIMARY KEY (entry_no);
+
+
+--
 -- Name: watch_horizon watch_horizon_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -3779,6 +3878,13 @@ CREATE INDEX idx_sm_entity ON public.state_mutation USING btree (entity_id, vali
 --
 
 CREATE INDEX idx_sm_event ON public.state_mutation USING btree (event_id);
+
+
+--
+-- Name: idx_transcript_viewer_recent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_transcript_viewer_recent ON public.transcript_entry USING btree (world_id, viewer_id, entry_no DESC);
 
 
 --
@@ -4074,4 +4180,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090004'),
     ('20260809090005'),
     ('20260809090006'),
-    ('20260809090007');
+    ('20260809090007'),
+    ('20260809090008');

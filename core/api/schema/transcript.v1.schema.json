@@ -1,0 +1,72 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "transcript/1",
+  "title": "transcript/1 — the viewer's lived story: delivered narration, newest first, cursor-paginated",
+  "description": "GET /worlds/{w}/transcript. Viewer-scoped. Unlike every other read surface this is a RECORD, not a projection: the prose a model wrote once cannot be recomputed from world state. Entries are returned exactly as they were delivered and are NEVER retro-labelled — an entry written before the viewer learned a name still says 'the muscle by the bar' after he learns 'Jonas', because a memory of an experience is itself a perception. History begins when the feature shipped; beats played before it are not stored and are not fabricated.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "world_id", "viewer_id", "entries", "next_before"],
+  "properties": {
+    "schema_version": {"const": "transcript/1"},
+    "world_id": {"type": "string", "format": "uuid"},
+    "viewer_id": {"type": "string", "format": "uuid"},
+    "entries": {
+      "type": "array",
+      "description": "Newest first. One entry per narrated beat.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["entry_no", "tick", "stated", "halt_reason", "journey", "segments"],
+        "properties": {
+          "entry_no": {
+            "type": "integer",
+            "description": "Monotonic per-row ordering handle and the pagination cursor. Not domain time: several entries can share one tick, so a tick cannot order or paginate them."
+          },
+          "tick": {
+            "type": "integer",
+            "description": "The in-world tick the beat started at (B-5 logical time). For display and grouping, never for ordering."
+          },
+          "stated": {
+            "type": ["string", "null"],
+            "description": "The player's own input, stored RAW — never parsed, never reformatted. Null when he typed nothing (a continue press), which is a different fact from an empty string."
+          },
+          "halt_reason": {"type": ["string", "null"]},
+          "journey": {
+            "type": ["object", "null"],
+            "description": "The journey block as delivered, or null when the beat had none — the marker the frontend needs to render travel in history the way it rendered it live.",
+            "additionalProperties": true
+          },
+          "segments": {
+            "type": "array",
+            "description": "The delivered narration, in order — the SAME message shape a live beat_frame/4 narration frame carries, so history and live prose render through one path.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["speaker_id", "speaker_label", "kind", "text", "quote"],
+              "properties": {
+                "speaker_id": {"type": ["string", "null"], "format": "uuid"},
+                "speaker_label": {
+                  "type": "string",
+                  "description": "The label AS IT WAS at the time — deliberately frozen, never re-resolved against present knowledge."
+                },
+                "kind": {"enum": ["narration", "speech", "action"]},
+                "text": {
+                  "type": "string",
+                  "description": "Prose. The whole segment for narration and action; for speech, the staging around the line, possibly empty."
+                },
+                "quote": {
+                  "type": ["string", "null"],
+                  "description": "The verbatim spoken words. Non-empty exactly when kind is speech; null otherwise."
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "next_before": {
+      "type": ["integer", "null"],
+      "description": "Cursor for the next (older) page: pass as ?before=. Null means this page reached the beginning of the story — page until null rather than inferring the end from a short page."
+    }
+  }
+}
