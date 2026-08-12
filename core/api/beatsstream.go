@@ -61,7 +61,7 @@ type narrationFrame struct {
 
 // sceneFrame carries the Task 1 scene projection wholesale (scenehandler.go's sceneView, produced by
 // buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/3) is preserved
-// rather than clobbered by the envelope's beat_frame/3.
+// rather than clobbered by the envelope's beat_frame/4.
 type sceneFrame struct {
 	Scene sceneView `json:"scene"`
 }
@@ -409,13 +409,20 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		Player:      newPlayerVoice(playerText),
 	}
 	nd := h.bridge.Driver(SeatNarrate.Name)
+	// `delivered` is what actually reached the player — the transcript's record, filled by whichever
+	// narration path ran. narrateMessages is pure, so the streaming path recomputing it from the same
+	// segments and the same labels yields exactly the frames it already emitted.
+	var delivered []beatMessage
 	var segments []NarrationSegment
 	var lastErr error
 	streamed := false
 	if sd, ok := nd.(StreamingDriver); ok {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
-		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON)}
+		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON)}
 		segs, err := narrateStream(ctx, sd, req, belts, labelFor, frames)
+		if len(segs) > 0 {
+			delivered, _ = narrateMessages(segs, labelFor)
+		}
 		switch {
 		case err != nil && len(segs) == 0:
 			log.Printf("beats stream: streaming narrate produced no valid line (%v), falling back to the ordinary attempt loop", err)
@@ -435,7 +442,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			if attempt > 0 && lastErr != nil {
 				prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
 			}
-			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV1SchemaJSON), Repair: attempt > 0})
+			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON), Repair: attempt > 0})
 			if genErr != nil {
 				log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
 				lastErr = genErr
@@ -469,6 +476,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 
 		messages, _ := narrateMessages(segments, labelFor)
+		delivered = messages
 		for _, msg := range messages {
 			if err := frames.emit("narration", narrationFrame{Message: msg}); err != nil {
 				log.Printf("beats stream: narration frame: %v", err)
@@ -525,6 +533,14 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if breached := wall.scrubAll(outcome.Telegraphs); len(breached) > 0 {
 		log.Printf("NAMING WALL: telegraph text leaked %v for viewer %s — scrubbed before emit", breached, viewerID)
 	}
+	// THE TRANSCRIPT. Written here because this is the first point where the whole beat is known —
+	// prose, journey and halt reason — and BEFORE the result frame, so a client that hangs up on the
+	// last write still keeps the memory of the beat it just played. context.WithoutCancel for the same
+	// reason: a disconnect cancels r.Context(), and the beat is already committed by then; losing the
+	// row would mean the world moved and the player's story did not.
+	persistTranscript(context.WithoutCancel(ctx), h.pool, worldID, viewerID, startTick, playerText,
+		delivered, outcome.HaltReason, journey)
+
 	result := resultBlock{
 		Committed:            outcome.Committed,
 		HaltReason:           outcome.HaltReason,

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -16,10 +17,11 @@ var (
 // Happy path: a narrator segment (null speaker), a VERBATIM speech segment (its text a substring of the
 // speaker's perception line), and an action segment (no verbatim requirement) all decode cleanly.
 func TestDecodeAndValidateNarration_HappyPath(t *testing.T) {
+	// narration/2: the spoken words live in `quote`, and `text` carries only the staging around them.
 	raw := `[
-	  {"speaker_id":null,"kind":"narration","text":"The common room is low and dim."},
-	  {"speaker_id":"m1","kind":"speech","text":"The tide turns at dusk."},
-	  {"speaker_id":"m1","kind":"action","text":"Mara sets a tankard on the bar."}
+	  {"speaker_id":null,"kind":"narration","text":"The common room is low and dim.","quote":null},
+	  {"speaker_id":"m1","kind":"speech","text":"she looks up from the tap","quote":"The tide turns at dusk."},
+	  {"speaker_id":"m1","kind":"action","text":"Mara sets a tankard on the bar.","quote":null}
 	]`
 	segs, err := DecodeAndValidateNarration(raw, NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: unitSpeechTexts})
 	if err != nil {
@@ -32,7 +34,18 @@ func TestDecodeAndValidateNarration_HappyPath(t *testing.T) {
 		t.Fatalf("segment 0 must be a narrator segment: %+v", segs[0])
 	}
 	if segs[1].SpeakerID == nil || *segs[1].SpeakerID != "m1" || segs[1].Kind != "speech" {
-		t.Fatalf("segment 1 must be Mara's speech: %+v", segs[1])
+		t.Fatalf("segment 1 must be the speaker's speech: %+v", segs[1])
+	}
+	// The split is the point: the words are in `quote`, the staging stays in `text`, and neither
+	// carries the other. A renderer keying on `quote` must never receive stage directions.
+	if quoteOf(segs[1]) != "The tide turns at dusk." {
+		t.Fatalf("speech quote must hold the verbatim words, got %q", quoteOf(segs[1]))
+	}
+	if segs[1].Text != "she looks up from the tap" {
+		t.Fatalf("speech text must hold only the staging, got %q", segs[1].Text)
+	}
+	if quoteOf(segs[0]) != "" || quoteOf(segs[2]) != "" {
+		t.Fatal("narration and action segments must carry no quote")
 	}
 }
 
@@ -48,7 +61,9 @@ func TestDecodeAndValidateNarration_GhostSpeakerRejected(t *testing.T) {
 // The belt rejects narrator paraphrase: a speech segment whose words are NOT a substring of the speaker's
 // actual perception line — NPC speech must be the mind's exact words.
 func TestDecodeAndValidateNarration_ParaphrasedSpeechRejected(t *testing.T) {
-	raw := `[{"speaker_id":"m1","kind":"speech","text":"The sea shifts when night comes."}]`
+	// The paraphrase is now checked where the words actually are — the quote — instead of against a
+	// whole line of narrator prose that could pass on borrowed staging alone.
+	raw := `[{"speaker_id":"m1","kind":"speech","text":"she looks up","quote":"The sea shifts when night comes."}]`
 	_, err := DecodeAndValidateNarration(raw, NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: unitSpeechTexts})
 	if err == nil || !strings.Contains(err.Error(), "not verbatim") {
 		t.Fatalf("paraphrased speech must be rejected by the belt, got err=%v", err)
@@ -225,5 +240,77 @@ func TestNarration_BeltsStillRunAfterDropping(t *testing.T) {
 	         {"speaker_id":"11111111-1111-1111-1111-111111111111","kind":"speech","text":"I never said this."}]`
 	if _, err := DecodeAndValidateNarration(raw, NarrationBelts{}); err == nil {
 		t.Fatal("a ghost speaker after a dropped blank must still be refused")
+	}
+}
+
+// ── narration/2: the speech/staging split ────────────────────────────────────────────────────────
+
+// The split is only real if the shape enforces it. Words in the wrong field must not decode, or the
+// frontend's "format speech differently" reduces to guessing where a quotation mark starts.
+func TestNarration_SpeechRequiresItsWordsInQuote(t *testing.T) {
+	belts := NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: unitSpeechTexts}
+
+	// The narration/1 habit: words in `text`, no quote. Rejected — and the message must say where the
+	// words belong, because this is the mistake a model will make for as long as narration/1 examples
+	// exist anywhere in its training.
+	_, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"m1","kind":"speech","text":"The tide turns at dusk.","quote":null}]`, belts)
+	if err == nil || !strings.Contains(err.Error(), "requires a non-empty quote") {
+		t.Fatalf("speech with no quote must be rejected with guidance, got: %v", err)
+	}
+
+	// A bare line — no staging at all — is ordinary writing and must pass: `text` may be empty when
+	// `quote` carries the segment.
+	segs, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"m1","kind":"speech","text":"","quote":"The tide turns at dusk."}]`, belts)
+	if err != nil {
+		t.Fatalf("a bare quote with no staging must pass, got: %v", err)
+	}
+	if len(segs) != 1 {
+		t.Fatalf("the bare-quote segment must survive the blank-segment drop, got %d segments", len(segs))
+	}
+}
+
+// An act has no spoken words, and prose is not speech: a quote on either is a category error the
+// renderer would have to disambiguate at display time.
+func TestNarration_OnlySpeechMayCarryAQuote(t *testing.T) {
+	belts := NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: unitSpeechTexts}
+
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"m1","kind":"action","text":"she sets down the tankard","quote":"The tide turns at dusk."}]`,
+		belts); err == nil || !strings.Contains(err.Error(), "kind=action carries a quote") {
+		t.Fatalf("an action with a quote must be rejected, got: %v", err)
+	}
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":null,"kind":"narration","text":"The room holds still.","quote":"The tide turns at dusk."}]`,
+		belts); err == nil || !strings.Contains(err.Error(), "kind=narration carries a quote") {
+		t.Fatalf("narrator prose with a quote must be rejected, got: %v", err)
+	}
+}
+
+// The belts must see BOTH fields. A wall breach or a stolen player line hidden inside `quote` is
+// exactly as delivered to the player as one in `text` — the split must not open a bypass.
+func TestNarration_BeltsInspectTheQuoteToo(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	wall, err := loadNamingWall(context.Background(), pool, dlWorldID, dlKadeID)
+	if err != nil {
+		t.Fatalf("loadNamingWall: %v", err)
+	}
+	speech := map[string][]string{"m1": {`she says, "Jonas will not move." and "Easy. I mean no trouble."`}}
+
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"m1","kind":"speech","text":"she leans in","quote":"Jonas will not move."}]`,
+		NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: speech, Wall: wall},
+	); err == nil || !strings.Contains(err.Error(), "has not earned") {
+		t.Fatalf("an unearned name inside a QUOTE must trip the naming wall, got: %v", err)
+	}
+
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"m1","kind":"speech","text":"she leans in","quote":"Easy. I mean no trouble."}]`,
+		NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: speech,
+			Player: newPlayerVoice("I raise both hands. 'Easy. I mean no trouble.'")},
+	); err == nil || !strings.Contains(err.Error(), "PLAYER's own") {
+		t.Fatalf("the player's words inside an NPC's QUOTE must be rejected, got: %v", err)
 	}
 }

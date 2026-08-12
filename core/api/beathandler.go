@@ -104,7 +104,11 @@ type beatMessage struct {
 	SpeakerID    *string `json:"speaker_id"`
 	SpeakerLabel string  `json:"speaker_label"`
 	Kind         string  `json:"kind"`
-	Text         string  `json:"text"`
+	// Text is prose (staging only, for a speech message); Quote is the verbatim spoken words and is
+	// non-null exactly for kind "speech" (beat_frame/4, narration/2). Split so the frontend can format
+	// speech as speech instead of guessing where a quotation mark starts.
+	Text  string  `json:"text"`
+	Quote *string `json:"quote"`
 }
 
 // narrateRoster returns (presentIDs, labelFor): the present-actor ids the narrate prompt lists (the
@@ -131,14 +135,22 @@ func narrateMessages(segments []NarrationSegment, labelFor map[string]string) ([
 	messages := make([]beatMessage, 0, len(segments))
 	view := make([]string, 0, len(segments))
 	for _, s := range segments {
-		m := beatMessage{SpeakerID: s.SpeakerID, Kind: s.Kind, Text: s.Text}
+		m := beatMessage{SpeakerID: s.SpeakerID, Kind: s.Kind, Text: s.Text, Quote: s.Quote}
 		if s.SpeakerID != nil {
 			m.SpeakerLabel = labelFor[*s.SpeakerID]
 		}
 		messages = append(messages, m)
-		if s.Kind == "speech" && m.SpeakerLabel != "" {
-			view = append(view, m.SpeakerLabel+`: "`+s.Text+`"`)
-		} else {
+		switch {
+		case s.Kind == "speech" && m.SpeakerLabel != "":
+			// Staging first when there is any, then the words — the same order they were written in.
+			line := m.SpeakerLabel + `: "` + quoteOf(s) + `"`
+			if s.Text != "" {
+				line = s.Text + " " + line
+			}
+			view = append(view, line)
+		case s.Kind == "speech":
+			view = append(view, quoteOf(s))
+		default:
 			view = append(view, s.Text)
 		}
 	}

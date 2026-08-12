@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "beat_frame/3",
-  "title": "beat_frame/3 \u2014 one SSE frame of POST /worlds/{w}/beats (design \u00a74.8, rung3 Task 3)",
+  "$id": "beat_frame/4",
+  "title": "beat_frame/4 \u2014 one SSE frame of POST /worlds/{w}/beats (design \u00a74.8). Supersedes beat_frame/3: a narration message now carries `quote`, the verbatim spoken words, as a field separate from the staging prose in `text`.",
   "type": "object",
   "oneOf": [
     {
@@ -37,7 +37,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "interpretation"
@@ -60,7 +60,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "narration"
@@ -72,7 +72,8 @@
             "speaker_id",
             "speaker_label",
             "kind",
-            "text"
+            "text",
+            "quote"
           ],
           "properties": {
             "speaker_id": {
@@ -94,7 +95,14 @@
             },
             "text": {
               "type": "string",
-              "minLength": 1
+              "description": "Prose. The whole segment for narration and action; for speech it is the STAGING around the line and may be empty when the line is delivered bare."
+            },
+            "quote": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "description": "The verbatim spoken words, without quotation marks or attribution. Non-empty exactly when kind is speech; null otherwise. Render it as speech; render `text` as prose."
             }
           }
         }
@@ -110,7 +118,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "scene"
@@ -130,7 +138,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "journey"
@@ -157,7 +165,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "result"
@@ -226,7 +234,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "error"
@@ -247,7 +255,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/3"
+          "const": "beat_frame/4"
         },
         "kind": {
           "const": "trace"
