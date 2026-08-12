@@ -650,16 +650,17 @@ func narrateStream(ctx context.Context, sd StreamingDriver, req GenRequest, belt
 				log.Printf("beats stream: streamed narration line rejected (never emitted): %v", err)
 				continue
 			}
-			seg := segs[0]
-			msg := beatMessage{SpeakerID: seg.SpeakerID, Kind: seg.Kind, Text: seg.Text}
-			if seg.SpeakerID != nil {
-				msg.SpeakerLabel = labelFor[*seg.SpeakerID]
-			}
+			// Built by narrateMessages, NOT by hand. Hand-copying the fields here is how a streamed
+			// speech line reached the wire as {"text":"","quote":null}: the split added a field and
+			// this site silently kept emitting the old four. One derivation for the live frame, the
+			// recap view and the transcript row means a new field cannot be forgotten by one of them.
+			msgs, _ := narrateMessages(segs, labelFor)
+			msg := msgs[0]
 			if err := frames.emit("narration", narrationFrame{Message: msg}); err != nil {
 				emitErr = err
 				return
 			}
-			segments = append(segments, seg)
+			segments = append(segments, segs[0])
 		}
 	})
 	if genErr != nil {
