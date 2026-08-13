@@ -12,12 +12,12 @@ func TestCostSink_TotalsPerBeatAndPerSession(t *testing.T) {
 
 	ctx, beat := withCostSink(context.Background())
 	// Two seats, as a real beat: a cheap classification and an expensive narration.
-	costSinkFrom(ctx).add(0.00071, 4910, 75)
-	costSinkFrom(ctx).add(0.00565, 4340, 250)
+	costSinkFrom(ctx).add(0.00071, 4910, 75, 0)
+	costSinkFrom(ctx).add(0.00565, 4340, 250, 3000)
 
-	usd, in, out, calls := beat.snapshot()
-	if calls != 2 || in != 9250 || out != 325 {
-		t.Fatalf("snapshot = %d calls, %d in, %d out; want 2/9250/325", calls, in, out)
+	usd, in, out, cached, calls := beat.snapshot()
+	if calls != 2 || in != 9250 || out != 325 || cached != 3000 {
+		t.Fatalf("snapshot = %d calls, %d in, %d out, %d cached; want 2/9250/325/3000", calls, in, out, cached)
 	}
 	if usd < 0.006359 || usd > 0.006361 {
 		t.Fatalf("beat cost = %.6f, want 0.00636", usd)
@@ -29,7 +29,7 @@ func TestCostSink_TotalsPerBeatAndPerSession(t *testing.T) {
 
 	// A second beat is independent, and the session keeps accumulating.
 	_, beat2 := withCostSink(context.Background())
-	if usd2, _, _, calls2 := beat2.snapshot(); usd2 != 0 || calls2 != 0 {
+	if usd2, _, _, _, calls2 := beat2.snapshot(); usd2 != 0 || calls2 != 0 {
 		t.Fatalf("a fresh beat must start at zero, got %.6f over %d calls", usd2, calls2)
 	}
 }
@@ -37,9 +37,9 @@ func TestCostSink_TotalsPerBeatAndPerSession(t *testing.T) {
 // A driver used outside a beat (every direct unit call, and the seat-config tests) has no sink in its
 // context. That must be inert, not a nil dereference on the server's hot path.
 func TestCostSink_NilContextIsInert(t *testing.T) {
-	costSinkFrom(context.Background()).add(1.23, 10, 10) // must not panic
+	costSinkFrom(context.Background()).add(1.23, 10, 10, 0) // must not panic
 	var none *costSink
-	if usd, in, out, calls := none.snapshot(); usd != 0 || in != 0 || out != 0 || calls != 0 {
-		t.Fatalf("nil sink must read as zero, got %.4f/%d/%d/%d", usd, in, out, calls)
+	if usd, in, out, cached, calls := none.snapshot(); usd != 0 || in != 0 || out != 0 || cached != 0 || calls != 0 {
+		t.Fatalf("nil sink must read as zero, got %.4f/%d/%d/%d/%d", usd, in, out, cached, calls)
 	}
 }

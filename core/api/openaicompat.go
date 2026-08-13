@@ -309,6 +309,12 @@ func (o *openAICompatDriver) content(ctx context.Context, raw []byte) (string, e
 			PromptTokens     int64   `json:"prompt_tokens"`
 			CompletionTokens int64   `json:"completion_tokens"`
 			Cost             float64 `json:"cost"`
+			// Cached prompt tokens, billed at a fraction of fresh input (DeepSeek via OpenRouter:
+			// $0.0986/M against $1.168/M on v4-pro). Our prompts lead with a stable rules header, so
+			// this SHOULD be large — and "should" is exactly why it is measured rather than assumed.
+			PromptTokensDetails struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
@@ -317,7 +323,8 @@ func (o *openAICompatDriver) content(ctx context.Context, raw []byte) (string, e
 	// Recorded BEFORE the content checks below: a reply that fails validation was still billed, and a
 	// spend report that only counts successful calls is the one that under-reports a repair storm —
 	// exactly the pathology the number exists to catch.
-	costSinkFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
+	costSinkFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens,
+		resp.Usage.PromptTokensDetails.CachedTokens)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("openai-compat: empty choices in response")
 	}
@@ -476,9 +483,12 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
 			Usage *struct {
-				PromptTokens     int64   `json:"prompt_tokens"`
-				CompletionTokens int64   `json:"completion_tokens"`
-				Cost             float64 `json:"cost"`
+				PromptTokens        int64   `json:"prompt_tokens"`
+				CompletionTokens    int64   `json:"completion_tokens"`
+				Cost                float64 `json:"cost"`
+				PromptTokensDetails struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 		}
 		// A malformed chunk is skipped rather than fatal: the stream is still delivering, and killing
@@ -492,7 +502,8 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 		// the one seat that streams and the most expensive one, which silently under-reported every
 		// beat total by its largest line item.
 		if chunk.Usage != nil {
-			costSinkFrom(ctx).add(chunk.Usage.Cost, chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
+			costSinkFrom(ctx).add(chunk.Usage.Cost, chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens,
+				chunk.Usage.PromptTokensDetails.CachedTokens)
 		}
 		if len(chunk.Choices) == 0 {
 			continue
