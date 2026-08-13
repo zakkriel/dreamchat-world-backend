@@ -322,11 +322,11 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		adj, fanout := orc.BeatCounters()
-		usd, tokIn, tokOut, calls := costs.snapshot()
+		usd, tokIn, tokOut, cached, calls := costs.snapshot()
 		log.Printf("beat timing: total_ms=%d world=%s continue=%v adjudications=%d npc_fanout=%d "+
-			"calls=%d tok_in=%d tok_out=%d cost_usd=%.6f session_usd=%.4f",
+			"calls=%d tok_in=%d cached=%d tok_out=%d cost_usd=%.6f session_usd=%.4f",
 			time.Since(beatStart).Milliseconds(), worldID, continuePress, adj, fanout,
-			calls, tokIn, tokOut, usd, sessionTotalUSD())
+			calls, tokIn, cached, tokOut, usd, sessionTotalUSD())
 		// Loud when a beat costs multiples of what a beat costs. A repair storm, a prompt that grew, or
 		// a seat quietly routed to an expensive model all show up here first — and the founder hears it
 		// from the engine instead of from his balance.

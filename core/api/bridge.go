@@ -203,21 +203,21 @@ type timedDriver struct {
 func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	start := time.Now()
 	sink := costSinkFrom(ctx)
-	usdBefore, inBefore, outBefore, _ := sink.snapshot()
+	usdBefore, inBefore, outBefore, cachedBefore, _ := sink.snapshot()
 	out, err := t.Driver.Generate(ctx, req)
 	ms := time.Since(start).Milliseconds()
 	// The driver sees the bill but not the seat; this wrapper knows the seat but not the bill. The
 	// delta across the call joins them (costsink.go documents why a delta is sound here).
-	usdAfter, inAfter, outAfter, _ := sink.snapshot()
-	usd, tokIn, tokOut := usdAfter-usdBefore, inAfter-inBefore, outAfter-outBefore
+	usdAfter, inAfter, outAfter, cachedAfter, _ := sink.snapshot()
+	usd, tokIn, tokOut, cached := usdAfter-usdBefore, inAfter-inBefore, outAfter-outBefore, cachedAfter-cachedBefore
 	// Outcome, not just duration: a 6-second failure and a 6-second success are the same number and
 	// very different problems, and the retry that follows a failure is the founder's dead air.
 	status := "ok"
 	if err != nil {
 		status = "ERR"
 	}
-	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d tok_in=%d tok_out=%d cost_usd=%.6f",
-		t.seat, t.Driver.Name(), ms, status, len(out), tokIn, tokOut, usd)
+	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d tok_in=%d cached=%d tok_out=%d cost_usd=%.6f",
+		t.seat, t.Driver.Name(), ms, status, len(out), tokIn, cached, tokOut, usd)
 	// Raindrop/Workshop: the same per-call truth the log line carries, as a span on the beat's
 	// interaction (raindrop.go; no-op when the context carries none).
 	trackSeatCall(ctx, t.seat, t.Driver.Name(), req.Prompt, out, start, err)

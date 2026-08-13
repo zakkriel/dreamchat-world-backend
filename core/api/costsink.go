@@ -22,11 +22,12 @@ import (
 // attributes it to the seat that spent it, totals it per beat, and keeps a process-lifetime running
 // sum so a long session can be watched without adding a database table.
 type costSink struct {
-	mu    sync.Mutex
-	usd   float64
-	in    int64
-	out   int64
-	calls int
+	mu     sync.Mutex
+	usd    float64
+	in     int64
+	out    int64
+	cached int64
+	calls  int
 }
 
 type costSinkKey struct{}
@@ -56,7 +57,7 @@ func costSinkFrom(ctx context.Context) *costSink {
 }
 
 // add records one provider call. Called by the driver, which is the only place that sees the bill.
-func (c *costSink) add(usd float64, in, out int64) {
+func (c *costSink) add(usd float64, in, out, cached int64) {
 	if c == nil {
 		return
 	}
@@ -64,6 +65,7 @@ func (c *costSink) add(usd float64, in, out int64) {
 	c.usd += usd
 	c.in += in
 	c.out += out
+	c.cached += cached
 	c.calls++
 	c.mu.Unlock()
 	addSessionUSD(usd)
@@ -77,13 +79,13 @@ func (c *costSink) add(usd float64, in, out int64) {
 // per beat). If seats are ever parallelised, this must become a per-call value threaded out of the
 // driver — noted here because the failure would be silent misattribution between seats, never a wrong
 // beat total.
-func (c *costSink) snapshot() (usd float64, in, out int64, calls int) {
+func (c *costSink) snapshot() (usd float64, in, out, cached int64, calls int) {
 	if c == nil {
-		return 0, 0, 0, 0
+		return 0, 0, 0, 0, 0
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	return c.usd, c.in, c.out, c.calls
+	return c.usd, c.in, c.out, c.cached, c.calls
 }
 
 // beatCostWarnUSD is the per-beat ceiling that turns a quiet overspend into a loud log line. A beat
