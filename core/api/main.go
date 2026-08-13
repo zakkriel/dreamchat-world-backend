@@ -82,6 +82,10 @@ func main() {
 
 	debug := os.Getenv("DREAMCHAT_MODE") == "debug"
 
+	// Raindrop/Workshop observability (raindrop.go): keyless no-op unless a local Workshop daemon or
+	// RAINDROP_WRITE_KEY is present, so this line is inert in CI and in an unconfigured deployment.
+	defer initRaindrop()()
+
 	// Chunk-5 play loop: build the per-seat LLM bridge (D-13). Every seat's provider and model come
 	// from the environment (seatconfig.go) — there is no default provider, by founder ruling, so a
 	// misconfigured deployment fails at boot with the missing variable named rather than at the first
@@ -110,12 +114,14 @@ func main() {
 
 	// SPEC-021 — CORS. Wraps the mux (not the router) so preflights are answered before routing;
 	// refuses to boot on a malformed allowlist rather than serving an API the frontend cannot reach.
+	// The auth gate (auth.go) sits INSIDE the CORS wrapper: preflights carry no credentials by
+	// definition, so they must be answered ungated, while every real request is checked.
 	corsAllowed, corsBad := corsOrigins()
 	if len(corsBad) > 0 {
 		log.Fatalf("%s: %v is not a usable origin — list exact origins like http://localhost:5173 (no wildcard, no path)",
 			corsOriginsEnv, corsBad)
 	}
-	handler := withCORS(mux, corsAllowed)
+	handler := withCORS(withAuth(mux), corsAllowed)
 
 	// The port is assigned by the platform in a hosted deployment (Railway injects PORT) and fixed
 	// at 8080 everywhere else — local dev, compose, stack.sh and every runbook say 8080, so that

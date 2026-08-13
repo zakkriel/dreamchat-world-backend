@@ -212,6 +212,9 @@ func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, erro
 	}
 	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d",
 		t.seat, t.Driver.Name(), ms, status, len(out))
+	// Raindrop/Workshop: the same per-call truth the log line carries, as a span on the beat's
+	// interaction (raindrop.go; no-op when the context carries none).
+	trackSeatCall(ctx, t.seat, t.Driver.Name(), req.Prompt, out, start, err)
 	return out, err
 }
 
@@ -231,6 +234,7 @@ func (t timedDriver) GenerateStream(ctx context.Context, req GenRequest, onDelta
 	}
 	log.Printf("seat timing: seat=%s model=%s ms=%d status=%s chars=%d streamed=true",
 		t.seat, t.Driver.Name(), time.Since(start).Milliseconds(), status, len(out))
+	trackSeatCall(ctx, t.seat, t.Driver.Name(), req.Prompt, out, start, err)
 	return out, err
 }
 

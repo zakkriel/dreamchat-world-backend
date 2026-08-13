@@ -7,9 +7,11 @@ import (
 	"log"
 	"net/http"
 	"regexp"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	raindrop "github.com/raindrop-ai/go"
 )
 
 // beatsRoute is POST /worlds/{w}/beats (plural). beatsContinueRoute is POST /worlds/{w}/beats/continue
@@ -263,6 +265,46 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		decomposeText = in.Text
 	}
 
+	// Raindrop/Workshop: ONE interaction per beat — the player's words in, the narration that
+	// actually reached them out. `delivered` is hoisted here (it used to be declared beside the
+	// narrate loop) so the deferred Finish reads whichever narration path filled it. Nil client
+	// (tests never run main()) skips cleanly; a disabled client's calls are no-ops.
+	var delivered []beatMessage
+	if raindropClient != nil {
+		rdInput := playerText
+		if continuePress {
+			rdInput = "[continue]"
+		}
+		interaction := raindropClient.Begin(ctx, raindrop.BeginOptions{
+			Event:   "world_beat",
+			UserID:  viewerID,
+			ConvoID: worldID,
+			Input:   rdInput,
+			Properties: map[string]any{
+				"world_id": worldID,
+				"continue": continuePress,
+			},
+		})
+		// Every seat call downstream shares this ctx, so timedDriver (bridge.go) can attach one
+		// span per LLM call to this beat's interaction — decompose, cognition, resolve, narrate.
+		ctx = withInteraction(ctx, interaction)
+		defer func() {
+			out := "beat ended without narration (see error frame in server log)"
+			if len(delivered) > 0 {
+				parts := make([]string, 0, len(delivered))
+				for _, m := range delivered {
+					if m.Quote != nil {
+						parts = append(parts, m.SpeakerLabel+": \""+*m.Quote+"\"")
+						continue
+					}
+					parts = append(parts, m.Text)
+				}
+				out = strings.Join(parts, "\n")
+			}
+			_ = interaction.Finish(raindrop.FinishOptions{Output: out})
+		}()
+	}
+
 	// The total the founder actually asked for: "how long did one reply take". The per-seat lines
 	// (timedDriver) say where it went; this says what he waited. Deferred so it is logged on EVERY
 	// exit including the error frames, because a beat that died slowly is the one worth knowing about.
@@ -412,7 +454,6 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// `delivered` is what actually reached the player — the transcript's record, filled by whichever
 	// narration path ran. narrateMessages is pure, so the streaming path recomputing it from the same
 	// segments and the same labels yields exactly the frames it already emitted.
-	var delivered []beatMessage
 	var segments []NarrationSegment
 	var lastErr error
 	streamed := false
