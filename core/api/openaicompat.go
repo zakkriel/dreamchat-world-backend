@@ -425,6 +425,10 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 		return "", err
 	}
 	body["stream"] = true
+	// Ask for the final usage chunk. `usage: {include: true}` covers OpenRouter; `stream_options` is
+	// the OpenAI-native spelling, sent too because this driver talks to any OpenAI-compatible host and
+	// an ignored extra field is free while a missing invoice is invisible.
+	body["stream_options"] = map[string]any{"include_usage": true}
 
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -471,10 +475,26 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *struct {
+				PromptTokens     int64   `json:"prompt_tokens"`
+				CompletionTokens int64   `json:"completion_tokens"`
+				Cost             float64 `json:"cost"`
+			} `json:"usage"`
 		}
 		// A malformed chunk is skipped rather than fatal: the stream is still delivering, and killing
 		// a beat over one unparseable frame would trade a whole narration for a hiccup.
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil || len(chunk.Choices) == 0 {
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		// THE BILL ARRIVES LAST. A streamed reply carries its usage in a FINAL chunk that has no
+		// choices — so the `len(Choices) == 0 → skip` that used to guard this loop threw the invoice
+		// away. Found by the instrument's own first run: every seat reported a cost except `narrate`,
+		// the one seat that streams and the most expensive one, which silently under-reported every
+		// beat total by its largest line item.
+		if chunk.Usage != nil {
+			costSinkFrom(ctx).add(chunk.Usage.Cost, chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens)
+		}
+		if len(chunk.Choices) == 0 {
 			continue
 		}
 		if d := chunk.Choices[0].Delta.Content; d != "" {
