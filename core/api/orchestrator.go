@@ -817,7 +817,18 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	// with each NPC's private about-ness links, one hop (RULINGS-2026-07-23 §5).
 	actionIDs := append(o.collectParticipantIDs(attempt), playerID)
 
-	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, present, npcs)
+	// THE ROSTER IS THE NPCs, NOT THE ROOM — this one argument decides whether the batch path can ever
+	// fire. Both fn_isolated_npcs and fn_public_moment call a record "shared" only when EVERY holder in
+	// the roster holds it (count(DISTINCT holder_id) = cardinality). Passing the full present roster put
+	// the PLAYER in that denominator, so a record the whole cast shares but the newcomer does not — most
+	// of a seeded world's history — counted as private to every one of them, and every NPC isolated.
+	// Measured on the play world: four v4-pro isolated calls per beat, batch never firing, ~4-6s of
+	// sequential round trips the founder feels as slowness.
+	//
+	// Shared-among-the-minds-we-are-batching is what the §5 invariant actually requires: a record every
+	// batch mind already holds is not a secret from any of them, and the prompt still carries nothing
+	// else. The player is not a reader of this prompt and never was.
+	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, npcs, npcs)
 	if err != nil {
 		return res, fmt.Errorf("fn_isolated_npcs: %w", err)
 	}
@@ -836,7 +847,10 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 
 	// The public moment (modal face of every event shared by ALL present holders) and the scene
 	// frame are shared by both seats. The isolated seat adds the flagged NPC's private records.
-	moment, err := o.publicMoment(ctx, worldID, present)
+	// Same roster, and it MUST be the same one: isolation and the moment share the "shared" test, so
+	// narrowing one without the other would batch a mind and then withhold the very context she was
+	// isolated for — trading latency for a dumber decision.
+	moment, err := o.publicMoment(ctx, worldID, npcs)
 	if err != nil {
 		return res, fmt.Errorf("fn_public_moment: %w", err)
 	}
