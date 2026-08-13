@@ -222,6 +222,11 @@ func (o *openAICompatDriver) requestBody(req GenRequest) (map[string]any, error)
 	if o.routing != nil {
 		body["provider"] = o.routing
 	}
+	// Ask for the bill. OpenRouter returns usage.cost — the ACTUAL charge for this call, after provider
+	// selection and any cache discount — only when the request asks for it. It costs nothing to
+	// request and it is the difference between an engine that knows what it spends and one that has to
+	// be audited from outside (see costsink.go).
+	body["usage"] = map[string]any{"include": true}
 
 	if req.Schema != nil {
 		// Structured: system message with schema leash + user message; constrain to json_object.
@@ -287,12 +292,12 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	if err != nil {
 		return "", err
 	}
-	return o.content(raw)
+	return o.content(ctx, raw)
 }
 
 // content extracts choices[0].message.content verbatim. One place, because every json_mode returns
 // through it and a second copy is a second chance to disagree about what an empty reply means.
-func (o *openAICompatDriver) content(raw []byte) (string, error) {
+func (o *openAICompatDriver) content(ctx context.Context, raw []byte) (string, error) {
 	var resp struct {
 		Choices []struct {
 			Message struct {
@@ -300,10 +305,19 @@ func (o *openAICompatDriver) content(raw []byte) (string, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int64   `json:"prompt_tokens"`
+			CompletionTokens int64   `json:"completion_tokens"`
+			Cost             float64 `json:"cost"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return "", fmt.Errorf("openai-compat: parse response: %w", err)
 	}
+	// Recorded BEFORE the content checks below: a reply that fails validation was still billed, and a
+	// spend report that only counts successful calls is the one that under-reports a repair storm —
+	// exactly the pathology the number exists to catch.
+	costSinkFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("openai-compat: empty choices in response")
 	}
