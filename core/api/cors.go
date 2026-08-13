@@ -30,7 +30,7 @@ const corsOriginsEnv = "DREAMCHAT_CORS_ORIGINS"
 // advertised, so nothing else is preflight-approved.
 const (
 	corsAllowedMethods = "GET, POST, OPTIONS"
-	corsAllowedHeaders = "Content-Type"
+	corsAllowedHeaders = "Content-Type, Authorization"
 	corsMaxAgeSeconds  = "600"
 )
 
