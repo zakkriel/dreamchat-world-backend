@@ -97,8 +97,8 @@ const cognitionFactsRuleMarker = "COMPUTED FACTS ARE ENGINE TRUTH"
 // it. The BATCH sheet is computed for the acting PLAYER as viewer — spatial facts are public, everyone in
 // the room sees the distances (perception-scoped only in that a closed container's contents stay
 // withheld). Rendered in the MUTABLE tail (it is per-action). Empty ⇒ omitted.
-func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
-	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent, factSheet)
+func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
+	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent, factSheet, addressed)
 }
 
 // buildIsolatedPrompt renders one flagged NPC's ISOLATED payload: the same public frame plus her
@@ -106,13 +106,13 @@ func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imm
 //
 // factSheet is THIS NPC's perception-scoped fact sheet — computed for HER as viewer (her spatial read of
 // the moment), not the player's — rendered in the MUTABLE tail. Empty ⇒ omitted.
-func buildIsolatedPrompt(scene sceneInfo, mind npcMind, private []privateLine, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
-	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent, factSheet)
+func buildIsolatedPrompt(scene sceneInfo, mind npcMind, private []privateLine, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
+	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent, factSheet, addressed)
 }
 
 // buildCognitionPrompt is the shared layout. isolated=true inserts the (3b) private block between
 // the minds and the public moment; the batch seat passes isolated=false and never carries it.
-func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt, factSheet string) string {
+func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
 	var sb strings.Builder
 	sb.WriteString(cognitionSystemHeader)
 
@@ -182,6 +182,17 @@ func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLin
 	attJSON, _ := json.Marshal(imminent)
 	sb.WriteString("\nATTEMPT: ")
 	sb.Write(attJSON)
+	// ADDRESSED — who the player is speaking TO. The id was always here, buried in the ATTEMPT json as
+	// a bare uuid among nine other fields, with no rule attached to it. Live symptom, reported by the
+	// founder: "Mara, I want to rest here" bound listener_id to Mara correctly, and JONAS answered —
+	// the narrator even wrote "cutting the request short before Mara can answer". Nothing in the prompt
+	// said being spoken to means anything, and one batch call decides for every mind at once, so the
+	// loudest character wins a conversation he was not part of. Saying it in words, on its own line, is
+	// what turns an id into a fact the mind can act on.
+	if addressed != "" {
+		sb.WriteString("\nADDRESSED: ")
+		sb.WriteString(addressed)
+	}
 	sb.WriteString("\nDECIDE FOR: [")
 	for i, m := range minds {
 		if i > 0 {
