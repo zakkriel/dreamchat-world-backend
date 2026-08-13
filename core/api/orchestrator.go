@@ -721,6 +721,40 @@ type worldFirstResult struct {
 //	one isolated call per flagged NPC, validated against exactly her own id.
 //
 // Deterministic processing order: batch response order first, then isolated NPCs by uuid asc.
+// addressedLabel renders who the player is speaking TO, in the labels this seat is shown, or "" when
+// the beat addresses no one.
+//
+// Two shapes count as being addressed, because both are the player putting words to a person:
+// a Communicated attempt's listener, and a QUERY whose asked-about target is a present ACTOR
+// ("Mara, can I rest here?"). A QUERY about the door or the crate addresses nobody.
+//
+// Labels, never ids: the mind reads its own vocabulary (§3 naming reach), and a raw uuid is what the
+// batch prompt already had and could not use.
+func addressedLabel(a Attempt, labels map[string]string, present []string) string {
+	presentSet := make(map[string]bool, len(present))
+	for _, id := range present {
+		presentSet[id] = true
+	}
+	name := func(id string) string {
+		if !presentSet[id] {
+			return "" // someone not in the room cannot be spoken to this beat
+		}
+		if l := labels[id]; l != "" {
+			return l + " (" + id + ")"
+		}
+		return id
+	}
+	if a.ListenerID != "" {
+		return name(a.ListenerID)
+	}
+	for _, id := range a.QueryTargetIDs {
+		if n := name(id); n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
 func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string, attempt Attempt, tick int64, seq int, trace *BeatTrace) (worldFirstResult, error) {
 	var res worldFirstResult
 
@@ -808,7 +842,8 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 		if fsErr != nil {
 			return res, fmt.Errorf("batch fact sheet: %w", fsErr)
 		}
-		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt, batchSheet)
+		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt, batchSheet,
+			addressedLabel(attempt, bLabels, present))
 		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 		// A Generate or decode failure degrades DULL (the batch minds do nothing this moment) but is
 		// no longer silent: log it so a mute room is diagnosable. Behavior unchanged — still skipped.
@@ -856,7 +891,8 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			if fsErr != nil {
 				return res, fmt.Errorf("isolated fact sheet %s: %w", npcID, fsErr)
 			}
-			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt, isoSheet)
+			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt, isoSheet,
+				addressedLabel(attempt, iLabels, present))
 			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 			// Degrade DULL (this secret-holder does nothing this moment) but observable — log the
 			// swallowed failure. Behavior unchanged: still a continue.
