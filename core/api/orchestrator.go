@@ -695,6 +695,41 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		return outcome, nil
 	}
 
+	// (4) THE WORLD'S TURN — the piece that was missing.
+	//
+	// Reported from live play: "Mara, I want to rest here" bound Mara as the listener, and Mara never
+	// answered. Not silence-in-character — she was never ASKED. This path runs when a held telegraph is
+	// pending, and it went ruling → return, so no cognition seat ran for anybody: no batch call, no
+	// ADDRESSED line, no decision for any NPC. The only NPC motion the player saw was the held act
+	// resolving (canon tick 69 seq 0: the muscle's wind-up from the previous beat landing), which reads
+	// exactly like the world ignoring him. #83 fixed who answers when the world gets a turn; it could
+	// not help in a beat that never took one.
+	//
+	// AFTER the ruling, not before, and that ordering is the doctrine rather than convenience: the
+	// world moves FIRST in an ordinary beat because the player's act is still imminent (§ world-first).
+	// Here the world already moved — that is what the held act IS — and the ruling has just resolved the
+	// collision. Reacting again beforehand would be a second pre-emption of the same moment.
+	//
+	// Only the single-attempt shape needs this: a remainder chain (len(chain) > 1) is handled above by
+	// runChain, which runs worldFirst per attempt. The empty-chain branch (the player answered without
+	// acting) is deliberately left alone — there is no attempt for the seats to read as IMMINENT, and
+	// inventing one would put words in his mouth.
+	if len(chain) == 1 {
+		wf, wfErr := o.worldFirst(ctx, worldID, playerID, chain[0], startTick, ar.SeqAdvance, trace)
+		if wfErr != nil {
+			return outcome, fmt.Errorf("reaction worldFirst: %w", wfErr)
+		}
+		outcome.Committed = append(outcome.Committed, wf.Committed...)
+		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
+		// A fresh telegraph legally ends the reaction beat on its own wind-up, exactly as it does in
+		// the ordinary path (RULINGS-2026-07-24 §1, §3).
+		if wf.HeldWritten {
+			outcome.HaltReason = "telegraph"
+			outcome.TicksAdvanced = 0
+			return outcome, nil
+		}
+	}
+
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = 0
 	return outcome, nil
