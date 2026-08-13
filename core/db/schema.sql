@@ -2411,17 +2411,30 @@ CREATE FUNCTION public.fn_viewer_text(p_world_id uuid, p_holder uuid, p_text tex
     LANGUAGE plpgsql STABLE
     AS $$
 DECLARE
-  r      record;
-  outtxt text := p_text;
+  r        record;
+  outtxt   text := p_text;
+  bare     text;
+  namepat  text;
 BEGIN
   IF p_text IS NULL OR p_holder IS NULL THEN
     RETURN p_text;
   END IF;
 
   FOR r IN SELECT * FROM fn_unearned_names(p_world_id, p_holder) LOOP
-    outtxt := regexp_replace(outtxt,
-                             '\m' || fn_regexp_quote(r.canonical_name) || '\M',
-                             r.label, 'gi');
+    namepat := '\m' || fn_regexp_quote(r.canonical_name) || '\M';
+
+    -- The label without its own leading article, when it has one. "a hooded figure" -> "hooded
+    -- figure"; "the keeper" -> "keeper"; "Mara" -> "Mara" (unchanged, no article to strip).
+    bare := regexp_replace(r.label, '^(a|an|the)\s+', '', 'i');
+
+    IF bare <> r.label THEN
+      -- Pass 1: the name already has an article in front of it. Keep the sentence's article exactly as
+      -- written (\1 preserves "The" vs "the") and drop the label's.
+      outtxt := regexp_replace(outtxt, '(\m(?:the|an|a)\s+)' || namepat, '\1' || bare, 'gi');
+    END IF;
+
+    -- Pass 2: every remaining occurrence takes the label whole.
+    outtxt := regexp_replace(outtxt, namepat, r.label, 'gi');
   END LOOP;
 
   RETURN outtxt;
@@ -4210,4 +4223,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090006'),
     ('20260809090007'),
     ('20260809090008'),
-    ('20260809090009');
+    ('20260809090009'),
+    ('20260813160000');
