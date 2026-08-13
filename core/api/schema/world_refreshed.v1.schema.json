@@ -1,0 +1,27 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_refreshed/1",
+  "title": "world_refreshed/1 — POST /worlds/{id}/refresh 200: the successor directory entry and the source it supersedes",
+  "description": "Refresh is append-only canon: it mints a NEW world id from the source world's template, archives the source world row, and returns the successor's directory entry. Nothing in the source world is deleted; the old id remains a historical reference.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "source_world_id", "id", "display_name", "theme", "playable"],
+  "properties": {
+    "schema_version": { "const": "world_refreshed/1" },
+    "source_world_id": { "type": "string", "format": "uuid" },
+    "id": { "type": "string", "format": "uuid" },
+    "display_name": { "type": "string", "minLength": 1 },
+    "theme": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "accent", "mood", "ornament"],
+      "properties": {
+        "schema_version": { "const": "world_theme/1" },
+        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
+        "mood": { "type": "string", "minLength": 1 },
+        "ornament": { "type": "string", "minLength": 1 }
+      }
+    },
+    "playable": { "const": true }
+  }
+}

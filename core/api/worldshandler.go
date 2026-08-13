@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -178,6 +179,19 @@ func createWorld(ctx context.Context, pool *pgxpool.Pool, displayName string, th
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
+	id, err := createWorldTx(ctx, tx, displayName, themeJSON)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", err
+	}
+	return id, nil
+}
+
+// createWorldTx is the write half of createWorld: insert the directory row plus seed_world_defaults.
+// Callers supply the surrounding transaction when this work must be part of a larger atomic step.
+func createWorldTx(ctx context.Context, tx pgx.Tx, displayName string, themeJSON []byte) (string, error) {
 	var id string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO world (world_id, display_name, theme)
@@ -186,9 +200,6 @@ func createWorld(ctx context.Context, pool *pgxpool.Pool, displayName string, th
 		return "", err
 	}
 	if _, err := tx.Exec(ctx, `SELECT seed_world_defaults($1::uuid)`, id); err != nil {
-		return "", err
-	}
-	if err := tx.Commit(ctx); err != nil {
 		return "", err
 	}
 	return id, nil

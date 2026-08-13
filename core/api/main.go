@@ -62,6 +62,10 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
 		NewWorldsHandler(pool, debug).(matcher),
+		// POST /worlds/{w}/refresh mints a successor world and archives the source. The old world is
+		// superseded, never reset in place: canon stays append-only, old ids stay citable, and refresh
+		// cannot silently erase history someone already referenced.
+		NewWorldRefreshHandler(pool, debug).(matcher),
 		// Images (SPEC-033): GET /worlds/{w}/images/{asset_id} redirects to a freshly minted
 		// presigned URL; POST /worlds/{w}/images/portraits is the explicit, bounded trigger.
 		// A nil client is an ordinary state — the world runs, images simply stay absent.

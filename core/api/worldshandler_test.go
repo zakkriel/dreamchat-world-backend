@@ -241,6 +241,10 @@ func TestWorlds_CreateRejectsWhatStorageWouldReject(t *testing.T) {
 // TestGenWorldPayloads writes the REAL responses of both /worlds surfaces as schema-contract
 // payloads. Gated on WORLD_PAYLOAD_DIR so it never runs in the ordinary suite (it creates a world);
 // ci/gen_payloads.sh drives it, mirroring TestGenSceneCurrentPayloads.
+// TestGenWorldPayloads writes the REAL responses of /worlds create, directory and refresh as
+// schema-contract payloads. Gated on WORLD_PAYLOAD_DIR so it never runs in the ordinary suite
+// (it creates and refreshes worlds); ci/gen_payloads.sh drives it, mirroring
+// TestGenSceneCurrentPayloads.
 func TestGenWorldPayloads(t *testing.T) {
 	dir := os.Getenv("WORLD_PAYLOAD_DIR")
 	if dir == "" {
@@ -248,9 +252,10 @@ func TestGenWorldPayloads(t *testing.T) {
 	}
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
-	h := NewWorldsHandler(pool, true)
+	worlds := NewWorldsHandler(pool, true)
+	refresh := NewWorldRefreshHandler(pool, true)
 
-	rec := worldsGet(t, h)
+	rec := worldsGet(t, worlds)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("directory: status = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -258,22 +263,47 @@ func TestGenWorldPayloads(t *testing.T) {
 		t.Fatalf("write directory payload: %v", err)
 	}
 
-	created := worldsPost(t, h, `{"display_name":"Payload Fixture World","theme":{"schema_version":"world_theme/1","accent":"#3b6ea5","mood":"bleak","ornament":"rivet"}}`)
+	created := worldsPost(t, worlds, `{"display_name":"Payload Fixture World","theme":{"schema_version":"world_theme/1","accent":"#3b6ea5","mood":"bleak","ornament":"rivet"}}`)
 	if created.Code != http.StatusCreated {
 		t.Fatalf("create: status = %d: %s", created.Code, created.Body.String())
 	}
 	if err := os.WriteFile(filepath.Join(dir, "world_created_1.json"), created.Body.Bytes(), 0o644); err != nil {
 		t.Fatalf("write created payload: %v", err)
 	}
-	// Leave the seeded db as we found it: the directory payload above must keep listing exactly the
-	// seeded worlds on the next run, not accumulate one fixture per CI invocation.
-	var got struct {
+
+	// Refresh payload generation MUST use a synthetic source world, never the seeded Drowned Lantern,
+	// then archive both synthetic worlds. Canon rows are append-only (no delete once populated), but
+	// archived worlds are filtered from fn_world_directory so the directory payload stays byte-stable.
+	var createdBody struct {
 		ID string `json:"id"`
 	}
-	_ = json.Unmarshal(created.Body.Bytes(), &got)
-	if got.ID != "" {
-		if _, err := pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, got.ID); err != nil {
-			t.Fatalf("cleanup created world: %v", err)
-		}
+	if err := json.Unmarshal(created.Body.Bytes(), &createdBody); err != nil {
+		t.Fatalf("decode created payload: %v", err)
+	}
+	if createdBody.ID == "" {
+		t.Fatalf("created payload had empty id: %s", created.Body.String())
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE world SET template_key='drowned_lantern' WHERE world_id='`+createdBody.ID+`'`); err != nil {
+		t.Fatalf("set template on synthetic source world: %v", err)
+	}
+
+	refreshed := worldRefreshPost(t, refresh, createdBody.ID)
+	if refreshed.Code != http.StatusOK {
+		t.Fatalf("refresh: status = %d: %s", refreshed.Code, refreshed.Body.String())
+	}
+	if err := os.WriteFile(filepath.Join(dir, "world_refreshed_1.json"), refreshed.Body.Bytes(), 0o644); err != nil {
+		t.Fatalf("write refreshed payload: %v", err)
+	}
+	var refreshedBody struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(refreshed.Body.Bytes(), &refreshedBody); err != nil {
+		t.Fatalf("decode refreshed payload: %v", err)
+	}
+	if refreshedBody.ID == "" {
+		t.Fatalf("refreshed payload had empty id: %s", refreshed.Body.String())
+	}
+	if _, err := pool.Exec(context.Background(), `UPDATE world SET archived_at = now() WHERE world_id IN ('`+createdBody.ID+`','`+refreshedBody.ID+`')`); err != nil {
+		t.Fatalf("archive synthetic payload worlds: %v", err)
 	}
 }
