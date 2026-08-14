@@ -160,9 +160,13 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 		// hand-driving three beats left canon_event at its seed rows — and resolve was never reached
 		// to notice it had a chain-shaped stand-in bound. Keyless dev now binds ids from the real
 		// candidate whitelist and commits, and the first adjudicated attempt reaches a ruling.
+		//
+		// narrate was the LAST seat left pointing at a stand-in not shaped like its own output:
+		// fake-text reports no capabilities, so it errored on the narration/2 schema and every
+		// hand-driven beat fell through to the belt-less plain prose fallback.
 		return SeatConfig{
 			"decompose":          {Provider: "fake-intent", Model: "dev"},
-			"narrate":            {Provider: "fake-text", Model: "dev"},
+			"narrate":            {Provider: "fake-narrate", Model: "dev"},
 			"resolve":            {Provider: "fake-resolve", Model: "dev"},
 			"cognition_batch":    {Provider: "fake-cognition", Model: "dev"},
 			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
