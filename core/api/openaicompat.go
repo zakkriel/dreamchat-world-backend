@@ -222,6 +222,11 @@ func (o *openAICompatDriver) requestBody(req GenRequest) (map[string]any, error)
 	if o.routing != nil {
 		body["provider"] = o.routing
 	}
+	// Ask for the bill. OpenRouter returns usage.cost — the ACTUAL charge for this call, after provider
+	// selection and any cache discount — only when the request asks for it. It costs nothing to
+	// request and it is the difference between an engine that knows what it spends and one that has to
+	// be audited from outside (see costsink.go).
+	body["usage"] = map[string]any{"include": true}
 
 	if req.Schema != nil {
 		// Structured: system message with schema leash + user message; constrain to json_object.
@@ -287,12 +292,12 @@ func (o *openAICompatDriver) Generate(ctx context.Context, req GenRequest) (stri
 	if err != nil {
 		return "", err
 	}
-	return o.content(raw)
+	return o.content(ctx, raw)
 }
 
 // content extracts choices[0].message.content verbatim. One place, because every json_mode returns
 // through it and a second copy is a second chance to disagree about what an empty reply means.
-func (o *openAICompatDriver) content(raw []byte) (string, error) {
+func (o *openAICompatDriver) content(ctx context.Context, raw []byte) (string, error) {
 	var resp struct {
 		Choices []struct {
 			Message struct {
@@ -300,10 +305,26 @@ func (o *openAICompatDriver) content(raw []byte) (string, error) {
 			} `json:"message"`
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
+		Usage struct {
+			PromptTokens     int64   `json:"prompt_tokens"`
+			CompletionTokens int64   `json:"completion_tokens"`
+			Cost             float64 `json:"cost"`
+			// Cached prompt tokens, billed at a fraction of fresh input (DeepSeek via OpenRouter:
+			// $0.0986/M against $1.168/M on v4-pro). Our prompts lead with a stable rules header, so
+			// this SHOULD be large — and "should" is exactly why it is measured rather than assumed.
+			PromptTokensDetails struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"prompt_tokens_details"`
+		} `json:"usage"`
 	}
 	if err := json.Unmarshal(raw, &resp); err != nil {
 		return "", fmt.Errorf("openai-compat: parse response: %w", err)
 	}
+	// Recorded BEFORE the content checks below: a reply that fails validation was still billed, and a
+	// spend report that only counts successful calls is the one that under-reports a repair storm —
+	// exactly the pathology the number exists to catch.
+	costSinkFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens,
+		resp.Usage.PromptTokensDetails.CachedTokens)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("openai-compat: empty choices in response")
 	}
@@ -411,6 +432,10 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 		return "", err
 	}
 	body["stream"] = true
+	// Ask for the final usage chunk. `usage: {include: true}` covers OpenRouter; `stream_options` is
+	// the OpenAI-native spelling, sent too because this driver talks to any OpenAI-compatible host and
+	// an ignored extra field is free while a missing invoice is invisible.
+	body["stream_options"] = map[string]any{"include_usage": true}
 
 	buf, err := json.Marshal(body)
 	if err != nil {
@@ -457,10 +482,30 @@ func (o *openAICompatDriver) GenerateStream(ctx context.Context, req GenRequest,
 				} `json:"delta"`
 				FinishReason string `json:"finish_reason"`
 			} `json:"choices"`
+			Usage *struct {
+				PromptTokens        int64   `json:"prompt_tokens"`
+				CompletionTokens    int64   `json:"completion_tokens"`
+				Cost                float64 `json:"cost"`
+				PromptTokensDetails struct {
+					CachedTokens int64 `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
+			} `json:"usage"`
 		}
 		// A malformed chunk is skipped rather than fatal: the stream is still delivering, and killing
 		// a beat over one unparseable frame would trade a whole narration for a hiccup.
-		if err := json.Unmarshal([]byte(payload), &chunk); err != nil || len(chunk.Choices) == 0 {
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		// THE BILL ARRIVES LAST. A streamed reply carries its usage in a FINAL chunk that has no
+		// choices — so the `len(Choices) == 0 → skip` that used to guard this loop threw the invoice
+		// away. Found by the instrument's own first run: every seat reported a cost except `narrate`,
+		// the one seat that streams and the most expensive one, which silently under-reported every
+		// beat total by its largest line item.
+		if chunk.Usage != nil {
+			costSinkFrom(ctx).add(chunk.Usage.Cost, chunk.Usage.PromptTokens, chunk.Usage.CompletionTokens,
+				chunk.Usage.PromptTokensDetails.CachedTokens)
+		}
+		if len(chunk.Choices) == 0 {
 			continue
 		}
 		if d := chunk.Choices[0].Delta.Content; d != "" {

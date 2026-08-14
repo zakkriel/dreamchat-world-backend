@@ -309,6 +309,9 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (timedDriver) say where it went; this says what he waited. Deferred so it is logged on EVERY
 	// exit including the error frames, because a beat that died slowly is the one worth knowing about.
 	beatStart := time.Now()
+	// Every provider call this beat makes bills into this sink (costsink.go). Installed before the
+	// orchestrator is built so no seat can spend outside it.
+	ctx, costs := withCostSink(ctx)
 	orc := &Orchestrator{
 		DB:                h.pool,
 		Resolve:           h.bridge.Driver(SeatResolve.Name),
@@ -319,8 +322,18 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() {
 		adj, fanout := orc.BeatCounters()
-		log.Printf("beat timing: total_ms=%d world=%s continue=%v adjudications=%d npc_fanout=%d",
-			time.Since(beatStart).Milliseconds(), worldID, continuePress, adj, fanout)
+		usd, tokIn, tokOut, cached, calls := costs.snapshot()
+		log.Printf("beat timing: total_ms=%d world=%s continue=%v adjudications=%d npc_fanout=%d "+
+			"calls=%d tok_in=%d cached=%d tok_out=%d cost_usd=%.6f session_usd=%.4f",
+			time.Since(beatStart).Milliseconds(), worldID, continuePress, adj, fanout,
+			calls, tokIn, cached, tokOut, usd, sessionTotalUSD())
+		// Loud when a beat costs multiples of what a beat costs. A repair storm, a prompt that grew, or
+		// a seat quietly routed to an expensive model all show up here first — and the founder hears it
+		// from the engine instead of from his balance.
+		if warn := beatCostWarnUSD(); warn > 0 && usd > warn {
+			log.Printf("COST WARNING: beat spent $%.4f (>$%.4f) across %d call(s) in world %s — "+
+				"check the seat map and the narrate repair loop", usd, warn, calls, worldID)
+		}
 	}()
 
 	frames, ok := newFrameWriter(w)

@@ -695,6 +695,41 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		return outcome, nil
 	}
 
+	// (4) THE WORLD'S TURN — the piece that was missing.
+	//
+	// Reported from live play: "Mara, I want to rest here" bound Mara as the listener, and Mara never
+	// answered. Not silence-in-character — she was never ASKED. This path runs when a held telegraph is
+	// pending, and it went ruling → return, so no cognition seat ran for anybody: no batch call, no
+	// ADDRESSED line, no decision for any NPC. The only NPC motion the player saw was the held act
+	// resolving (canon tick 69 seq 0: the muscle's wind-up from the previous beat landing), which reads
+	// exactly like the world ignoring him. #83 fixed who answers when the world gets a turn; it could
+	// not help in a beat that never took one.
+	//
+	// AFTER the ruling, not before, and that ordering is the doctrine rather than convenience: the
+	// world moves FIRST in an ordinary beat because the player's act is still imminent (§ world-first).
+	// Here the world already moved — that is what the held act IS — and the ruling has just resolved the
+	// collision. Reacting again beforehand would be a second pre-emption of the same moment.
+	//
+	// Only the single-attempt shape needs this: a remainder chain (len(chain) > 1) is handled above by
+	// runChain, which runs worldFirst per attempt. The empty-chain branch (the player answered without
+	// acting) is deliberately left alone — there is no attempt for the seats to read as IMMINENT, and
+	// inventing one would put words in his mouth.
+	if len(chain) == 1 {
+		wf, wfErr := o.worldFirst(ctx, worldID, playerID, chain[0], startTick, ar.SeqAdvance, trace)
+		if wfErr != nil {
+			return outcome, fmt.Errorf("reaction worldFirst: %w", wfErr)
+		}
+		outcome.Committed = append(outcome.Committed, wf.Committed...)
+		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
+		// A fresh telegraph legally ends the reaction beat on its own wind-up, exactly as it does in
+		// the ordinary path (RULINGS-2026-07-24 §1, §3).
+		if wf.HeldWritten {
+			outcome.HaltReason = "telegraph"
+			outcome.TicksAdvanced = 0
+			return outcome, nil
+		}
+	}
+
 	outcome.HaltReason = "completed"
 	outcome.TicksAdvanced = 0
 	return outcome, nil
@@ -782,7 +817,18 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	// with each NPC's private about-ness links, one hop (RULINGS-2026-07-23 §5).
 	actionIDs := append(o.collectParticipantIDs(attempt), playerID)
 
-	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, present, npcs)
+	// THE ROSTER IS THE NPCs, NOT THE ROOM — this one argument decides whether the batch path can ever
+	// fire. Both fn_isolated_npcs and fn_public_moment call a record "shared" only when EVERY holder in
+	// the roster holds it (count(DISTINCT holder_id) = cardinality). Passing the full present roster put
+	// the PLAYER in that denominator, so a record the whole cast shares but the newcomer does not — most
+	// of a seeded world's history — counted as private to every one of them, and every NPC isolated.
+	// Measured on the play world: four v4-pro isolated calls per beat, batch never firing, ~4-6s of
+	// sequential round trips the founder feels as slowness.
+	//
+	// Shared-among-the-minds-we-are-batching is what the §5 invariant actually requires: a record every
+	// batch mind already holds is not a secret from any of them, and the prompt still carries nothing
+	// else. The player is not a reader of this prompt and never was.
+	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, npcs, npcs)
 	if err != nil {
 		return res, fmt.Errorf("fn_isolated_npcs: %w", err)
 	}
@@ -801,7 +847,10 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 
 	// The public moment (modal face of every event shared by ALL present holders) and the scene
 	// frame are shared by both seats. The isolated seat adds the flagged NPC's private records.
-	moment, err := o.publicMoment(ctx, worldID, present)
+	// Same roster, and it MUST be the same one: isolation and the moment share the "shared" test, so
+	// narrowing one without the other would batch a mind and then withhold the very context she was
+	// isolated for — trading latency for a dumber decision.
+	moment, err := o.publicMoment(ctx, worldID, npcs)
 	if err != nil {
 		return res, fmt.Errorf("fn_public_moment: %w", err)
 	}
