@@ -1,9 +1,11 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"sync"
 )
 
 // SPEC-021 — CORS for the frontend origin. The FE (dreamchat-frontend) and this API are separate
@@ -63,6 +65,13 @@ func corsOrigins() (allowed []string, bad []string) {
 // untouched. An Origin that is not on the allowlist gets NO CORS headers — the browser then blocks
 // it, which is the point — and a preflight from such an origin is answered 403 rather than 404, so
 // a misconfigured allowlist is legible in the network tab instead of looking like a missing route.
+//
+// A refusal is also LOGGED, once per distinct origin, naming the origin verbatim. Without this the
+// server side of a blocked frontend is completely silent: the browser reports only an opaque CORS
+// error and the FE cannot tell "origin not on the allowlist" apart from "backend is down" (its fetch
+// throws either way, so it renders "could not reach the world service" and never sees the 401 that
+// would put up the login screen). The log line is the one place the missing origin can be READ
+// instead of guessed at, and once-per-origin keeps a reloading tab from burying the rest of the log.
 func withCORS(next http.Handler, allowed []string) http.Handler {
 	if len(allowed) == 0 {
 		return next
@@ -71,6 +80,9 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 	for _, o := range allowed {
 		index[o] = struct{}{}
 	}
+	// Scoped to this wrapper, not package-global: one process has one CORS wrapper, and a fresh set
+	// per call keeps each test's log assertions independent of every other test's.
+	var refused sync.Map
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
 		if origin == "" {
@@ -82,6 +94,10 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 
 		preflight := r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != ""
 		if _, ok := index[origin]; !ok {
+			if _, seen := refused.LoadOrStore(origin, struct{}{}); !seen {
+				log.Printf("CORS: refused origin %s (preflight=%v) — it is not in %s; add it there if that is a real frontend",
+					origin, preflight, corsOriginsEnv)
+			}
 			if preflight {
 				http.Error(w, "origin not allowed by "+corsOriginsEnv, http.StatusForbidden)
 				return

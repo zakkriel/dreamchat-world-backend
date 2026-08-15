@@ -1,8 +1,11 @@
 package main
 
 import (
+	"bytes"
+	"log"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -73,6 +76,64 @@ func TestCORS_PreflightFromDisallowedOriginIsRefused(t *testing.T) {
 	}
 	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "" {
 		t.Fatalf("Access-Control-Allow-Origin = %q, want empty for a disallowed origin", got)
+	}
+}
+
+// The refusal must be READABLE ON THE SERVER, and this test exists because it was not: a Lovable
+// preview could not reach the deployed API, and nothing in the backend log said why — the boot line
+// listed the allowlist, the refused origin appeared nowhere, and diagnosis came down to probing the
+// live service by hand. The browser reports only an opaque CORS error, and the FE's fetch throws the
+// same TypeError it throws for a backend that is down (so it renders "could not reach the world
+// service" and never sees the 401 that would put up its login screen). This line is the only place
+// the missing origin can be read instead of guessed.
+func TestCORS_RefusedOriginIsLoggedOncePerOrigin(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut, prevFlags := log.Writer(), log.Flags()
+	log.SetOutput(&buf)
+	log.SetFlags(0)
+	t.Cleanup(func() { log.SetOutput(prevOut); log.SetFlags(prevFlags) })
+
+	h := withCORS(&okHandler{}, []string{feOrigin})
+	const bad = "https://a775bf30-84c9-465d-9970-ece9121762d9.lovableproject.com"
+
+	// Three refusals of the SAME origin: a reloading tab must not bury the rest of the log.
+	for range 3 {
+		req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/worlds", nil)
+		req.Header.Set("Origin", bad)
+		req.Header.Set("Access-Control-Request-Method", "GET")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if got := strings.Count(buf.String(), bad); got != 1 {
+		t.Fatalf("refused origin logged %d time(s), want exactly 1 — log was:\n%s", got, buf.String())
+	}
+	if !strings.Contains(buf.String(), corsOriginsEnv) {
+		t.Fatalf("the refusal does not name %s, so it does not say how to fix it: %s", corsOriginsEnv, buf.String())
+	}
+
+	// A different origin is its own first refusal — the once-per-origin gate is per origin, not global.
+	req := httptest.NewRequest(http.MethodGet, "http://localhost:8080/worlds", nil)
+	req.Header.Set("Origin", "https://other.example")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+	if !strings.Contains(buf.String(), "https://other.example") {
+		t.Fatalf("a second refused origin must also be logged: %s", buf.String())
+	}
+}
+
+// An ALLOWED origin logs nothing: normal traffic must stay silent, or the signal above is worthless.
+func TestCORS_AllowedOriginLogsNothing(t *testing.T) {
+	var buf bytes.Buffer
+	prevOut := log.Writer()
+	log.SetOutput(&buf)
+	t.Cleanup(func() { log.SetOutput(prevOut) })
+
+	h := withCORS(&okHandler{}, []string{feOrigin})
+	req := httptest.NewRequest(http.MethodOptions, "http://localhost:8080/worlds", nil)
+	req.Header.Set("Origin", feOrigin)
+	req.Header.Set("Access-Control-Request-Method", "GET")
+	h.ServeHTTP(httptest.NewRecorder(), req)
+
+	if buf.Len() != 0 {
+		t.Fatalf("an allowed origin logged %q, want silence", buf.String())
 	}
 }
 
