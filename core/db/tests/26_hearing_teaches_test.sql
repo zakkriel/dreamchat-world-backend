@@ -21,10 +21,17 @@ SELECT is(fn_display_name(:'w'::uuid, :'hooded'::uuid, :'jonas'::uuid), 'the mus
 -- Mara says the name TO Kade. The hooded woman is present in the world but not an addressed
 -- listener — the thin slice's "could hear" rule (§3 overhearers deferred), which this test pins so
 -- that widening it later is a deliberate change and not an accident.
+--
+-- `summary` is the referee's ACCOUNT of the utterance; `payload.spoken` is what was actually SAID,
+-- the split apply_event/apply_ruled_event have written for every Communicated event since
+-- 20260809090009. Only the WORDS teach a name (20260814170000): an account naming someone
+-- canonically is bookkeeping, not an introduction. 27_hearing_teaches_only_spoken_test.sql pins that
+-- negative half.
 WITH ins AS (
-  INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin)
+  INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
   VALUES (:'w'::uuid, 'Communicated',
-          'Mara tells the stranger the man at the bar is called Jonas.', 910, 0, 'accepted', 'freeform')
+          'Mara tells the stranger who the man at the bar is.', 910, 0, 'accepted', 'freeform',
+          jsonb_build_object('spoken', 'the man at the bar is called Jonas'))
   RETURNING event_id
 )
 SELECT event_id INTO TEMP ev FROM ins;
@@ -48,7 +55,10 @@ SELECT is(fn_display_name(:'w'::uuid, :'hooded'::uuid, :'jonas'::uuid), 'the mus
 SELECT is(
   (SELECT content FROM perception_record
     WHERE world_id = :'w'::uuid AND holder_id = :'kade'::uuid AND acquired_tick = 910),
-  'Mara tells the stranger the man at the bar is called Jonas.',
+  -- The account, then the words themselves quoted (20260809090009): the listener needs the verbatim
+  -- line or the narrator has nothing it may quote. Nothing is rewritten for Kade — he has the seeded
+  -- name for Mara and has just earned Jonas from the words.
+  'Mara tells the stranger who the man at the bar is. — "the man at the bar is called Jonas"',
   '(e) the utterance reaches the listener with the name intact — he is being told it'
 );
 
@@ -74,8 +84,9 @@ SELECT ok(
 -- (h) First hearing wins, and a second utterance is a harmless no-op rather than a duplicate-key
 --     failure that would kill the beat.
 WITH ins2 AS (
-  INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin)
-  VALUES (:'w'::uuid, 'Communicated', 'Mara says Jonas again.', 911, 0, 'accepted', 'freeform')
+  INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
+  VALUES (:'w'::uuid, 'Communicated', 'Mara says his name again.', 911, 0, 'accepted', 'freeform',
+          jsonb_build_object('spoken', 'Jonas, aye, that is him'))
   RETURNING event_id
 )
 SELECT event_id INTO TEMP ev2 FROM ins2;
