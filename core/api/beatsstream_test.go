@@ -442,6 +442,93 @@ func TestBeats_EmitsFramesInOrder(t *testing.T) {
 	perceptionSubjectBackfill(t, ctx, pool, baseTick)
 }
 
+// ── TestBeats_TextOnlyNarrateSeatSkipsTheStructuredAttempts ──────────────────────────────────────
+
+// countingTextNarrateDriver is an honest TEXT-ONLY narrate model: it reports no capabilities (so it
+// cannot answer a schema) and records every call it receives along with whether that call carried one.
+type countingTextNarrateDriver struct {
+	name      string
+	calls     int
+	sawSchema int
+}
+
+func (d *countingTextNarrateDriver) Name() string                { return d.name }
+func (d *countingTextNarrateDriver) Capabilities() CapabilitySet { return CapabilitySet{} }
+func (d *countingTextNarrateDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	d.calls++
+	if req.Schema != nil {
+		d.sawSchema++
+		return "", fmt.Errorf("%s: cannot do structured generation (no capability)", d.name)
+	}
+	return "The room settles, and the moment passes.", nil
+}
+
+// A narrate seat bound to a text-only model must be asked ONCE, for prose.
+//
+// SeatNarrate's capability floor is deliberately open (Requires is nil — narrate is cheap and
+// high-volume, and bridge_test.go pins that a free-text driver may bind it), so a model with no
+// structured output is a LEGITIMATE narrate binding. The handler used to spend both structured
+// attempts on it anyway: the driver refused each schema-carrying request on sight, the loop collected
+// the same refusal twice, and the plain fallback then produced the narration that was always going to
+// be the outcome. Free against a fake; two billed round trips and the founder's dead air against a
+// real text-only model, and the pathology the per-beat cost warning names the "narrate repair loop"
+// for. The seat is asked what it can do before a schema is spent on it.
+func TestBeats_TextOnlyNarrateSeatSkipsTheStructuredAttempts(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	baseTick := seatPlayerAndMara(t, ctx, pool)
+
+	nd := &countingTextNarrateDriver{name: "text-only-narrate"}
+	bridge := mustBridge(t, NewFakeStructuredDriver("fake-structured:test", nil), nd) // empty decompose table -> [] chain, beat completes
+	h := NewBeatsStreamHandler(pool, true, bridge)
+
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+playerID,
+		strings.NewReader(`{"text":"I look around"}`))
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+
+	if nd.sawSchema != 0 {
+		t.Fatalf("narrate seat received %d schema-carrying call(s) — a driver reporting no %s must never be sent one",
+			nd.sawSchema, CapStructuredOutput)
+	}
+	if nd.calls != 1 {
+		t.Fatalf("narrate Generate calls = %d, want 1 (prose only; the two structured attempts are not spent on a text-only seat)", nd.calls)
+	}
+
+	// The beat still narrates: skipping the doomed attempts must not cost the player his narration.
+	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
+	narrated := false
+	for {
+		raw, err := sr.nextRaw()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatalf("reading frame: %v", err)
+		}
+		f := assertValidBeatFrame(t, raw)
+		if f["kind"] != "narration" {
+			continue
+		}
+		narrated = true
+		msg, ok := f["message"].(map[string]any)
+		if !ok {
+			t.Fatalf("narration frame carries no message: %v", f)
+		}
+		if msg["speaker_id"] != nil {
+			t.Fatalf("the prose path carries no speaker, got %v", msg["speaker_id"])
+		}
+	}
+	if !narrated {
+		t.Fatal("no narration frame reached the wire — the prose path must still narrate the beat")
+	}
+	perceptionSubjectBackfill(t, ctx, pool, baseTick)
+}
+
 // ── TestBeats_GhostSpeakerNeverReachesTheWire ────────────────────────────────────────────────────
 
 // TestBeats_GhostSpeakerNeverReachesTheWire drives a narrate driver that ALWAYS authors a speaker
@@ -722,8 +809,16 @@ func newFakeStreamingNarrateDriver(name string, segments []string) *fakeStreamin
 	return &fakeStreamingNarrateDriver{name: name, segments: segments, resume: make(chan struct{}), returned: make(chan struct{})}
 }
 
-func (f *fakeStreamingNarrateDriver) Name() string                { return f.name }
-func (f *fakeStreamingNarrateDriver) Capabilities() CapabilitySet { return CapabilitySet{} }
+func (f *fakeStreamingNarrateDriver) Name() string { return f.name }
+
+// It answers the narration/2 schema — that is precisely what GenerateStream below streams — so it
+// must SAY so. The narrate path asks the driver whether it can do structured output before spending a
+// schema-carrying call on it (beatsstream.go), and a driver that streams schema-valid segments while
+// reporting {} is the same lie TestBindSeat_ValidatesReportedCapabilityNotLabel exists to catch,
+// pointed the other way: it under-reports and would silently lose the streaming path.
+func (f *fakeStreamingNarrateDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (f *fakeStreamingNarrateDriver) Generate(context.Context, GenRequest) (string, error) {
 	return "", fmt.Errorf("fakeStreamingNarrateDriver: Generate called — the streaming path should have been used, not the non-streaming one")
 }
