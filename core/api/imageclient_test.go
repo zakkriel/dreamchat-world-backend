@@ -356,7 +356,7 @@ func TestImageClient_RunsTheVerifiedSequence(t *testing.T) {
 	if err != nil || identityID == "" {
 		t.Fatalf("upsertIdentity: %v / %q", err, identityID)
 	}
-	jobID, err := c.requestGeneration(ctx, identityID, "portrait-w1-kade", newGovEnvelope(time.Now(), "character_portrait"))
+	jobID, err := c.requestGeneration(ctx, identityID, "", "portrait-w1-kade", newGovEnvelope(time.Now(), "character_portrait"))
 	if err != nil || jobID == "" {
 		t.Fatalf("requestGeneration: %v / %q", err, jobID)
 	}
@@ -382,7 +382,7 @@ func TestImageClient_SendsTheIdempotencyKey(t *testing.T) {
 	f := newFakePlatform()
 	c := testImageClient(t, f)
 
-	if _, err := c.requestGeneration(context.Background(), "vi_x", "portrait-w1-kade",
+	if _, err := c.requestGeneration(context.Background(), "vi_x", "", "portrait-w1-kade",
 		newGovEnvelope(time.Now(), "character_portrait")); err != nil {
 		t.Fatalf("requestGeneration: %v", err)
 	}
@@ -401,16 +401,16 @@ func TestImageClient_PinnedEnvelopeSurvivesRetryButAFreshOneDoesNot(t *testing.T
 	const key = "portrait-w1-kade"
 
 	pinned := newGovEnvelope(time.Date(2026, 8, 8, 16, 33, 23, 0, time.UTC), "character_portrait")
-	if _, err := c.requestGeneration(ctx, "vi_x", key, pinned); err != nil {
+	if _, err := c.requestGeneration(ctx, "vi_x", "", key, pinned); err != nil {
 		t.Fatalf("first request: %v", err)
 	}
 	// Replaying the SAME pinned envelope under the same key is the supported retry.
-	if _, err := c.requestGeneration(ctx, "vi_x", key, pinned); err != nil {
+	if _, err := c.requestGeneration(ctx, "vi_x", "", key, pinned); err != nil {
 		t.Fatalf("replaying the pinned envelope must be accepted, got: %v", err)
 	}
 	// Rebuilding the envelope moves issued_at, which is the mistake their verification run made.
 	fresh := newGovEnvelope(time.Date(2026, 8, 8, 16, 40, 0, 0, time.UTC), "character_portrait")
-	_, err := c.requestGeneration(ctx, "vi_x", key, fresh)
+	_, err := c.requestGeneration(ctx, "vi_x", "", key, fresh)
 	var apiErr *imageAPIError
 	if !errors.As(err, &apiErr) || apiErr.Code != "idempotency_conflict" {
 		t.Fatalf("a rebuilt envelope under the same key must conflict; got %v", err)
