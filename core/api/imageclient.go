@@ -225,11 +225,20 @@ func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, err
 	var list struct {
 		Styles []styleProfile `json:"styles"`
 	}
-	if err := c.do(ctx, http.MethodGet, "/v1/styles", nil, "", &list); err == nil {
-		for _, s := range list.Styles {
-			if s.Name == name {
-				return s.ID, nil
-			}
+	// A FAILED list is not "no styles exist". This swallowed its error, and the platform token was
+	// missing styles:read — so every call 403'd here, fell through, and created another profile.
+	// Twenty-five identical "dreamchat-default" rows later, the damage was not the clutter: the
+	// artifact reuse key folds style_profile_id, so a fresh id per call meant the cache could never
+	// hit and every regeneration was billed at full price.
+	//
+	// The create below is still the answer when the list genuinely comes back without this style;
+	// it is not the answer when we could not read the list at all.
+	if err := c.do(ctx, http.MethodGet, "/v1/styles", nil, "", &list); err != nil {
+		return "", fmt.Errorf("ensureStyle: listing styles: %w", err)
+	}
+	for _, s := range list.Styles {
+		if s.Name == name {
+			return s.ID, nil
 		}
 	}
 	var created styleProfile
