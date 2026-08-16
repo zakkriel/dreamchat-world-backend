@@ -634,3 +634,218 @@ func parseDecomposePlayerInput(prompt string) string {
 	}
 	return strings.TrimSpace(tail)
 }
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// FAKE: world_genesis. Authors a small but COMPLETE world — one that passes every belt check in
+// genesisDoc.validate() and produces a world the beat loop can actually be played against. That
+// completeness is the point: it is what lets the whole create-world journey (brief → build → arrival →
+// five beats) run in CI with no key and no spend, and it is why this fake is longer than the others.
+//
+// It reads the BRIEF back out of the prompt and stitches a slug of it into the world's name, so a test
+// can prove the brief actually reached the seat rather than assuming it did. Everything else is fixed:
+// two rooms joined by one open way, two people (one of them in the room you walk into), one object that
+// matters, one piece of history that leaves both of them knowing something different about it.
+type fakeWorldGenesisDriver struct{ name string }
+
+func NewFakeWorldGenesisDriver() Driver { return &fakeWorldGenesisDriver{name: "fake-world-genesis"} }
+
+func (f *fakeWorldGenesisDriver) Name() string { return f.name }
+func (f *fakeWorldGenesisDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+
+func (f *fakeWorldGenesisDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: world_genesis driver used without a schema", f.name)
+	}
+	brief := parseGenesisBrief(req.Prompt)
+	if brief == "" {
+		return "", fmt.Errorf("%s: no brief in the prompt", f.name)
+	}
+
+	// Two rooms and the people in them. Names are fixed so pgTAP and Go tests can assert against them;
+	// only the world's own name carries the brief, which is the one thing a test needs to trace.
+	doc := map[string]any{
+		"world": map[string]any{
+			"display_name": "A World From: " + briefSlug(brief),
+			"tagline":      "Somewhere someone owes something, and the ledger is open.",
+			"mood":         "overcast",
+			"ornament":     "plain",
+		},
+		"region": map[string]any{
+			"descriptor":   "the quarter under the water tower",
+			"extent_class": "medium",
+		},
+		"places": []map[string]any{{
+			"descriptor":     "a low room with one lamp",
+			"canonical_name": "The Counting Room",
+			"kind":           "back room",
+			"description":    "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. The window is painted shut.",
+			"tension":        "tense",
+			"extent_class":   "intimate",
+		}, {
+			"descriptor":     "a yard stacked with crates",
+			"canonical_name": "The Loading Yard",
+			"kind":           "yard",
+			"description":    "Crates stacked two high against the wall, a wet gate standing open on the street, and the water tower above it all.",
+			"tension":        "normal",
+			"extent_class":   "small",
+		}},
+		"ways": []map[string]any{{
+			"descriptor": "the door to the yard",
+			"from_place": "The Counting Room",
+			"to_place":   "The Loading Yard",
+			"state":      "open",
+		}},
+		"cast": []map[string]any{{
+			"descriptor":     "the woman keeping the ledger",
+			"canonical_name": "Adaeze",
+			"standing":       "keeps the book, and decides what goes in it",
+			"speech_manner":  "short sentences; never repeats herself",
+			"traits": []map[string]any{
+				{"key": "guarded", "strength": "strong", "manner": "answers a question with the shortest true thing"},
+				{"key": "exact", "strength": "defining", "manner": "will not round a number to end a conversation"},
+			},
+			"hiding":       "the last two pages of the ledger are a different hand than hers",
+			"malleability": "faint",
+			"starts_in":    "The Counting Room",
+		}, {
+			"descriptor":     "a man waiting by the crates",
+			"canonical_name": "Ferro",
+			"standing":       "moves what the book says to move",
+			"speech_manner":  "talks around a question until it goes away",
+			"traits": []map[string]any{
+				{"key": "watchful", "strength": "moderate", "manner": "tracks the gate more than the person talking to him"},
+			},
+			"hiding":       "he has already been paid for tonight, by someone who is not in the book",
+			"malleability": "moderate",
+			"starts_in":    "The Loading Yard",
+		}},
+		"objects": []map[string]any{{
+			"descriptor":     "a ledger open at the current page",
+			"canonical_name": "The Ledger",
+			"kind":           "record",
+			"where":          map[string]any{"in_place": "The Counting Room"},
+		}, {
+			"descriptor":     "a brass key worn smooth",
+			"canonical_name": "The Yard Key",
+			"kind":           "key",
+			"where":          map[string]any{"carried_by": "Adaeze"},
+		}},
+		// One event, two people, two different beliefs about it — which is the entire reason knowledge is
+		// authored per holder instead of once per event (B-7).
+		"history": []map[string]any{{
+			"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
+			"where":         "The Loading Yard",
+			"who":           []string{"Adaeze", "Ferro"},
+			"knowledge": []map[string]any{
+				{"holder": "Adaeze", "content": "a crate went into my yard tonight that nobody entered in the book", "epistemic_type": "direct"},
+				{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
+			},
+		}},
+		"arrival": map[string]any{
+			"descriptor":     "a stranger with wet shoulders",
+			"canonical_name": "Wren",
+			"place":          "The Counting Room",
+			"stated":         "I stepped into the counting room.",
+			"why":            "sent to collect on a line in somebody else's book",
+		},
+	}
+
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("%s: marshal world: %w", f.name, err)
+	}
+	return string(out), nil
+}
+
+// parseGenesisBrief pulls the brief back out of the assembled prompt. The marker is shared with the real
+// prompt builder (worldgenesis.go), so the two cannot drift apart silently.
+func parseGenesisBrief(prompt string) string {
+	_, rest, ok := strings.Cut(prompt, worldGenesisBriefMarker)
+	if !ok {
+		return ""
+	}
+	// The brief runs to the answers block when there is one, or to the end.
+	if before, _, found := strings.Cut(rest, worldGenesisAnswersMarker); found {
+		rest = before
+	}
+	return strings.TrimSpace(rest)
+}
+
+// briefSlug is a short, stable, human-readable trace of the brief — the first few words, letters only.
+// Deliberately lossy: it exists so a test (and a human reading a fixture) can see WHICH brief produced a
+// world, not to reconstruct it.
+func briefSlug(brief string) string {
+	var words []string
+	for _, w := range strings.Fields(strings.ToLower(brief)) {
+		var clean strings.Builder
+		for _, r := range w {
+			if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+				clean.WriteRune(r)
+			}
+		}
+		if clean.Len() == 0 {
+			continue
+		}
+		words = append(words, clean.String())
+		if len(words) == 4 {
+			break
+		}
+	}
+	if len(words) == 0 {
+		return "an unnamed brief"
+	}
+	return strings.Join(words, " ")
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// FAKE: world_interview. Asks two questions and then stops, so a test can walk the whole Custom lane —
+// first question, answer, second question, answer, done — without a key. It counts the answers already in
+// the prompt to decide where it is, which also proves the real prompt carries them.
+type fakeWorldInterviewDriver struct{ name string }
+
+func NewFakeWorldInterviewDriver() Driver {
+	return &fakeWorldInterviewDriver{name: "fake-world-interview"}
+}
+
+func (f *fakeWorldInterviewDriver) Name() string { return f.name }
+func (f *fakeWorldInterviewDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+
+const fakeInterviewQuestionCount = 2
+
+func (f *fakeWorldInterviewDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: world_interview driver used without a schema", f.name)
+	}
+	asked := strings.Count(req.Prompt, "\n  → ")
+	if asked >= fakeInterviewQuestionCount {
+		return `{"done":true}`, nil
+	}
+	questions := []map[string]any{{
+		"done":     false,
+		"question": "Who wants something from you the moment you walk in?",
+		"why":      "This decides who is in the room and what they open with.",
+		"options": []map[string]any{
+			{"label": "the one keeping the records", "implication": "the pressure is what is written down", "recommended": true},
+			{"label": "the one who moves the goods", "implication": "the pressure is what has already been moved"},
+			{"label": "nobody yet — they are mid-argument with each other", "implication": "you walk in on something already going wrong"},
+		},
+	}, {
+		"done":     false,
+		"question": "What are you there to collect?",
+		"why":      "This is your errand, and it decides what a first move can even be.",
+		"options": []map[string]any{
+			{"label": "money owed", "implication": "the ledger is the thing that matters", "recommended": true},
+			{"label": "something that was taken", "implication": "an object in the room is the thing that matters"},
+			{"label": "an answer nobody wants to give", "implication": "what matters is who talks first"},
+		},
+	}}
+	out, err := json.Marshal(questions[asked])
+	if err != nil {
+		return "", fmt.Errorf("%s: marshal question: %w", f.name, err)
+	}
+	return string(out), nil
+}

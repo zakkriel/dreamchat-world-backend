@@ -155,6 +155,18 @@ save "transcript_J_empty" "SELECT fn_transcript('$WORLD','$JONAS')"
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^TestGenWorldPayloads$' -count=1 -v . )
 
+# --- world creation (PRD: prd_world_creation.md) — four schemas, two kinds of contract.
+# world_genesis/1 and world_interview/1 are SEAT leashes captured byte-identically from what the driver
+# returned (filename-keyed, like world_actor_1.json). world_genesis_frame/1 and world_interview_turn/1 are
+# API contracts captured by driving the REAL handlers through httptest, so what CI validates is what a
+# browser receives — SSE framing and field-omission included. Unlike TestGenWorldPayloads this one CANNOT
+# clean up after itself: canon tables carry forbid_delete triggers, so the world it builds stays in the
+# throwaway CI database.
+( cd "$(dirname "$0")/../core/api" && \
+  GENESIS_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^TestGenSeatContractPayloads$|^TestGenGenesisAPIPayloads$' -count=1 -v . )
+
 # manifest: the viewers we generated for, so the validator can ENFORCE viewer coverage
 # (both Player and Jonas must appear) rather than trust the generator.
 printf '{"viewers":["%s","%s"]}\n' "$PLAYER" "$JONAS" > "$OUT/_manifest.json"

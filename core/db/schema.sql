@@ -3956,6 +3956,8 @@ CREATE TABLE public.world (
     tagline text,
     template_key text,
     archived_at timestamp with time zone,
+    brief text,
+    CONSTRAINT world_brief_check CHECK (((brief IS NULL) OR (length(btrim(brief)) > 0))),
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
     CONSTRAINT world_tagline_check CHECK (((tagline IS NULL) OR (length(btrim(tagline)) > 0))),
     CONSTRAINT world_theme_check CHECK ((((theme ->> 'schema_version'::text) = 'world_theme/1'::text) AND ((theme ->> 'accent'::text) ~ '^#[0-9a-fA-F]{6}$'::text) AND (length(COALESCE((theme ->> 'mood'::text), ''::text)) > 0) AND (length(COALESCE((theme ->> 'ornament'::text), ''::text)) > 0)))
@@ -3974,6 +3976,13 @@ COMMENT ON COLUMN public.world.template_key IS 'Template lineage key so worlds c
 --
 
 COMMENT ON COLUMN public.world.archived_at IS 'Superseded marker so retired worlds leave canon intact but drop out of active directory listings (append-only, ADR-001/006).';
+
+
+--
+-- Name: COLUMN world.brief; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.world.brief IS 'The prose a user typed to author this world. Operational provenance, never rendered: no projection selects it. NULL for hand-authored worlds.';
 
 
 --
@@ -4764,4 +4773,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260813142100'),
     ('20260813160000'),
     ('20260814140000'),
-    ('20260814170000');
+    ('20260814170000'),
+    ('20260815150000');
