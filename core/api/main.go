@@ -88,6 +88,20 @@ func main() {
 	}
 	defer pool.Close()
 
+	// The database must carry every migration this binary was built against, or the service refuses
+	// to serve (schemaversion.go). Nothing in the deploy path applies migrations, so without this a
+	// schema change ships as code and waits silently for the first request that touches it.
+	applied, err := appliedMigrations(context.Background(), pool)
+	if err != nil {
+		log.Fatalf("schema check: %v", err)
+	}
+	if missing, extra := diffMigrations(applied); len(missing) > 0 {
+		log.Fatalf("%v", schemaDriftError(missing))
+	} else if len(extra) > 0 {
+		log.Printf("schema: database is AHEAD of this binary by %d migration(s): %s (rollback?)",
+			len(extra), strings.Join(extra, ", "))
+	}
+
 	debug := os.Getenv("DREAMCHAT_MODE") == "debug"
 
 	// Raindrop/Workshop observability (raindrop.go): keyless no-op unless a local Workshop daemon or

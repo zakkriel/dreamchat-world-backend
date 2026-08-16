@@ -1,4 +1,4 @@
-.PHONY: doctor db-up db-down migrate seed test replay reset schema-check pgtap schema-contract
+.PHONY: doctor db-up db-down migrate migrations-manifest seed test replay reset schema-check pgtap schema-contract
 
 doctor:          ## verify the sanctioned Docker runtime is available
 	@command -v docker >/dev/null 2>&1 || { \
@@ -19,8 +19,12 @@ db-down:
 pgtap:           ## install pgTAP extension into the db
 	docker compose exec -T db psql -U postgres -d dreamchat -c 'CREATE EXTENSION IF NOT EXISTS pgtap;'
 
-migrate:         ## apply dbmate migrations + dump schema.sql
+migrate:         ## apply dbmate migrations + dump schema.sql + regenerate the embedded manifest
 	docker compose run --rm dbmate up
+	$(MAKE) migrations-manifest
+
+migrations-manifest: ## regenerate the migration list the API binary embeds (schemaversion.go)
+	@ls core/db/migrations/*.sql | sed 's|.*/||; s|_.*||' | sort > core/api/migrations.txt
 
 seed:            ## load the deterministic Mara seed, then the Drowned Lantern scene
 	docker compose exec -T db psql -U postgres -d dreamchat -v ON_ERROR_STOP=1 -f /work/seeds/seed_mara_0A.sql
@@ -42,8 +46,8 @@ fingerprint:     ## dump domain-only projection state (volatile updated_at exclu
 
 reset: db-down db-up migrate seed ## clean DB from scratch (determinism check helper)
 
-schema-check: db-down db-up migrate ## fail if dbmate schema.sql has uncommitted drift (always against a clean migrated DB)
-	git diff --exit-code core/db/schema.sql
+schema-check: db-down db-up migrate ## fail if dbmate schema.sql or the embedded migration manifest has uncommitted drift (always against a clean migrated DB)
+	git diff --exit-code core/db/schema.sql core/api/migrations.txt
 
 schema-contract: ## SPEC-011: validate REAL payloads vs published schemas (two-sided) + teeth (needs a seeded db; run `make reset` first)
 	./ci/gen_payloads.sh ci/.payloads
