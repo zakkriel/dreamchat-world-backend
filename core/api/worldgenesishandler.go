@@ -63,10 +63,13 @@ type worldGenesisHandler struct {
 	pool   *pgxpool.Pool
 	dbg    bool
 	bridge *Bridge
+	// images commissions the new world's art once it exists. Nil is an ordinary state — the world
+	// is built and playable either way; it simply has no pictures yet.
+	images *imageClient
 }
 
-func NewWorldGenesisHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge) http.Handler {
-	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge}
+func NewWorldGenesisHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClient) http.Handler {
+	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge, images: images}
 }
 
 func (h *worldGenesisHandler) Match(r *http.Request) bool {
@@ -227,6 +230,16 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		"tagline":      strings.TrimSpace(doc.World.Tagline),
 		"playable":     true,
 	})
+
+	// The world is committed and the user has been told it is ready; its pictures are commissioned
+	// after that line, not before it. A dozen images is several minutes of another service, and
+	// nothing in the world is waiting on them: `image` is null until it is not, and swaps in on a
+	// later read (image_ref/1, D-8). Making the user watch a spinner for art they have not asked to
+	// see yet — or worse, losing an authored world because an image provider was down — is the
+	// trade this ordering refuses.
+	//
+	// It is detached from this request deliberately: the stream ends here, and the sweep outlives it.
+	commissionArtInBackground(h.pool, h.images, newID)
 }
 
 // fail ends the stream honestly. A refusal carries the seat's own stated reason, because the user asked for

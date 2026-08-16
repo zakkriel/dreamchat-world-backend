@@ -513,7 +513,7 @@ func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind st
 func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, worldID string, limit int) (portraitsResult, error) {
 	out := portraitsResult{SchemaVersion: "image_scenes/1"}
 
-	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, []string{"world", "location"}, limit)
+	reclaimed, err := reapRetiredAssets(ctx, pool, client, worldID, []string{"world", "location", "artifact"}, limit)
 	if err != nil {
 		return out, err
 	}
@@ -542,6 +542,19 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id
 		 WHERE er.world_id = $1 AND er.entity_kind = 'location'
 		   AND coalesce(btrim(l.attrs->>'description'), '') <> ''
+		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+		UNION ALL
+		-- Objects read their prose from attrs->>'descriptor', which is where an artifact keeps what
+		-- a stranger sees; artifacts have no 'description'. The non-empty test is also what keeps
+		-- PORTALS out: a doorway is registered as an artifact but carries no artifact_state row, so
+		-- it has no descriptor and is not a thing to draw a picture of.
+		SELECT 'artifact', er.entity_id::text, a.attrs->>'descriptor'
+		  FROM entity_registry er
+		  JOIN artifact_state a ON a.world_id = er.world_id AND a.entity_id = er.entity_id
+		  LEFT JOIN image_slot s
+		    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id
+		 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
+		   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
 		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 		 ORDER BY 1 DESC, 2
 		 LIMIT $2`, worldID, limit)
