@@ -16,26 +16,31 @@ import (
 // v1 id was never an option — the version moving IS the notification.
 const beatFrameSchemaVersion = "beat_frame/4"
 
-// frameWriter emits one SSE `data:` line per beat_frame/4 frame and flushes IMMEDIATELY after each —
-// the whole reason POST /worlds/{w}/beats exists as a stream rather than a buffered response (design
-// §4.8, plan rung3 Task 3): a client watching with `curl -N` sees each frame the instant the handler
-// accepted it, never all of them arriving together the moment ServeHTTP returns. Skipping the flush
-// would make the stream a lie told in a nicer shape (plan Task 3).
+// frameWriter emits one SSE `data:` line per frame and flushes IMMEDIATELY after each — the whole reason
+// POST /worlds/{w}/beats exists as a stream rather than a buffered response (design §4.8, plan rung3
+// Task 3): a client watching with `curl -N` sees each frame the instant the handler accepted it, never
+// all of them arriving together the moment ServeHTTP returns. Skipping the flush would make the stream a
+// lie told in a nicer shape (plan Task 3).
+//
+// The schema version is per-writer rather than a constant because there are now two streams: the beat
+// loop (beat_frame/4) and world creation (world_genesis_frame/1). Both are long authored acts with
+// intermediate results, which is what this transport is for; neither may stamp the other's contract.
 type frameWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
+	version string
 }
 
-// newFrameWriter wraps w for SSE framing. It fails (ok=false) only when w does not implement
-// http.Flusher — every real net/http ResponseWriter and httptest.ResponseRecorder do; the check
-// exists so a misconfigured wrapper fails loudly with a normal HTTP error instead of silently
-// buffering every frame until the handler returns.
-func newFrameWriter(w http.ResponseWriter) (*frameWriter, bool) {
+// newFrameWriter wraps w for SSE framing, stamping every frame with schemaVersion. It fails (ok=false)
+// only when w does not implement http.Flusher — every real net/http ResponseWriter and
+// httptest.ResponseRecorder do; the check exists so a misconfigured wrapper fails loudly with a normal
+// HTTP error instead of silently buffering every frame until the handler returns.
+func newFrameWriter(w http.ResponseWriter, schemaVersion string) (*frameWriter, bool) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return nil, false
 	}
-	return &frameWriter{w: w, flusher: flusher}, true
+	return &frameWriter{w: w, flusher: flusher, version: schemaVersion}, true
 }
 
 // emit marshals payload, merges its fields into the frame envelope
@@ -55,7 +60,7 @@ func (fw *frameWriter) emit(kind string, payload any) error {
 	if err := json.Unmarshal(raw, &fields); err != nil {
 		return fmt.Errorf("beat frame %s: payload must marshal to a JSON object: %w", kind, err)
 	}
-	fields["schema_version"], _ = json.Marshal(beatFrameSchemaVersion)
+	fields["schema_version"], _ = json.Marshal(fw.version)
 	fields["kind"], _ = json.Marshal(kind)
 	out, err := json.Marshal(fields)
 	if err != nil {

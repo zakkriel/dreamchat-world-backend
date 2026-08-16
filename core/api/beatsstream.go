@@ -336,7 +336,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	frames, ok := newFrameWriter(w)
+	frames, ok := newFrameWriter(w, beatFrameSchemaVersion)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return

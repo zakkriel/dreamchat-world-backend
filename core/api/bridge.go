@@ -113,6 +113,16 @@ var (
 	// the schema leash is what keeps geometry (a coordinate, a radius, any number) out of the model's
 	// hands; the engine alone draws the footprint (fn_extent_class_metres + fn_area_around).
 	SeatPlaceAuthor = Seat{Name: "place_author", Requires: []Capability{CapStructuredOutput}}
+	// world_genesis: authors ONE WHOLE WORLD's fiction from a user's brief — cast, places, ways,
+	// objects, the history behind them and who came away knowing it (PRD: World Creation). REQUIRES
+	// structured output for the same reason place_author does, one scale up: world_genesis/1 has no
+	// numeric field anywhere, so the seat cannot emit an id, a coordinate, a tick or a count even if it
+	// tries. The engine mints identity, draws footprints, assigns the tick ladder and decides
+	// acceptance — a generated world reaches canon through the same gate a hand-authored one does.
+	SeatWorldGenesis = Seat{Name: "world_genesis", Requires: []Capability{CapStructuredOutput}}
+	// world_interview: authors the NEXT question to ask about a brief, with its options — the Custom
+	// Creation lane. REQUIRES structured output: the surface renders exactly the options it is given.
+	SeatWorldInterview = Seat{Name: "world_interview", Requires: []Capability{CapStructuredOutput}}
 )
 
 // BindSeat validates the driver's REPORTED capabilities satisfy the seat floor; fail CLOSED.
@@ -296,6 +306,15 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return NewFakeWorldActorDriver(), nil
 	case "fake-place-author":
 		return NewFakePlaceAuthorDriver(), nil
+	// The two world-creation seats, same reasoning one more time: world_genesis authors a whole world
+	// document and world_interview authors a question with options, so neither shape is anything the
+	// generic structured fake can stand in for. Wired here, not only reachable from tests, because the
+	// journey has to be drivable by hand against DREAMCHAT_BRIDGE=fake — that is how the last two seats'
+	// missing factory cases were found.
+	case "fake-world-genesis":
+		return NewFakeWorldGenesisDriver(), nil
+	case "fake-world-interview":
+		return NewFakeWorldInterviewDriver(), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", dc.Provider)
 	}

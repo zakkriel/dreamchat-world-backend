@@ -62,6 +62,10 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
 		NewWorldsHandler(pool, debug).(matcher),
+		// World creation (PRD: prd_world_creation.md). POST /worlds/interview asks the next question about
+		// a brief; POST /worlds/genesis authors a whole world and streams what lands. Neither sits under
+		// /worlds/{id} because there is no id yet — that is the point of them.
+		NewWorldGenesisHandler(pool, debug, bridge).(matcher),
 		// POST /worlds/{w}/refresh mints a successor world and archives the source. The old world is
 		// superseded, never reset in place: canon stays append-only, old ids stay citable, and refresh
 		// cannot silently erase history someone already referenced.
@@ -101,7 +105,8 @@ func main() {
 		log.Fatalf("seat config: %v", err)
 	}
 	bridge, err := NewBridge(seatCfg, DefaultDriverFactory,
-		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor)
+		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor,
+		SeatWorldGenesis, SeatWorldInterview)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -168,6 +173,8 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
 			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
 			"place_author":       {Provider: "fake-place-author", Model: "dev"},
+			"world_genesis":      {Provider: "fake-world-genesis", Model: "dev"},
+			"world_interview":    {Provider: "fake-world-interview", Model: "dev"},
 		}, nil
 	}
 	return seatConfigFromEnv(lookup)

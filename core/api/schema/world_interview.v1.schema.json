@@ -1,0 +1,61 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_interview/1",
+  "title": "world_interview/1 — the NEXT question worth asking about a brief, or nothing. One question at a time, because the answer to one changes what is worth asking next; asking several at once is bewildering. The seat must never ask what the brief already answers, and must never ask a question whose only purpose is to fill a slot a world 'usually' has (GA-2/GA-3): the questions come from THIS brief's gaps or they do not come at all. Options are concrete and drawn from the brief; exactly one may be marked recommended so the user can move without deliberating. Free text is always available on the surface and is never enumerated here.",
+  "type": "object",
+  "required": ["done"],
+  "additionalProperties": false,
+  "oneOf": [
+    {
+      "properties": { "done": { "const": true } },
+      "required": ["done"]
+    },
+    {
+      "properties": { "done": { "const": false } },
+      "required": ["done", "question", "options"]
+    }
+  ],
+  "properties": {
+    "done": {
+      "type": "boolean",
+      "description": "true when nothing is genuinely undetermined any more. Saying true early is correct and preferable to padding: an interview that asks a question it does not need has taught the user that their answers do not matter."
+    },
+    "question": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The question, in plain language and in the world's own terms. Never engine vocabulary, never a genre's vocabulary."
+    },
+    "why": {
+      "type": "string",
+      "minLength": 1,
+      "description": "One short line on what this changes about the world, so the user knows why they are being asked. Shown under the question."
+    },
+    "options": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 5,
+      "description": "Concrete answers drawn from this brief — never generic ('yes'/'no'/'other'). The surface always offers free text alongside these, so these do not need to be exhaustive; they need to be good.",
+      "items": {
+        "type": "object",
+        "required": ["label"],
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The answer as the user would say it."
+          },
+          "implication": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What choosing this would make true about the world."
+          },
+          "recommended": {
+            "type": "boolean",
+            "description": "Mark at most one. The default that fits the brief best — the way out for a user who does not want to decide."
+          }
+        }
+      }
+    }
+  }
+}

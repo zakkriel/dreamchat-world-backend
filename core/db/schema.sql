@@ -10,6 +10,20 @@ SET client_min_messages = warning;
 SET row_security = off;
 
 --
+-- Name: pgtap; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pgtap WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pgtap; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pgtap IS 'Unit testing for PostgreSQL';
+
+
+--
 -- Name: apply_attribute_writes(uuid, jsonb, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2489,8 +2503,15 @@ CREATE FUNCTION public.fn_names_in_text(p_world_id uuid, p_text text) RETURNS TA
   WHERE er.world_id = p_world_id
     AND er.canonical_name IS NOT NULL
     AND er.canonical_name <> ''
-    AND p_text ~* ('\m' || fn_regexp_quote(er.canonical_name) || '\M')
+    AND p_text ~ ('\m' || fn_regexp_quote(er.canonical_name) || '\M')
 $$;
+
+
+--
+-- Name: FUNCTION fn_names_in_text(p_world_id uuid, p_text text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_names_in_text(p_world_id uuid, p_text text) IS 'The canonical names a piece of text SPEAKS, word-bounded and case-SENSITIVE. Read only by the hearing-teaches path (generate_perceptions), which must not grant name-knowledge because a sentence contained a common noun spelled like a proper name (SPEC-033).';
 
 
 --
@@ -3282,33 +3303,32 @@ DECLARE
   lst  uuid;
   pid  uuid;
   -- said = the utterance as a holder PERCEIVES it: the referee's account plus the words themselves.
-  -- Without the words in the perception line the narrator has nothing verbatim to quote, so it invents
-  -- dialogue and the belt refuses it — which is exactly the deadlock that made kind:"speech"
-  -- unreachable. The words are canon (payload.spoken); this is how they reach the person who heard them.
   said text;
+  -- spoken = the words THEMSELVES, and the only thing that can teach a name. NULL when the event
+  -- carries no utterance (a nod, a shove, an ambient noise), and a NULL text teaches nothing because
+  -- fn_names_in_text's regex match over NULL yields no rows.
+  spoken text;
 BEGIN
   SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
   IF NOT FOUND THEN RETURN 0; END IF;
 
   IF ev.event_type IN ('private_disclosure', 'Communicated') THEN
+    spoken := NULLIF(TRIM(COALESCE(ev.payload->>'spoken','')),'');
     said := ev.summary;
-    IF NULLIF(TRIM(COALESCE(ev.payload->>'spoken','')),'') IS NOT NULL
+    IF spoken IS NOT NULL
        -- ...unless the account ALREADY is the words. The legacy `say` step commits with summary =
-       -- content, so appending would render 'I saw the note — "I saw the note"'. Nothing is gained by
-       -- quoting a line back to itself, and the duplication would reach the player's own transcript.
-       AND position(TRIM(ev.payload->>'spoken') IN ev.summary) = 0 THEN
-      -- Quoted so a reader — human or model — can see where the account ends and the words begin.
-      said := ev.summary || ' — "' || TRIM(ev.payload->>'spoken') || '"';
+       -- content, so appending would render 'I saw the note — "I saw the note"'.
+       AND position(spoken IN ev.summary) = 0 THEN
+      said := ev.summary || ' — "' || spoken || '"';
     END IF;
-    -- speaker → 'shared'; each listener → 'told' (B-7). Recipients = the addressed listeners
-    -- (thin slice; co-present overhearers defer with the broader vocabulary, §3).
+    -- speaker → 'shared'; each listener → 'told' (B-7).
     SELECT entity_id INTO spk FROM event_participant
       WHERE event_id = p_event_id AND role_qualifier = 'speaker' LIMIT 1;
     IF spk IS NOT NULL THEN
-      -- SPEC-033: a name in what was said is earned by whoever heard it said.
+      -- SPEC-033: a name in what was SAID OUT LOUD is earned by whoever heard it said.
       INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
       SELECT ev.world_id, spk, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, said) t
+        FROM fn_names_in_text(ev.world_id, spoken) t
        WHERE t.entity_id <> spk
       ON CONFLICT DO NOTHING;
 
@@ -3324,10 +3344,12 @@ BEGIN
     END IF;
     FOR lst IN SELECT entity_id FROM event_participant
                  WHERE event_id = p_event_id AND role_qualifier = 'listener' LOOP
-      -- SPEC-033, the reported case: Mara says "Jonas" where Kade can hear it, and Kade learns it.
+      -- SPEC-033, the reported case: Mara SAYS "Jonas" where Kade can hear it, and Kade learns it.
+      -- The case the founder caught: Mara nods at Jonas, the account says "Jonas", and Kade learns
+      -- nothing — because nobody said it.
       INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
       SELECT ev.world_id, lst, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, said) t
+        FROM fn_names_in_text(ev.world_id, spoken) t
        WHERE t.entity_id <> lst
       ON CONFLICT DO NOTHING;
 
@@ -3948,6 +3970,8 @@ CREATE TABLE public.world (
     tagline text,
     template_key text,
     archived_at timestamp with time zone,
+    brief text,
+    CONSTRAINT world_brief_check CHECK (((brief IS NULL) OR (length(btrim(brief)) > 0))),
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
     CONSTRAINT world_tagline_check CHECK (((tagline IS NULL) OR (length(btrim(tagline)) > 0))),
     CONSTRAINT world_theme_check CHECK ((((theme ->> 'schema_version'::text) = 'world_theme/1'::text) AND ((theme ->> 'accent'::text) ~ '^#[0-9a-fA-F]{6}$'::text) AND (length(COALESCE((theme ->> 'mood'::text), ''::text)) > 0) AND (length(COALESCE((theme ->> 'ornament'::text), ''::text)) > 0)))
@@ -3966,6 +3990,13 @@ COMMENT ON COLUMN public.world.template_key IS 'Template lineage key so worlds c
 --
 
 COMMENT ON COLUMN public.world.archived_at IS 'Superseded marker so retired worlds leave canon intact but drop out of active directory listings (append-only, ADR-001/006).';
+
+
+--
+-- Name: COLUMN world.brief; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.world.brief IS 'The prose a user typed to author this world. Operational provenance, never rendered: no projection selects it. NULL for hand-authored worlds.';
 
 
 --
@@ -4755,4 +4786,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260809090009'),
     ('20260813142100'),
     ('20260813160000'),
-    ('20260814140000');
+    ('20260814140000'),
+    ('20260814170000'),
+    ('20260815150000');

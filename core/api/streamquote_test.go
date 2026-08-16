@@ -34,7 +34,7 @@ func TestNarrateStream_SpeechFrameCarriesItsQuote(t *testing.T) {
 	go func() { close(sd.resume) }()
 
 	rec := httptest.NewRecorder()
-	frames, ok := newFrameWriter(rec)
+	frames, ok := newFrameWriter(rec, beatFrameSchemaVersion)
 	if !ok {
 		t.Fatal("recorder is not a flusher")
 	}
