@@ -182,6 +182,13 @@ func (h *imageHandler) trigger(w http.ResponseWriter, r *http.Request, route *re
 // is one number serving both limits rather than two guesses.
 const imageBatchLimit = 5
 
+func portraitAppearance(descriptor, name string) string {
+	if descriptor != "" {
+		return descriptor
+	}
+	return name
+}
+
 // fillPortraits requests a portrait for up to `limit` actors in this world that do not have one and
 // do not already have a job in flight, then waits for each to settle.
 //
@@ -250,16 +257,45 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		// — literally "what a stranger sees" — so the portrait is conditioned on what the world
 		// already says the thing looks like, rather than on traits invented at the boundary. An actor
 		// with no descriptor falls back to its name, which is thin but true; nothing is fabricated.
-		appearance := t.descriptor
-		if appearance == "" {
-			appearance = t.name
-		}
+		appearance := portraitAppearance(t.descriptor, t.name)
 		identityID, err := client.upsertIdentity(ctx, "character", t.id, worldID, t.name, styleID,
 			map[string]string{"appearance": appearance})
 		if err != nil {
 			out.Failed++
 			recordSlotError(ctx, pool, worldID, t.id, err.Error())
 			continue
+		}
+
+		identity, err := client.getIdentity(ctx, t.id)
+		if err != nil {
+			out.Failed++
+			recordSlotError(ctx, pool, worldID, t.id, err.Error())
+			continue
+		}
+		if len(identity.AnchorAssetIDs) == 0 {
+			bootstrapIssuedAt := time.Now().UTC()
+			bootstrapKey := "portrait-anchor-" + worldID + "-" + t.id + "-" + bootstrapIssuedAt.Format("20060102T150405Z")
+			bootstrapEnv := newGovEnvelope(bootstrapIssuedAt, "character_portrait")
+
+			bootstrapJobID, _, err := client.bootstrapAnchor(ctx, t.id, worldID, styleID, appearance, bootstrapKey, bootstrapEnv)
+			if err != nil {
+				out.Failed++
+				recordSlotError(ctx, pool, worldID, t.id, err.Error())
+				continue
+			}
+			if bootstrapJobID != "" {
+				bootstrapJob, err := client.awaitJob(ctx, bootstrapJobID, defaultPollBackoff())
+				if err != nil {
+					out.Failed++
+					recordSlotError(ctx, pool, worldID, t.id, err.Error())
+					continue
+				}
+				if bootstrapJob.Status != "completed" || len(bootstrapJob.FinalAssetIDs) == 0 {
+					out.Failed++
+					recordSlotError(ctx, pool, worldID, t.id, bootstrapJob.ErrorCode+": "+bootstrapJob.ErrorMessage)
+					continue
+				}
+			}
 		}
 
 		// The envelope is pinned HERE, once, and stored with the key. Their idempotency key hashes the
