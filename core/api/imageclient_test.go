@@ -157,6 +157,15 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 		}
 
 		if r.Method == http.MethodGet {
+			// The real platform keys an identity on (tenant, world, owner_type, owner) and answers
+			// 400 invalid_request without world_id. The fake enforces it for one reason: it did not,
+			// and a getIdentity that omitted the parameter passed every test here while failing
+			// every portrait in production with "world_id query parameter is required" recorded as
+			// the slot's error. A stand-in laxer than the service it stands in for proves nothing.
+			if r.URL.Query().Get("world_id") == "" {
+				writeErr(w, 400, "invalid_request", "world_id query parameter is required")
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
 				"id":               "vi_c40c1fc21b057d27",
 				"anchor_asset_ids": anchors,

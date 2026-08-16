@@ -266,7 +266,7 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 			continue
 		}
 
-		identity, err := client.getIdentity(ctx, t.id)
+		identity, err := client.getIdentity(ctx, t.id, worldID)
 		if err != nil {
 			out.Failed++
 			recordSlotError(ctx, pool, worldID, t.id, err.Error())
