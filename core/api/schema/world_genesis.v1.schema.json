@@ -257,7 +257,11 @@
                   "minLength": 1,
                   "description": "What they believe, in their own terms — not a summary of the event, but what they took from it."
                 },
-                "epistemic_type": { "$ref": "#/definitions/epistemic_type" }
+                "epistemic_type": {
+                  "type": "string",
+                  "enum": ["direct", "told", "overheard", "public", "rumor", "inference"],
+                  "description": "How this holder came to know, from the canonical enum (01_epistemic_type_canonical_enum.md). 'direct' means they were there. The play-time transitions (shared/mistaken/confirmed/disputed) are not authorable at genesis: nothing has been contested yet. Written out here rather than $ref'd on purpose: ci/schema_contract.py's DDL-nullability check reads `type` off the property itself, and perception_record.epistemic_type is NOT NULL, so a reference hides the very thing it has to see."
+                }
               }
             }
           }
@@ -318,11 +322,6 @@
       "type": "string",
       "enum": ["faint", "moderate", "strong", "defining"],
       "description": "A qualitative magnitude. The engine maps it to the number the schema forbids the seat from emitting."
-    },
-    "epistemic_type": {
-      "type": "string",
-      "enum": ["direct", "told", "overheard", "public", "rumor", "inference"],
-      "description": "How this holder came to know, from the canonical enum (01_epistemic_type_canonical_enum.md). 'direct' means they were there. The play-time transitions (shared/mistaken/confirmed/disputed) are not authorable at genesis: nothing has been contested yet."
     }
   }
 }
