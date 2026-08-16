@@ -545,9 +545,12 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 		UNION ALL
 		-- Objects read their prose from attrs->>'descriptor', which is where an artifact keeps what
-		-- a stranger sees; artifacts have no 'description'. The non-empty test is also what keeps
-		-- PORTALS out: a doorway is registered as an artifact but carries no artifact_state row, so
-		-- it has no descriptor and is not a thing to draw a picture of.
+		-- a stranger sees; artifacts have no 'description'.
+		--
+		-- The connects key is what keeps PORTALS out. A doorway is registered as an artifact and DOES carry
+		-- a descriptor ("A heavy sliding door between Carriage Four and the Conductor's Cabin"), so
+		-- the descriptor test alone let three of them through and billed for pictures of doors. What
+		-- separates them is structural rather than textual: a portal names the two places it joins.
 		SELECT 'artifact', er.entity_id::text, a.attrs->>'descriptor'
 		  FROM entity_registry er
 		  JOIN artifact_state a ON a.world_id = er.world_id AND a.entity_id = er.entity_id
@@ -555,6 +558,7 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id
 		 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
 		   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
+		   AND NOT (a.attrs ? 'connects')
 		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 		 ORDER BY 1 DESC, 2
 		 LIMIT $2`, worldID, limit)

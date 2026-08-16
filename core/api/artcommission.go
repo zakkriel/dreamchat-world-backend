@@ -79,6 +79,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id
 			 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
 			   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
+			   AND NOT (a.attrs ? 'connects')
 			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 			UNION ALL
 			SELECT er.entity_id
