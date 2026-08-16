@@ -71,15 +71,19 @@ func TestPendingArtCount_SeesEveryKindThatCanBeDrawn(t *testing.T) {
 	}
 }
 
-// A doorway is registered as an artifact but carries no artifact_state row, so it has no descriptor
-// and is not a thing to draw. Without this the reconciler would spend real money on every exit.
-func TestPendingArtCount_IgnoresAPortalWithNothingToDraw(t *testing.T) {
+// A doorway is registered as an artifact and DOES carry a descriptor, so the descriptor test alone
+// is not enough — it let three doors through in the first world to use this path and billed for
+// pictures of them. What separates a portal from an object is structural: it names the two places it
+// joins. Both shapes are asserted here, because only one of them was caught by reading the data.
+func TestPendingArtCount_IgnoresAPortal(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 
 	worldID := "a17c0000-0000-0000-0000-000000000002"
 	portalID := "a17c0000-0000-0000-0000-000000000201"
+	const placeA = "a17c0000-0000-0000-0000-0000000002a1"
+	const placeB = "a17c0000-0000-0000-0000-0000000002a2"
 
 	clear := func() {
 		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
@@ -96,13 +100,24 @@ func TestPendingArtCount_IgnoresAPortalWithNothingToDraw(t *testing.T) {
 		worldID); err != nil {
 		t.Fatalf("seed world: %v", err)
 	}
+	describedPortal := "a17c0000-0000-0000-0000-000000000202"
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
-		VALUES ($1,$2,'artifact','a heavy door at the bottom of the stairwell')`, portalID, worldID); err != nil {
-		t.Fatalf("seed portal: %v", err)
+		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+		  ($1,$3,'artifact','a heavy door at the bottom of the stairwell'),
+		  ($2,$3,'artifact','a sliding door between the carriage and the cabin')`,
+		portalID, describedPortal, worldID); err != nil {
+		t.Fatalf("seed portals: %v", err)
+	}
+	// The shape that actually shipped: a portal WITH a descriptor, told apart by `connects`.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO artifact_state (entity_id, world_id, attrs)
+		VALUES ($1,$2,'{"descriptor":"a sliding door between the carriage and the cabin","connects":["`+placeA+`","`+placeB+`"]}'::jsonb)`,
+		describedPortal, worldID); err != nil {
+		t.Fatalf("seed described portal: %v", err)
 	}
 
-	// No tagline, so no cover; a portal with no artifact_state, so nothing to draw.
+	// No tagline, so no cover. One portal has no state row; the other has a descriptor and would be
+	// drawn on the descriptor test alone. Neither is a picture.
 	if n := count(t, ctx, pool, worldID); n != 0 {
 		t.Fatalf("a portal is not a picture, want 0 unillustrated owners, got %d", n)
 	}
