@@ -27,10 +27,13 @@ import (
 type fakePlatform struct {
 	mu sync.Mutex
 
-	styles     []styleProfile
-	bodyForKey map[string]string // Idempotency-Key → the exact body first seen under it
-	jobStatus  []string          // consumed one per GET /v1/jobs/{id}
-	statusIdx  int
+	styles []styleProfile
+	// stylesListStatus, when non-zero, refuses GET /v1/styles with that status — the shape the live
+	// platform had for weeks while the token was missing styles:read.
+	stylesListStatus int
+	bodyForKey       map[string]string // Idempotency-Key → the exact body first seen under it
+	jobStatus        []string          // consumed one per GET /v1/jobs/{id}
+	statusIdx        int
 
 	seenIdempotencyKey string
 	generationCalls    int
@@ -83,6 +86,10 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 			return
 		}
 		if r.Method == http.MethodGet {
+			if f.stylesListStatus != 0 {
+				writeErr(w, f.stylesListStatus, "forbidden", "token missing required scope")
+				return
+			}
 			_ = json.NewEncoder(w).Encode(map[string]any{"styles": f.styles})
 			return
 		}
@@ -544,5 +551,28 @@ func TestNewImageClientFromEnv_AbsentConfigYieldsNoClient(t *testing.T) {
 	t.Setenv(imageTokenEnv, "dci_dev_x_y")
 	if c := newImageClientFromEnv(); c == nil {
 		t.Fatal("a fully configured client was not built")
+	}
+}
+
+// A refused style list must not read as "this style does not exist yet".
+//
+// It did. ensureStyle swallowed the list error, so a token missing styles:read meant every call
+// 403'd and then created another profile — twenty-five identical "dreamchat-default" rows in
+// production. The clutter was the harmless part: the artifact reuse key folds style_profile_id, so a
+// fresh id per call meant the cache could never hit and every regeneration was billed in full.
+func TestEnsureStyle_ARefusedListIsAnErrorNotAnEmptyList(t *testing.T) {
+	f := newFakePlatform()
+	f.stylesListStatus = 403
+	c := testImageClient(t, f)
+
+	if _, err := c.ensureStyle(context.Background(), "dreamchat-default"); err == nil {
+		t.Fatal("a 403 on the style list must fail, not fall through to creating another profile")
+	}
+
+	f.mu.Lock()
+	created := len(f.styles)
+	f.mu.Unlock()
+	if created != 0 {
+		t.Fatalf("nothing may be created when the list could not be read, got %d style(s)", created)
 	}
 }
