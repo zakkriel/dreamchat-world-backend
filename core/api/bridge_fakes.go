@@ -69,6 +69,82 @@ func (f *fakeTextDriver) Generate(_ context.Context, req GenRequest) (string, er
 	return out, nil
 }
 
+// narratePresentIDRe extracts the ids the PRESENT roster carries. narrateSceneBody renders each
+// entry as "Label [id]" (narrateprompt.go), and that roster IS the ghost-speaker whitelist the belt
+// checks against (presentIDs, from narrateRoster) — so reading ids back out of the prompt gives this
+// fake the exact set it is allowed to attribute to, rather than a guess derived from Candidates that
+// would have to re-implement the viewer-drop and location-skip rules to stay belt-safe.
+var narratePresentIDRe = regexp.MustCompile(`\[([0-9a-fA-F-]{36})\]`)
+
+// fakeNarrateDriver — the DEV stand-in for the NARRATE seat, i.e. the one DREAMCHAT_BRIDGE=fake
+// binds when a human is driving the server by hand or a frontend is integrating against it.
+//
+// Why it exists. DREAMCHAT_BRIDGE=fake pointed narrate at fake-text, which reports NO capabilities
+// and errors on any schema — so every hand-driven beat failed both structured attempts and landed on
+// the PLAIN PROSE FALLBACK (beatsstream.go). That fallback builds its single segment directly, so
+// DecodeAndValidateNarration, the ghost-speaker belt, the verbatim belt and per-speaker attribution
+// never ran locally at all: the dev server's narration was fakeTextDriver concatenating perception
+// lines, and the frontend never received an attributed message to render. This is the same class of
+// defect the resolve/cognition/world_actor/place_author fakes above were wired to fix — a seat whose
+// dev stand-in is not shaped like the seat's own output — and narrate was the last one left.
+//
+// It reports CapStructuredOutput because it genuinely answers the narration/2 schema, and it stays
+// belt-safe BY CONSTRUCTION rather than by luck:
+//   - the narrator segment carries speaker_id null and no quote (the only always-legal shape);
+//   - the attributed segment is kind=action, so the verbatim belt (speech only) cannot bite, and its
+//     speaker is read from the PRESENT roster, so the ghost-speaker belt cannot bite either;
+//   - neither segment invents a NAME (the wall) or repeats the player's own words (PlayerVoice).
+//
+// A nil Schema still returns prose: the plain fallback is a real path this driver may be asked to
+// serve, and answering it keeps the fake honest about the seat's whole contract.
+type fakeNarrateDriver struct{ name string }
+
+func NewFakeNarrateDriver(name string) Driver { return &fakeNarrateDriver{name: name} }
+
+func (f *fakeNarrateDriver) Name() string { return f.name }
+func (f *fakeNarrateDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+
+func (f *fakeNarrateDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		// The plain fallback asked for prose. Same shape fakeTextDriver returns, so a beat that
+		// reaches the fallback through this seat still reads like the scene.
+		out := "Scene:"
+		for _, l := range req.Payload.Lines {
+			out += " " + l
+		}
+		return out, nil
+	}
+
+	// The narrator segment: the perception lines the viewer actually holds, which is the informative
+	// half of a dev beat. Perception content is rendered PER HOLDER upstream (fn_visible_perceptions),
+	// so a clean world hands this nothing the wall would reject.
+	prose := "Scene:"
+	for _, l := range req.Payload.Lines {
+		prose += " " + l
+	}
+	segs := []NarrationSegment{{SpeakerID: nil, Kind: "narration", Text: prose}}
+
+	// One attributed segment when somebody is in the room, so the dev server exercises the attributed
+	// path (speaker label, per-speaker message) instead of only narrator prose. Deliberately NAMELESS
+	// and independent of the player's words — the two things the remaining belts check on an action.
+	if m := narratePresentIDRe.FindStringSubmatch(req.Prompt); len(m) > 1 {
+		id := m[1]
+		segs = append(segs, NarrationSegment{
+			SpeakerID: &id,
+			Kind:      "action",
+			Text:      "shifts their weight and watches you, saying nothing.",
+		})
+	}
+
+	out, err := json.Marshal(segs)
+	if err != nil {
+		return "", fmt.Errorf("%s: marshalling narration/2: %w", f.name, err)
+	}
+	return string(out), nil
+}
+
 // fakeResolveDriver: returns a ruling/2 for CI.
 // Extracts UUID from prompt via regex; echoes it as actor_id + target_id in the AttributeChanged
 // event. The JSON includes both v2 fields (actor_id, truth, appearance) AND superset fields

@@ -470,7 +470,17 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var segments []NarrationSegment
 	var lastErr error
 	streamed := false
-	if sd, ok := nd.(StreamingDriver); ok {
+	// Both narration attempts below are STRUCTURED (they carry narrationV2SchemaJSON), and a schema is
+	// exactly what a driver reporting no CapStructuredOutput cannot answer — it fails on the request,
+	// before generating anything. Asking anyway spent two round trips per beat to collect the same
+	// refusal twice and then took the plain fallback regardless: free against a fake, two billed calls
+	// against a real text-only model, and the pathology the per-beat cost warning below tells the
+	// founder to check the "narrate repair loop" for. The seat floor stays deliberately open
+	// (SeatNarrate.Requires is nil — narrate is cheap and high-volume, so a free-text model is a
+	// legitimate binding, and bridge_test.go pins that); this asks the driver what it can do instead,
+	// the same question the streaming branch already asks one line down.
+	structured := nd.Capabilities().Has(CapStructuredOutput)
+	if sd, ok := nd.(StreamingDriver); ok && structured {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
 		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON)}
 		segs, err := narrateStream(ctx, sd, req, belts, labelFor, frames)
@@ -491,25 +501,35 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if !streamed {
-		for attempt := range 2 {
-			prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
-			if attempt > 0 && lastErr != nil {
-				prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
+		if structured {
+			for attempt := range 2 {
+				prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
+				if attempt > 0 && lastErr != nil {
+					prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
+				}
+				raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON), Repair: attempt > 0})
+				if genErr != nil {
+					log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
+					lastErr = genErr
+					continue
+				}
+				segs, decErr := DecodeAndValidateNarration(raw, belts)
+				if decErr != nil {
+					log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
+					lastErr = decErr
+					continue
+				}
+				segments = segs
+				break
 			}
-			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON), Repair: attempt > 0})
-			if genErr != nil {
-				log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
-				lastErr = genErr
-				continue
-			}
-			segs, decErr := DecodeAndValidateNarration(raw, belts)
-			if decErr != nil {
-				log.Printf("beats stream: narrate segment decode/validate failed (attempt %d/2): %v", attempt+1, decErr)
-				lastErr = decErr
-				continue
-			}
-			segments = segs
-			break
+		} else {
+			// Straight to prose: this seat's model reports it cannot answer a schema, so there is no
+			// structured attempt to make. The player gets the same narration the fallback always gave;
+			// what is gone is the pair of refusals that used to precede it. Said once per beat because
+			// a narrate seat silently running unbelted (the plain path validates nothing) is worth
+			// seeing in the log rather than inferring from a spend report.
+			log.Printf("beats stream: narrate seat %q reports no %s — using the plain prose path directly "+
+				"(no segment belts run on it)", nd.Name(), CapStructuredOutput)
 		}
 		if segments == nil {
 			raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: buildNarratePlainPrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)})

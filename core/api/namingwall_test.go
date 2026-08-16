@@ -99,6 +99,12 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 
 	// Mara says it where Kade can hear. Committed through the engine's own writer, not by inserting
 	// name_knowledge directly — the point of the test is that the FAN-OUT teaches.
+	//
+	// `summary` is the referee's ACCOUNT and `payload.spoken` is what was actually SAID — the split
+	// apply_event/apply_ruled_event have written for every Communicated event since migration
+	// 20260809090009. The name has to be in the WORDS: an account that merely mentions someone
+	// canonically teaches nothing (naming reach §3), which is what
+	// TestNamingWall_AnAccountThatNamesHimTeachesNobody pins directly below.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -107,9 +113,10 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 
 	var eventID string
 	if err := tx.QueryRow(ctx,
-		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin)
-		 VALUES ($1, 'Communicated', 'Mara tells the stranger the man at the bar is called Jonas.',
-		         920, 0, 'accepted', 'freeform')
+		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
+		 VALUES ($1, 'Communicated', 'Mara tells the stranger who the man at the bar is.',
+		         920, 0, 'accepted', 'freeform',
+		         jsonb_build_object('spoken', 'the man at the bar is called Jonas'))
 		 RETURNING event_id::text`, dlWorldID).Scan(&eventID); err != nil {
 		t.Fatalf("insert utterance: %v", err)
 	}
@@ -140,5 +147,86 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 	}
 	if err := rows.Err(); err != nil {
 		t.Fatalf("rows: %v", err)
+	}
+}
+
+// THE FOUNDER'S BREACH (live play, 2026-08-14). A speaker label read "Jonas" to a player who had
+// never been told the name, and no line of dialogue in the transcript ever said it.
+//
+// The leak was in the fan-out, not the belt. generate_perceptions taught from the referee's ACCOUNT
+// of an utterance rather than from the utterance, and an account names its participants canonically
+// because canon is where canonical names live. So a Communicated event whose account happened to
+// mention someone taught every listener that person's name — for a nod, a shove, anything at all.
+// Two real rows from the seeded world before the fix: Mara learned "Kade" from "Kade nods to Mara
+// across the bar", and Kade learned "Cellar Hatch" from "a commotion erupts from the cellar hatch"
+// (the old match was case-insensitive, so a common noun read as a proper name).
+//
+// It compounds, which is why the founder saw it in a LABEL: once a name is in name_knowledge,
+// fn_unearned_names drops it from the unearned set entirely, so the wall stops rewriting it in every
+// channel at once — and speaker_label is read straight from fn_display_name with no belt of its own.
+//
+// Hearing teaches. Being described does not.
+func TestNamingWall_AnAccountThatNamesHimTeachesNobody(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	// The account names Jonas outright. The WORDS never do — Jonas is being talked about, and what
+	// Mara actually says carries no name at all.
+	var eventID string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
+		 VALUES ($1, 'Communicated', 'Jonas plants himself between Kade and Mara.',
+		         921, 0, 'accepted', 'freeform',
+		         jsonb_build_object('spoken', 'you sit quiet, you leave quiet'))
+		 RETURNING event_id::text`, dlWorldID).Scan(&eventID); err != nil {
+		t.Fatalf("insert utterance: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+		 VALUES ($1::uuid, $2::uuid, 'actor', 'speaker'), ($1::uuid, $3::uuid, 'actor', 'listener')`,
+		eventID, "2ac70000-0000-0000-0000-0000000000a2", dlKadeID); err != nil {
+		t.Fatalf("insert participants: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `SELECT generate_perceptions($1::uuid)`, eventID); err != nil {
+		t.Fatalf("generate_perceptions: %v", err)
+	}
+
+	// Nothing was taught: no row, and the belt still guards the name.
+	var taught int
+	if err := tx.QueryRow(ctx,
+		`SELECT count(*) FROM name_knowledge
+		  WHERE world_id = $1 AND holder_id = $2::uuid AND name = 'Jonas'`,
+		dlWorldID, dlKadeID).Scan(&taught); err != nil {
+		t.Fatalf("count name_knowledge: %v", err)
+	}
+	if taught != 0 {
+		t.Fatalf("Kade was taught %q from an account that merely described the man — nobody said the name", "Jonas")
+	}
+
+	var stillGuarded bool
+	if err := tx.QueryRow(ctx,
+		`SELECT EXISTS (SELECT 1 FROM fn_unearned_names($1, $2::uuid) WHERE canonical_name = 'Jonas')`,
+		dlWorldID, dlKadeID).Scan(&stillGuarded); err != nil {
+		t.Fatalf("fn_unearned_names: %v", err)
+	}
+	if !stillGuarded {
+		t.Fatal("the wall stopped guarding Jonas — the label, the narration and every lens can now leak it")
+	}
+
+	// The label the founder actually saw. It must still be the descriptor.
+	var label string
+	if err := tx.QueryRow(ctx, `SELECT fn_display_name($1, $2::uuid, $3::uuid)`,
+		dlWorldID, dlKadeID, "2ac70000-0000-0000-0000-0000000000a3").Scan(&label); err != nil {
+		t.Fatalf("fn_display_name: %v", err)
+	}
+	if label == "Jonas" {
+		t.Fatal("speaker_label would render the canonical name — this is the founder's reported breach")
 	}
 }

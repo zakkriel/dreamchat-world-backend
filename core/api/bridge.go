@@ -295,6 +295,12 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return NewFakeCognitionDriver(), nil
 	case "fake-text":
 		return NewFakeTextDriver("fake-text:" + dc.Model), nil
+	// narrate's own stand-in. It used to point at fake-text, which reports no capabilities and errors
+	// on a schema, so every hand-driven beat burned both structured attempts and fell to the plain
+	// prose fallback — the one narration path with no belts on it (see fakeNarrateDriver's header).
+	// fake-text stays available: it is still the honest stand-in for a genuinely text-only model.
+	case "fake-narrate":
+		return NewFakeNarrateDriver("fake-narrate:" + dc.Model), nil
 	// Two seats have a NON-CHAIN output shape, so the generic structured fake (which returns a chain
 	// array) cannot stand in for them: the World Actor authors {actor_id, attempt} and the place author
 	// authors {descriptor, kind, extent_class}. Their dedicated fakes existed but were reachable only by
