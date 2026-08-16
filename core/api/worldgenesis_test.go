@@ -246,6 +246,61 @@ func TestWorldGenesis_KnowledgeIsGroundedAndNeverPrecedesItsCause(t *testing.T) 
 	}
 }
 
+// A perception sourced from a `world_genesis` event IS a name, as far as this engine is concerned:
+// fn_perceived_name reads every such perception that is subject-linked to an entity and returns its
+// content as that entity's name. So nothing except name knowledge may cite that event.
+//
+// This test exists because a live build broke the rule. Secrets were grounded in the naming event — it
+// was the one event that existed before the backstory — and the archivist's own compendium entry came
+// back with `perceived_name` set to her forgery scheme. Every fake-bridge test passed: the fake authors
+// secrets too, but nothing had ever read a name back from an NPC's own point of view.
+func TestWorldGenesis_NothingButNamesHangsOffTheNamingEvent(t *testing.T) {
+	ctx := context.Background()
+	tx, worldID, doc := genesisFixture(t)
+
+	// Every perception the naming event sources must be a name someone holds for someone: its content is
+	// a canonical name in this world, and nothing else.
+	names := map[string]bool{}
+	for _, a := range doc.Cast {
+		names[strings.TrimSpace(a.CanonicalName)] = true
+	}
+	rows, err := tx.Query(ctx, `
+		SELECT p.content
+		FROM perception_record p
+		JOIN canon_event e ON e.event_id = p.source_event_id
+		WHERE p.world_id = $1::uuid AND e.event_type = 'world_genesis'`, worldID)
+	if err != nil {
+		t.Fatalf("query genesis-sourced perceptions: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		if !names[content] {
+			t.Errorf("a perception sourced from the naming event carries %q, which is not anyone's name — "+
+				"fn_perceived_name will render it AS a name", content)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("rows: %v", err)
+	}
+
+	// And the reading that actually broke: nobody's perceived name is their secret.
+	for _, a := range doc.Cast {
+		actorID := castID(t, ctx, tx, worldID, a.CanonicalName)
+		var shown string
+		if err := tx.QueryRow(ctx, `SELECT COALESCE(fn_perceived_name($1::uuid,$2::uuid,$2::uuid),'')`,
+			worldID, actorID).Scan(&shown); err != nil {
+			t.Fatalf("perceived name of %q to themselves: %v", a.CanonicalName, err)
+		}
+		if shown == strings.TrimSpace(a.Hiding) {
+			t.Errorf("%q's own perceived name is their secret", a.CanonicalName)
+		}
+	}
+}
+
 // Each secret is held by exactly one person and is invisible to everyone else — the planted-secret shape
 // the engine's own I-3 test hunts for leaks of.
 func TestWorldGenesis_EverySecretIsPrivateToItsHolder(t *testing.T) {

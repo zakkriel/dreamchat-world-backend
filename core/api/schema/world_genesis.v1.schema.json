@@ -283,7 +283,7 @@
         "place": {
           "type": "string",
           "minLength": 1,
-          "description": "canonical_name of the place they walk into. Someone from `cast` should already be there or the opening is empty."
+          "description": "canonical_name of the place they walk into. AT LEAST ONE member of `cast` MUST have `starts_in` equal to this exact place — the visitor walks in on people, never into an empty room they must then search. This is validated and a mismatch is rejected."
         },
         "stated": {
           "type": "string",

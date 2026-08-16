@@ -87,15 +87,17 @@ func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief s
 	if err != nil {
 		return "", err
 	}
-	namingEventID, err := writeNamingEvent(ctx, tx, worldID, doc, ids)
-	if err != nil {
+	// The naming event is written for its side effect only: the per-viewer name perceptions that hang off
+	// it. Nothing else may cite it — see the warning in writeMinds about what fn_perceived_name does with
+	// anything sourced from a world_genesis event.
+	if _, err := writeNamingEvent(ctx, tx, worldID, doc, ids); err != nil {
 		return "", err
 	}
 	historyEventIDs, err := writeHistory(ctx, tx, worldID, doc, ids)
 	if err != nil {
 		return "", err
 	}
-	if err := writeMinds(ctx, tx, worldID, doc, ids, historyEventIDs, namingEventID); err != nil {
+	if err := writeMinds(ctx, tx, worldID, doc, ids, historyEventIDs); err != nil {
 		return "", err
 	}
 	if err := writeOpeningState(ctx, tx, worldID, doc, ids); err != nil {
@@ -300,13 +302,24 @@ func writeHistory(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDo
 //
 // THE PLAYER GETS NO CORE. Not an empty one, not a default one: no row. B-4 is absolute, the template
 // says it in as many words ("Kade gets NO core (premise, not a mind)"), and a generated world does not get
-// to be the exception. Every trait is grounded in an event (D-11): the first authored history the person
-// took part in, falling back to the genesis event when they took part in none.
+// to be the exception. Every trait is grounded in an event (D-11): the first authored moment the person
+// took part in, falling back to the world's opening moment when they took part in none.
 func writeMinds(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc, ids *genesisIDs,
-	historyEventIDs []string, namingEventID string) error {
+	historyEventIDs []string) error {
 
-	// First event each person appears in, so a trait traces to something that happened to them.
-	groundedIn := make(map[string]string, len(doc.Cast))
+	if len(historyEventIDs) == 0 {
+		return fmt.Errorf("writeMinds: no history events to ground minds in")
+	}
+
+	// First moment each person appears in, so a trait or a secret traces to something that happened to
+	// them. The TICK travels with the id: a perception's acquired_tick may never precede its source
+	// event's own tick (I-9), so grounding in event i means acquiring at event i's tick, not at the
+	// ladder's base.
+	type moment struct {
+		eventID string
+		tick    int64
+	}
+	groundedIn := make(map[string]moment, len(doc.Cast))
 	for i, h := range doc.History {
 		if i >= len(historyEventIDs) {
 			break
@@ -314,10 +327,11 @@ func writeMinds(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc,
 		for _, who := range h.Who {
 			who = strings.TrimSpace(who)
 			if _, seen := groundedIn[who]; !seen {
-				groundedIn[who] = historyEventIDs[i]
+				groundedIn[who] = moment{eventID: historyEventIDs[i], tick: genesisBackstoryBaseTick + int64(i)}
 			}
 		}
 	}
+	opening := moment{eventID: historyEventIDs[0], tick: genesisBackstoryBaseTick}
 
 	for _, a := range doc.Cast {
 		name := strings.TrimSpace(a.CanonicalName)
@@ -346,15 +360,16 @@ func writeMinds(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc,
 			return fmt.Errorf("writeMinds: %q core: %w", name, err)
 		}
 
-		eventID := groundedIn[name]
-		if eventID == "" {
-			eventID = namingEventID
+		// The moment a trait or a secret traces back to (D-11).
+		ground, ok := groundedIn[name]
+		if !ok {
+			ground = opening
 		}
 		for _, t := range a.Traits {
 			if _, err := tx.Exec(ctx,
 				`INSERT INTO trait_provenance (world_id, actor_id, trait_key, event_id)
 				 VALUES ($1::uuid, $2::uuid, $3, $4::uuid) ON CONFLICT DO NOTHING`,
-				worldID, actorID, traitKey(t.Key), eventID); err != nil {
+				worldID, actorID, traitKey(t.Key), ground.eventID); err != nil {
 				return fmt.Errorf("writeMinds: %q trait %q provenance: %w", name, t.Key, err)
 			}
 		}
@@ -362,8 +377,15 @@ func writeMinds(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc,
 		// The secret. One private perception, held by one person, about themselves — which is what makes
 		// it invisible to everyone else through fn_visible_perceptions, and what the engine's own
 		// planted-secret test (I-3) goes looking for leaks of.
-		if err := writePerception(ctx, tx, worldID, actorID, namingEventID,
-			strings.TrimSpace(a.Hiding), "direct", genesisNamingTick, []string{actorID}); err != nil {
+		//
+		// IT MUST NOT HANG OFF THE world_genesis EVENT, and this cost a live build to learn. In this
+		// engine `world_genesis` is not a general-purpose "before play" event: `fn_perceived_name` treats
+		// EVERY perception sourced from one and subject-linked to an entity as that entity's NAME. A
+		// secret parked there is read straight back as the holder's name — the archivist's compendium
+		// entry rendered her forgery scheme where her name belonged. Grounding it in the moment that
+		// caused it is both the fix and the more honest provenance (B-2: knowledge arrives by a path).
+		if err := writePerception(ctx, tx, worldID, actorID, ground.eventID,
+			strings.TrimSpace(a.Hiding), "direct", ground.tick, []string{actorID}); err != nil {
 			return fmt.Errorf("writeMinds: %q secret: %w", name, err)
 		}
 	}
