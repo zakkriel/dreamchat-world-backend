@@ -9,6 +9,7 @@ import (
 	"io"
 	"math/rand/v2"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"time"
@@ -283,9 +284,15 @@ func (c *imageClient) upsertIdentity(ctx context.Context, ownerType, ownerID, wo
 
 // getIdentity reads the current visual identity for one owner, including the anchor assets used to
 // condition future generations.
-func (c *imageClient) getIdentity(ctx context.Context, ownerID string) (visualIdentity, error) {
+//
+// world_id is a REQUIRED query parameter, not decoration: an identity is keyed on
+// (tenant, world, owner_type, owner) and the platform answers 400 invalid_request without it. Omitting
+// it failed every portrait in this world with a 400 recorded as the slot's error, which reads like a
+// generation fault and is not one.
+func (c *imageClient) getIdentity(ctx context.Context, ownerID, worldID string) (visualIdentity, error) {
 	var vi visualIdentity
-	if err := c.do(ctx, http.MethodGet, "/v1/characters/"+ownerID+"/visual-identity", nil, "", &vi); err != nil {
+	path := "/v1/characters/" + ownerID + "/visual-identity?world_id=" + url.QueryEscape(worldID)
+	if err := c.do(ctx, http.MethodGet, path, nil, "", &vi); err != nil {
 		return visualIdentity{}, fmt.Errorf("getIdentity: %w", err)
 	}
 	return vi, nil
