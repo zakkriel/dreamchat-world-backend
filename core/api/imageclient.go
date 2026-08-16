@@ -367,11 +367,21 @@ type generationAccepted struct {
 //
 // world_id is deliberately absent: it is not accepted here and is derived from the identity. Unknown
 // fields are rejected by strict decoding, so nothing extra may be added "for context".
-func (c *imageClient) requestGeneration(ctx context.Context, identityID, idempotencyKey string, env govEnvelope) (string, error) {
+// anchorAssetID is the reference the portrait is conditioned on, and it is sent because the
+// platform's reuse key folds subject.anchor_asset_id but has no prompt of its own to fold. Omit it
+// and the render hash is identity + intent alone, so a character whose anchor has been REPLACED is
+// served the portrait drawn from the old one — which is exactly what happened after a bad anchor was
+// corrected here: three portraits came back byte-identical to the ones generated before the fix.
+// Empty is legitimate (an identity with no anchor yet) and simply leaves the field off.
+func (c *imageClient) requestGeneration(ctx context.Context, identityID, anchorAssetID, idempotencyKey string, env govEnvelope) (string, error) {
+	subject := map[string]any{"identity_id": identityID}
+	if anchorAssetID != "" {
+		subject["anchor_asset_id"] = anchorAssetID
+	}
 	var acc generationAccepted
 	err := c.do(ctx, http.MethodPost, "/v1/generations", map[string]any{
 		"governance": env,
-		"subject":    map[string]any{"identity_id": identityID},
+		"subject":    subject,
 		"render":     map[string]any{"intent": "commit"},
 	}, idempotencyKey, &acc)
 	if err != nil {

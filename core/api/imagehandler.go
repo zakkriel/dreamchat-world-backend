@@ -296,6 +296,23 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 					continue
 				}
 			}
+
+			// Re-read rather than assume the job's asset is the anchor. The bind happens worker-side
+			// and is deliberately best-effort, so the identity is the only place that can say whether
+			// it actually took. Generating against an anchor the identity does not hold would put a
+			// reference in the reuse key that nothing else will ever reproduce.
+			identity, err = client.getIdentity(ctx, t.id, worldID)
+			if err != nil {
+				out.Failed++
+				recordSlotError(ctx, pool, worldID, t.id, err.Error())
+				continue
+			}
+		}
+
+		// The anchor the portrait is actually conditioned on, and part of the platform's reuse key.
+		anchorAssetID := ""
+		if len(identity.AnchorAssetIDs) > 0 {
+			anchorAssetID = identity.AnchorAssetIDs[0]
 		}
 
 		// The envelope is pinned HERE, once, and stored with the key. Their idempotency key hashes the
@@ -316,7 +333,7 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		key := "portrait-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
 		env := newGovEnvelope(issuedAt, "character_portrait")
 
-		jobID, err := client.requestGeneration(ctx, identityID, key, env)
+		jobID, err := client.requestGeneration(ctx, identityID, anchorAssetID, key, env)
 		if err != nil {
 			out.Failed++
 			recordSlotError(ctx, pool, worldID, t.id, err.Error())
