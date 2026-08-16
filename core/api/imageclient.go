@@ -249,7 +249,8 @@ func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, err
 }
 
 type visualIdentity struct {
-	ID string `json:"id"`
+	ID             string   `json:"id"`
+	AnchorAssetIDs []string `json:"anchor_asset_ids"`
 }
 
 // upsertIdentity registers an entity with the platform and returns the visual_identity_id that every
@@ -278,6 +279,75 @@ func (c *imageClient) upsertIdentity(ctx context.Context, ownerType, ownerID, wo
 		return "", fmt.Errorf("upsertIdentity: %w", err)
 	}
 	return vi.ID, nil
+}
+
+// getIdentity reads the current visual identity for one owner, including the anchor assets used to
+// condition future generations.
+func (c *imageClient) getIdentity(ctx context.Context, ownerID string) (visualIdentity, error) {
+	var vi visualIdentity
+	if err := c.do(ctx, http.MethodGet, "/v1/characters/"+ownerID+"/visual-identity", nil, "", &vi); err != nil {
+		return visualIdentity{}, fmt.Errorf("getIdentity: %w", err)
+	}
+	return vi, nil
+}
+
+// bootstrapAnchor asks the platform to mint the first anchor for an identity that has none.
+// 200 means the identity is already anchored and no job is started; 202 returns a job to await.
+func (c *imageClient) bootstrapAnchor(ctx context.Context, ownerID, worldID, styleID, description, idempotencyKey string, env govEnvelope) (jobID string, alreadyAnchored bool, err error) {
+	reqBody := map[string]any{
+		"governance":       env,
+		"world_id":         worldID,
+		"style_profile_id": styleID,
+		"description":      description,
+	}
+	b, err := json.Marshal(reqBody)
+	if err != nil {
+		return "", false, fmt.Errorf("bootstrapAnchor: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		c.baseURL+"/v1/characters/"+ownerID+"/visual-identity/bootstrap-anchor", bytes.NewReader(b))
+	if err != nil {
+		return "", false, fmt.Errorf("bootstrapAnchor: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", idempotencyKey)
+
+	resp, err := c.http.Do(req)
+	if err != nil {
+		return "", false, fmt.Errorf("bootstrapAnchor: %w", err)
+	}
+	defer resp.Body.Close()
+	payload, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return "", false, fmt.Errorf("bootstrapAnchor: %w", err)
+	}
+	if resp.StatusCode >= 400 {
+		apiErr := &imageAPIError{Status: resp.StatusCode}
+		_ = json.Unmarshal(payload, apiErr)
+		if ra := resp.Header.Get("Retry-After"); ra != "" {
+			if secs, convErr := strconv.Atoi(ra); convErr == nil && secs >= 0 {
+				apiErr.RetryAfter = time.Duration(secs) * time.Second
+			}
+		}
+		return "", false, fmt.Errorf("bootstrapAnchor: %w", apiErr)
+	}
+
+	switch resp.StatusCode {
+	case http.StatusOK:
+		return "", true, nil
+	case http.StatusAccepted:
+		var acc generationAccepted
+		if len(payload) > 0 {
+			if err := json.Unmarshal(payload, &acc); err != nil {
+				return "", false, fmt.Errorf("bootstrapAnchor: %w", err)
+			}
+		}
+		return acc.JobID, false, nil
+	default:
+		return "", false, fmt.Errorf("bootstrapAnchor: unexpected status %d", resp.StatusCode)
+	}
 }
 
 type generationAccepted struct {

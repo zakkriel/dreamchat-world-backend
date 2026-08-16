@@ -35,6 +35,14 @@ type fakePlatform struct {
 	seenIdempotencyKey string
 	generationCalls    int
 	jobCalls           int
+	requestOrder       []string
+
+	// identity and bootstrap
+	identityAnchors             map[string][]string
+	bootstrapFailFor            map[string]bool
+	upsertAppearanceByOwner     map[string]string
+	lastBootstrapDescription    string
+	lastBootstrapIdempotencyKey string
 
 	// scripted failures
 	rateLimitOnce   bool
@@ -60,7 +68,7 @@ type fakePlatform struct {
 }
 
 func newFakePlatform() *fakePlatform {
-	return &fakePlatform{bodyForKey: map[string]string{}, jobStatus: []string{"completed"}}
+	return &fakePlatform{bodyForKey: map[string]string{}, jobStatus: []string{"completed"}, identityAnchors: map[string][]string{}, bootstrapFailFor: map[string]bool{}, upsertAppearanceByOwner: map[string]string{}}
 }
 
 func (f *fakePlatform) server(t *testing.T) *httptest.Server {
@@ -84,6 +92,90 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 	})
 
 	mux.HandleFunc("/v1/characters/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/characters/"), "/")
+		if len(parts) < 2 || parts[1] != "visual-identity" {
+			writeErr(w, 404, "not_found", "route not found")
+			return
+		}
+		ownerID := parts[0]
+
+		f.mu.Lock()
+		anchors, ok := f.identityAnchors[ownerID]
+		if !ok {
+			anchors = []string{"asset_anchor_seeded"}
+		}
+		bootstrapFails := f.bootstrapFailFor[ownerID]
+		f.mu.Unlock()
+
+		if len(parts) == 3 && parts[2] == "bootstrap-anchor" {
+			if r.Method != http.MethodPost {
+				writeErr(w, 405, "method_not_allowed", "use POST")
+				return
+			}
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" {
+				writeErr(w, 422, "invalid_request", "Idempotency-Key is required")
+				return
+			}
+			var body struct {
+				WorldID     string         `json:"world_id"`
+				StyleID     string         `json:"style_profile_id"`
+				Description string         `json:"description"`
+				Governance  map[string]any `json:"governance"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			switch {
+			case body.WorldID == "":
+				writeErr(w, 400, "invalid_request", "world_id is required")
+				return
+			case body.StyleID == "":
+				writeErr(w, 400, "invalid_request", "style_profile_id is required")
+				return
+			case body.Description == "":
+				writeErr(w, 400, "invalid_request", "description is required")
+				return
+			case body.Governance == nil:
+				writeErr(w, 400, "invalid_request", "governance is required")
+				return
+			}
+			f.mu.Lock()
+			f.requestOrder = append(f.requestOrder, "bootstrap")
+			f.lastBootstrapDescription = body.Description
+			f.lastBootstrapIdempotencyKey = key
+			f.mu.Unlock()
+			if bootstrapFails {
+				writeErr(w, 500, "internal_error", "bootstrap failed")
+				return
+			}
+			if len(anchors) > 0 {
+				_ = json.NewEncoder(w).Encode(map[string]any{"id": "vi_c40c1fc21b057d27", "anchor_asset_ids": anchors})
+				return
+			}
+			w.WriteHeader(http.StatusAccepted)
+			_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job_anchor_041c843f24940ad4", "status": "queued"})
+			return
+		}
+
+		if r.Method == http.MethodGet {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":               "vi_c40c1fc21b057d27",
+				"anchor_asset_ids": anchors,
+			})
+			return
+		}
+
+		if r.Method == http.MethodPost {
+			var body struct {
+				Traits map[string]string `json:"canonical_visual_traits"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			if body.Traits != nil {
+				f.mu.Lock()
+				f.upsertAppearanceByOwner[ownerID] = body.Traits["appearance"]
+				f.mu.Unlock()
+			}
+		}
+
 		// visual-identity upsert; keyed on (tenant, world, owner_type, owner_id) so replay is safe
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "vi_c40c1fc21b057d27", "current_version": 1})
 	})
@@ -92,6 +184,7 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		f.generationCalls++
+		f.requestOrder = append(f.requestOrder, "generation")
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
 			writeErr(w, 422, "invalid_request", "Idempotency-Key is required")

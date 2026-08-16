@@ -142,6 +142,156 @@ func TestFillPortraits_FailureIsRecordedAndNotLeftInFlight(t *testing.T) {
 	}
 }
 
+// An already-anchored identity skips bootstrap and goes straight to generation.
+func TestFillPortraits_AnchoredIdentityDoesNotBootstrap(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-000000000102", "5a5e0000-0000-0000-0000-000000000202"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM actor_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Anchored Subject')`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.identityAnchors[actorID] = []string{"asset_anchor_existing"}
+
+	res, err := fillPortraits(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want one requested and one completed", res)
+	}
+	for _, step := range f.requestOrder {
+		if step == "bootstrap" {
+			t.Fatalf("bootstrap was called for an already-anchored identity: order=%v", f.requestOrder)
+		}
+	}
+}
+
+// No anchor assets means bootstrap happens first, then portrait generation.
+func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-000000000103", "5a5e0000-0000-0000-0000-000000000203"
+	const descriptor = "a weathered duelist with silver-threaded coat"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM actor_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Bootstrap Subject')`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO actor_state (world_id, entity_id, attrs) VALUES ($1,$2,$3::jsonb)`,
+		worldID, actorID, `{"descriptor":"`+descriptor+`"}`); err != nil {
+		t.Fatalf("seed actor state: %v", err)
+	}
+
+	f := newFakePlatform()
+	f.identityAnchors[actorID] = []string{}
+
+	res, err := fillPortraits(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want one requested and one completed", res)
+	}
+	if len(f.requestOrder) < 2 || f.requestOrder[0] != "bootstrap" || f.requestOrder[1] != "generation" {
+		t.Fatalf("request order = %v, want bootstrap before generation", f.requestOrder)
+	}
+	if f.lastBootstrapDescription != descriptor {
+		t.Fatalf("bootstrap description = %q, want actor descriptor %q", f.lastBootstrapDescription, descriptor)
+	}
+	if got := f.upsertAppearanceByOwner[actorID]; got != descriptor {
+		t.Fatalf("upsert appearance = %q, want descriptor %q", got, descriptor)
+	}
+}
+
+// A bootstrap failure records slot error for that actor and the loop continues to the next one.
+func TestFillPortraits_BootstrapFailureRecordsErrorAndContinues(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID := "5a5e0000-0000-0000-0000-000000000104"
+	failActor := "5a5e0000-0000-0000-0000-000000000204"
+	nextActor := "5a5e0000-0000-0000-0000-000000000205"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM actor_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	for _, a := range []string{failActor, nextActor} {
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+			 VALUES ($1,$2,'actor','Bootstrap Loop Subject')`, a, worldID); err != nil {
+			t.Fatalf("seed actor %s: %v", a, err)
+		}
+	}
+
+	f := newFakePlatform()
+	f.identityAnchors[failActor] = []string{}
+	f.identityAnchors[nextActor] = []string{}
+	f.bootstrapFailFor[failActor] = true
+
+	res, err := fillPortraits(ctx, pool, testImageClient(t, f), worldID, 5)
+	if err != nil {
+		t.Fatalf("fillPortraits: %v", err)
+	}
+	if res.Failed != 1 || res.Requested != 1 || res.Completed != 1 {
+		t.Fatalf("result = %+v, want one failed actor and one completed actor", res)
+	}
+
+	var failAssetID, failErr *string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id, last_error FROM image_slot
+		  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2`, worldID, failActor).
+		Scan(&failAssetID, &failErr); err != nil {
+		t.Fatalf("read failed actor slot: %v", err)
+	}
+	if failAssetID != nil {
+		t.Fatalf("failed actor asset_id = %v, want NULL", *failAssetID)
+	}
+	if failErr == nil || *failErr == "" {
+		t.Fatal("failed actor last_error is empty")
+	}
+
+	var nextAssetID *string
+	if err := pool.QueryRow(ctx,
+		`SELECT asset_id FROM image_slot
+		  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2`, worldID, nextActor).
+		Scan(&nextAssetID); err != nil {
+		t.Fatalf("read second actor slot: %v", err)
+	}
+	if nextAssetID == nil || *nextAssetID == "" {
+		t.Fatalf("second actor was not processed after bootstrap failure; asset_id=%v", nextAssetID)
+	}
+}
+
 // fn_image_ref is what the frontend will read. NULL is the ORDINARY state — "no picture yet" — and
 // the reference never carries a presigned URL, only an id and a path back to this service.
 func TestImageRef_NullUntilReadyThenIdAndPathNeverAUrl(t *testing.T) {
