@@ -94,7 +94,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	h := NewWorldGenesisHandler(pool, true, bridge)
+	h := NewWorldGenesisHandler(pool, true, bridge, nil)
 
 	// The interview turn, through the real handler.
 	rec := httptest.NewRecorder()
@@ -135,7 +135,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 		t.Fatalf("refusing bridge: %v", err)
 	}
 	rec = httptest.NewRecorder()
-	NewWorldGenesisHandler(pool, true, refusing).ServeHTTP(rec, jsonPost("/worlds/genesis", `{"brief":"anything"}`))
+	NewWorldGenesisHandler(pool, true, refusing, nil).ServeHTTP(rec, jsonPost("/worlds/genesis", `{"brief":"anything"}`))
 	for _, frame := range sseFrames(t, rec.Body.String()) {
 		var probe struct{ Kind string }
 		_ = json.Unmarshal(frame, &probe)

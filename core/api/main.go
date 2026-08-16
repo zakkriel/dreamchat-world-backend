@@ -65,7 +65,7 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// World creation (PRD: prd_world_creation.md). POST /worlds/interview asks the next question about
 		// a brief; POST /worlds/genesis authors a whole world and streams what lands. Neither sits under
 		// /worlds/{id} because there is no id yet — that is the point of them.
-		NewWorldGenesisHandler(pool, debug, bridge).(matcher),
+		NewWorldGenesisHandler(pool, debug, bridge, images).(matcher),
 		// POST /worlds/{w}/refresh mints a successor world and archives the source. The old world is
 		// superseded, never reset in place: canon stays append-only, old ids stay citable, and refresh
 		// cannot silently erase history someone already referenced.
@@ -126,7 +126,13 @@ func main() {
 	}
 	log.Printf("seats: %s", describeSeatConfig(seatCfg))
 
-	rt := newRouter(pool, debug, bridge, newImageClientFromEnv())
+	images := newImageClientFromEnv()
+	rt := newRouter(pool, debug, bridge, images)
+
+	// Art reconciles itself. Entities arrive from genesis and from play, and neither path should have
+	// to remember to ask for a picture — the sweep looks for anything unillustrated and fills it.
+	// Inert without an image platform configured.
+	runArtReconciler(pool, images)
 
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)
