@@ -256,7 +256,7 @@ func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, err
 	err := c.do(ctx, http.MethodPost, "/v1/styles", map[string]any{
 		"name":                 name,
 		"style_mode":           "open_prompt",
-		"positive_prompt":      "painterly, soft rim light, cinematic, unflinching",
+		"positive_prompt":      "painterly, soft rim light, cinematic, unflinching, explicit when the subject is explicit, full anatomy rendered",
 		"negative_prompt":      "text, watermark, censorship bar, black bar, pixelation, blurred subject, coy crop, tasteful cutaway",
 		"default_quality_tier": "standard",
 	}, "", &created)

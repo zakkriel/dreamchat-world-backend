@@ -2,10 +2,21 @@
 
 ## The latitude block (in every file, verbatim)
 
-Every prompt here carries the same three paragraphs — `UNCENSORED BY DESIGN`, `NO MORAL OR POLITICAL
-AUTHORSHIP`, and `THE ONE FLOOR` — immediately after its role line. This is adult interactive
-fiction: the seats are told so explicitly, because a model that has not been told will fade a scene,
-soften a line, attach a content note, or decline outright.
+Every prompt here carries the same five paragraphs — `UNCENSORED BY DESIGN`, `NO MORAL OR POLITICAL
+AUTHORSHIP`, `EXPLICIT IS THE EXPECTATION, NOT THE PERMISSION`, `WHEN THE MOMENT CALLS FOR IT`, and
+`THE ONE FLOOR` — immediately after its role line. This is adult interactive fiction: the seats are
+told so explicitly, because a model that has not been told will fade a scene, soften a line, attach a
+content note, or decline outright.
+
+The middle paragraph is the load-bearing one, and it is stated AFFIRMATIVELY on purpose. The first
+version of this block was entirely prohibitive — "never sanitise, never soften, never fade to black"
+— which tells a seat what not to do while leaving it to choose how far to go, and that choice
+resolves conservatively every time. A seat could satisfy every prohibition in the block and still
+close the door and cut to morning: it did not refuse, warn or disclaim, it just flinched, and nothing
+prohibitive forbids flinching. Permission has to read as a standard being held to, not a limit being
+allowed near. `WHEN THE MOMENT CALLS FOR IT` is the other half of that: explicit is not gratuitous,
+and the tie-break when a seat cannot tell is to write it, because the failure being corrected is
+always the flinch.
 
 It is in EVERY seat, not just the narrator, and byte-identical rather than paraphrased. One seat
 censoring is enough to break the world: the referee can refuse an outcome the narrator would have
