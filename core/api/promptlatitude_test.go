@@ -21,6 +21,16 @@ import (
 
 const uncensoredHeading = "UNCENSORED BY DESIGN."
 const neutralityHeading = "NO MORAL OR POLITICAL AUTHORSHIP."
+
+// The AFFIRMATIVE grant, and the reason it is asserted separately from the prohibitions above.
+//
+// "Never soften" only tells a seat what not to do; it still leaves it choosing how far to go, and a
+// model resolves that choice conservatively every time. A seat can satisfy every prohibition in this
+// block completely and still close the door and cut to morning — it did not refuse, warn or
+// disclaim, it just flinched, and nothing prohibitive forbids flinching. Permission has to be stated
+// as a standard being held to, not a limit being allowed near.
+const explicitHeading = "EXPLICIT IS THE EXPECTATION, NOT THE PERMISSION."
+const calledForHeading = "WHEN THE MOMENT CALLS FOR IT."
 const floorLine = "THE ONE FLOOR: everyone depicted in a sexual context is an adult."
 
 func TestEverySeatPromptCarriesTheLatitude(t *testing.T) {
@@ -39,7 +49,7 @@ func TestEverySeatPromptCarriesTheLatitude(t *testing.T) {
 		}
 		src := string(body)
 
-		for _, required := range []string{uncensoredHeading, neutralityHeading, floorLine} {
+		for _, required := range []string{uncensoredHeading, neutralityHeading, explicitHeading, calledForHeading, floorLine} {
 			if !strings.Contains(src, required) {
 				t.Errorf("%s is missing %q — every seat gets the same latitude or the world is censored in patches",
 					filepath.Base(f), required)
@@ -140,5 +150,10 @@ func TestImageStyleCarriesTheSameLatitude(t *testing.T) {
 	}
 	if !strings.Contains(body, "unflinching") {
 		t.Error("the style's positive prompt must carry the latitude the seats were given")
+	}
+	// The affirmative half. Refusing the bar and the blur says what not to draw; this says to draw
+	// the thing itself, which is the instruction a model actually acts on.
+	if !strings.Contains(body, "explicit when the subject is explicit") {
+		t.Error("the style must ASK for explicitness, not merely decline to forbid it")
 	}
 }
