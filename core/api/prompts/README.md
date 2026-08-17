@@ -1,5 +1,21 @@
 # Fixed prompt rulebooks
 
+## The latitude block (in every file, verbatim)
+
+Every prompt here carries the same three paragraphs — `UNCENSORED BY DESIGN`, `NO MORAL OR POLITICAL
+AUTHORSHIP`, and `THE ONE FLOOR` — immediately after its role line. This is adult interactive
+fiction: the seats are told so explicitly, because a model that has not been told will fade a scene,
+soften a line, attach a content note, or decline outright.
+
+It is in EVERY seat, not just the narrator, and byte-identical rather than paraphrased. One seat
+censoring is enough to break the world: the referee can refuse an outcome the narrator would have
+written, and cognition can give a brutal character second thoughts nobody authored. Two seats with
+differently-worded thresholds contradict each other mid-scene.
+
+`promptlatitude_test.go` enforces both properties — presence in every `prompts/*.txt`, and that the
+block is identical everywhere. A prompt file added without it fails the suite.
+
+
 Every fixed prompt rulebook the model seats read, in one place, config-style — mirroring the
 `core/api/schema/*.json` + `//go:embed` pattern used for the JSON Schema leashes. Each file below is
 embedded verbatim at build time into a Go var (see the `//go:embed prompts/*.txt` directive next to
