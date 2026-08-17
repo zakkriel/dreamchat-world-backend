@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -108,5 +109,36 @@ func TestPlayerFacingSeatsEmbedTheLatitude(t *testing.T) {
 		if !strings.Contains(prompt, uncensoredHeading) {
 			t.Errorf("the embedded %s prompt does not carry the latitude — the file may have it while the binary does not", name)
 		}
+	}
+}
+
+// The image side gets the same latitude, in the only prompt this app authors for it.
+//
+// A picture is not censored by a refusal, it is censored by a composition — a bar, a blur, a coy
+// crop, a cutaway. Those are named in the NEGATIVE prompt because that is how an image model is told
+// not to compose them; policy prose in the positive prompt would do nothing except give a provider's
+// own classifier something to read.
+func TestImageStyleCarriesTheSameLatitude(t *testing.T) {
+	f := newFakePlatform()
+	c := testImageClient(t, f)
+
+	if _, err := c.ensureStyle(context.Background(), "dreamchat-default"); err != nil {
+		t.Fatalf("ensureStyle: %v", err)
+	}
+
+	f.mu.Lock()
+	body := f.lastStyleCreateBody
+	f.mu.Unlock()
+	if body == "" {
+		t.Fatal("no style was created; this test asserts what we ask for when we create one")
+	}
+
+	for _, forbidden := range []string{"censorship bar", "coy crop", "tasteful cutaway", "blurred subject"} {
+		if !strings.Contains(body, forbidden) {
+			t.Errorf("the style's negative prompt must refuse %q — that is what censorship looks like in a picture", forbidden)
+		}
+	}
+	if !strings.Contains(body, "unflinching") {
+		t.Error("the style's positive prompt must carry the latitude the seats were given")
 	}
 }
