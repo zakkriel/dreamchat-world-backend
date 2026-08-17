@@ -31,9 +31,12 @@ type fakePlatform struct {
 	// stylesListStatus, when non-zero, refuses GET /v1/styles with that status — the shape the live
 	// platform had for weeks while the token was missing styles:read.
 	stylesListStatus int
-	bodyForKey       map[string]string // Idempotency-Key → the exact body first seen under it
-	jobStatus        []string          // consumed one per GET /v1/jobs/{id}
-	statusIdx        int
+	// lastStyleCreateBody is the raw POST /v1/styles body, so a test can assert what the app asks a
+	// style to be rather than only that it asked for one.
+	lastStyleCreateBody string
+	bodyForKey          map[string]string // Idempotency-Key → the exact body first seen under it
+	jobStatus           []string          // consumed one per GET /v1/jobs/{id}
+	statusIdx           int
 
 	seenIdempotencyKey string
 	generationCalls    int
@@ -93,6 +96,8 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 			_ = json.NewEncoder(w).Encode(map[string]any{"styles": f.styles})
 			return
 		}
+		raw, _ := io.ReadAll(r.Body)
+		f.lastStyleCreateBody = string(raw)
 		s := styleProfile{ID: "sty_17c36e08344742e1", Name: "dreamchat-default"}
 		f.styles = append(f.styles, s)
 		_ = json.NewEncoder(w).Encode(s)
