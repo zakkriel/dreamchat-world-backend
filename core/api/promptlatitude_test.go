@@ -1,0 +1,112 @@
+package main
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// Every seat reads the same latitude, or the world is inconsistently censored.
+//
+// A model seat that has not been told this is adult fiction will do the thing models do: fade the
+// scene, soften the line, attach a note, or quietly decline. One seat doing that is enough to break
+// the world — the referee can refuse an outcome the narrator would have written, or cognition can
+// give a brutal character second thoughts the author never wrote. So the block is byte-identical
+// across every prompt rather than paraphrased per seat, and this test is what keeps it that way.
+//
+// It reads the FILES rather than the embedded vars on purpose: a prompt added tomorrow gets caught
+// here even though no Go code references it yet, which is exactly when it is cheapest to fix.
+
+const uncensoredHeading = "UNCENSORED BY DESIGN."
+const neutralityHeading = "NO MORAL OR POLITICAL AUTHORSHIP."
+const floorLine = "THE ONE FLOOR: everyone depicted in a sexual context is an adult."
+
+func TestEverySeatPromptCarriesTheLatitude(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("prompts", "*.txt"))
+	if err != nil {
+		t.Fatalf("glob prompts: %v", err)
+	}
+	if len(files) == 0 {
+		t.Fatal("no prompt files found — this test is asserting nothing")
+	}
+
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src := string(body)
+
+		for _, required := range []string{uncensoredHeading, neutralityHeading, floorLine} {
+			if !strings.Contains(src, required) {
+				t.Errorf("%s is missing %q — every seat gets the same latitude or the world is censored in patches",
+					filepath.Base(f), required)
+			}
+		}
+	}
+}
+
+// The block must be IDENTICAL everywhere. A paraphrase in one seat is how two seats end up with
+// different thresholds and the prose starts contradicting itself mid-scene.
+func TestTheLatitudeBlockIsByteIdenticalAcrossSeats(t *testing.T) {
+	files, err := filepath.Glob(filepath.Join("prompts", "*.txt"))
+	if err != nil {
+		t.Fatalf("glob prompts: %v", err)
+	}
+
+	var canonical string
+	var canonicalFrom string
+	for _, f := range files {
+		body, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		block := extractLatitude(string(body))
+		if block == "" {
+			continue // absence is the other test's job
+		}
+		if canonical == "" {
+			canonical, canonicalFrom = block, filepath.Base(f)
+			continue
+		}
+		if block != canonical {
+			t.Errorf("%s states the latitude differently from %s — it must be verbatim identical",
+				filepath.Base(f), canonicalFrom)
+		}
+	}
+	if canonical == "" {
+		t.Fatal("no prompt carried the latitude block")
+	}
+}
+
+// extractLatitude returns the block from its first heading through the floor line, or "".
+func extractLatitude(src string) string {
+	start := strings.Index(src, uncensoredHeading)
+	if start < 0 {
+		return ""
+	}
+	end := strings.Index(src, floorLine)
+	if end < 0 {
+		return ""
+	}
+	return src[start : end+len(floorLine)]
+}
+
+// The seats that actually reach a player are the ones worth naming: a leak of authorial judgement
+// into narration or an NPC's reasoning is what a reader would see first.
+func TestPlayerFacingSeatsEmbedTheLatitude(t *testing.T) {
+	for name, prompt := range map[string]string{
+		"narrate":      narrateSystemHeader,
+		"cognition":    cognitionSystemHeader,
+		"resolve":      resolveSystemHeader,
+		"world_actor":  worldActorSystemHeader,
+		"decompose":    decomposeSystemHeader,
+		"place_author": placeAuthorSystemHeader,
+		"anthropic":    anthropicSystemHeader,
+	} {
+		if !strings.Contains(prompt, uncensoredHeading) {
+			t.Errorf("the embedded %s prompt does not carry the latitude — the file may have it while the binary does not", name)
+		}
+	}
+}
