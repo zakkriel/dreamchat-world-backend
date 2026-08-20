@@ -521,3 +521,58 @@ func TestWorldInterview_AnswersReachTheGenesisPrompt(t *testing.T) {
 		t.Error("the brief is missing from the prompt")
 	}
 }
+
+func TestValidateArrivalCandidates(t *testing.T) {
+	doc := authoredWorld(t) // reuse/extract the minimal passing doc the existing tests build
+	cand := func(name string) genesisCandidate {
+		return genesisCandidate{Descriptor: "a stranger in a wet coat", CanonicalName: name, Why: "owed money"}
+	}
+
+	// exactly 3
+	doc.ArrivalCandidates = []genesisCandidate{cand(doc.Arrival.CanonicalName), cand("Second Name")}
+	if err := doc.validate(); err == nil {
+		t.Fatal("2 candidates accepted; want refusal (exactly 3)")
+	}
+
+	// distinct names
+	doc.ArrivalCandidates = []genesisCandidate{cand(doc.Arrival.CanonicalName), cand("Second Name"), cand("Second Name")}
+	if err := doc.validate(); err == nil {
+		t.Fatal("duplicate candidate names accepted")
+	}
+
+	// exactly one must match arrival.canonical_name
+	doc.ArrivalCandidates = []genesisCandidate{cand("First Name"), cand("Second Name"), cand("Third Name")}
+	if err := doc.validate(); err == nil {
+		t.Fatal("no candidate matches the arrival; want refusal")
+	}
+
+	// the happy path
+	doc.ArrivalCandidates = []genesisCandidate{cand(doc.Arrival.CanonicalName), cand("Second Name"), cand("Third Name")}
+	if err := doc.validate(); err != nil {
+		t.Fatalf("valid candidates refused: %v", err)
+	}
+
+	// refusals must be genesisRefusal, not faults
+	doc.ArrivalCandidates = doc.ArrivalCandidates[:2]
+	if err := doc.validate(); !IsGenesisRefusal(err) {
+		t.Fatalf("candidate violation is not a refusal: %v", err)
+	}
+}
+
+func TestFakeGenesisEmitsCandidatesUnlessIdentityStated(t *testing.T) {
+	seat := NewFakeWorldGenesisDriver() // match the fake's real constructor name in bridge_fakes.go
+	open, err := authorWorld(context.Background(), seat, "a harbour town at closing time", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(open.ArrivalCandidates) != 3 {
+		t.Fatalf("identity-open brief: %d candidates, want 3", len(open.ArrivalCandidates))
+	}
+	stated, err := authorWorld(context.Background(), seat, "a harbour town; I am the debt collector", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stated.ArrivalCandidates) != 0 {
+		t.Fatalf("identity-stated brief: %d candidates, want 0", len(stated.ArrivalCandidates))
+	}
+}

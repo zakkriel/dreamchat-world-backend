@@ -752,6 +752,26 @@ func (f *fakeWorldGenesisDriver) Generate(_ context.Context, req GenRequest) (st
 		},
 	}
 
+	// Identity-open unless the brief says who the visitor is, in any words. "i am " is the deterministic
+	// tell this stand-in uses; the live seat judges the same thing from the prompt's own instruction.
+	// Candidate 1 reuses the arrival above verbatim (it must be the one recommended match); 2 and 3 are
+	// invented strangers in the same plain, concrete naming style, each with their own reason to be here.
+	if !strings.Contains(strings.ToLower(brief), "i am ") {
+		doc["arrival_candidates"] = []map[string]any{{
+			"descriptor":     "a stranger with wet shoulders",
+			"canonical_name": "Wren",
+			"why":            "sent to collect on a line in somebody else's book",
+		}, {
+			"descriptor":     "a courier stamping mud off her boots by the gate",
+			"canonical_name": "Petra",
+			"why":            "carrying a delivery the ledger has no line for",
+		}, {
+			"descriptor":     "a man in a borrowed coat, checking the number over the door",
+			"canonical_name": "Osei",
+			"why":            "come to the wrong address on somebody else's word",
+		}}
+	}
+
 	out, err := json.Marshal(doc)
 	if err != nil {
 		return "", fmt.Errorf("%s: marshal world: %w", f.name, err)

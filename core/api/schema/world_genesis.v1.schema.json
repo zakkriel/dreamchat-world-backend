@@ -300,6 +300,22 @@
           "description": "Why they are here, as premise. Never an interior state, never a feeling — a situation."
         }
       }
+    },
+    "arrival_candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "description": "Present ONLY when the brief and answers leave the player's identity open — if the user said who they are, their words outrank you and this array is omitted entirely. Three ways the player could enter THIS world, each drawn from the authored cast, places and history — never from a stock of archetypes. Exactly one candidate's canonical_name must equal arrival.canonical_name: that one is the recommended default, and arrival is its full premise.",
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "canonical_name", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1, "description": "How the room sees this stranger at first sight." },
+          "canonical_name": { "type": "string", "minLength": 1, "description": "This candidate's name. Nobody in the world holds a perception of it." },
+          "why": { "type": "string", "minLength": 1, "description": "Why they are here, as premise — a situation, never an interior state. It must connect to this world's authored content." }
+        }
+      }
     }
   },
   "definitions": {
