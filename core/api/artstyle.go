@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P023 — the one place a style's look, label and prompt prose live. Adding a look is one entry here.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"crypto/sha256"
 	"encoding/hex"

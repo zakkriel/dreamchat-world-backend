@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P021 — a built world commissions its own art, AFTER the transaction commits and outside it.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 // worldgenesishandler.go — the two routes the create-world journey talks to.
 //
 //	POST /worlds/interview  →  one JSON turn: the next question, or nothing left to ask

@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P024 — a seat's production config is part of its release and must be set before the merge that needs it.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 // Per-seat provider routing from the environment (D-13, ADR-P018; the provider-neutrality mandate).
 //
 // ── WHY THIS FILE EXISTS AND WHAT IT REPLACES ───────────────────────────────────────────────────

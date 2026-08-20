@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P021 — art is reconciled, never hand-commissioned. Do not add a commissioning call to a creation path.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"context"
 	"log"

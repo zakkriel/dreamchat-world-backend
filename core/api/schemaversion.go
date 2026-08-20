@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P020 — the deploy does not apply migrations; this refuses to serve a database that is behind.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"context"
 	_ "embed"
