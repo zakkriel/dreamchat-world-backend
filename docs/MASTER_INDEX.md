@@ -1,5 +1,17 @@
 # DreamChat Documentation — Master Index
 
+**Date:** 2026-08-20 (rev 10)
+
+**Rev 10 — the agent harness.** `30_architecture/system_map.md` added: what exists, which repo owns
+it, the art pipeline, every prompt surface, the deployment reality, and an explicit table of which
+rules have gates and which are still honour-system. Five operational ADRs filed with the code they
+describe — **ADR-P020** (a schema-drifted database is a boot refusal), **ADR-P021** (art is
+reconciled, never commissioned by hand), **ADR-P022** (one byte-identical latitude block in every
+seat), **ADR-P023** (an art style is a module of named profiles), **ADR-P024** (seat config is part of
+the release). `AGENTS.md` restructured around a mandatory STOP + pre-flight built from failures that
+actually happened, and the 2026-08-08 handover demoted from "current state" to history — it still
+describes explicit image triggers and an empty `POST /worlds`, both superseded.
+
 **Date:** 2026-06-19 (rev 9)
 
 **Rev 9 — FE architecture landed (docs-only):** the chunk-6 FE Architecture working-session decisions

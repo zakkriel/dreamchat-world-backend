@@ -1,0 +1,35 @@
+name: branch-currency
+on:
+  pull_request:
+
+# A PR branch that does not contain origin/main is not "slightly behind" — it is a branch that will
+# DELETE work when merged. An agent cut a branch from a months-old commit in this repo and silently
+# reverted several merged features; the diff looked like a feature because the removals were invisible
+# against the wrong base.
+#
+# AGENTS.md asks for this in its pre-flight. Prose loses to green CI, so it is a gate.
+jobs:
+  contains-main:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: The branch must contain origin/main
+        run: |
+          git fetch origin main --quiet
+          if git merge-base --is-ancestor origin/main HEAD; then
+            echo "OK: this branch contains origin/main ($(git rev-parse --short origin/main))"
+            exit 0
+          fi
+          echo "::error::This branch does not contain origin/main."
+          echo ""
+          echo "  branch base : $(git merge-base origin/main HEAD)"
+          echo "  origin/main : $(git rev-parse origin/main)"
+          echo ""
+          echo "Merging it would revert everything on main since that base. Rebase first:"
+          echo "    git fetch origin && git rebase origin/main"
+          echo ""
+          echo "Commits on main this branch is missing:"
+          git log --oneline HEAD..origin/main | head -20
+          exit 1
