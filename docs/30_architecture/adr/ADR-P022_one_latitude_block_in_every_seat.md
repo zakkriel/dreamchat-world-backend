@@ -3,10 +3,11 @@
 **Status:** Accepted (2026-08-17)
 **Date:** 2026-08-17
 **Series:** Platform / Bridge (ADR-P###, per D-5). Attaches to D-13 (per-seat routing, ADR-P018).
-**Governing rules:** **E-2** — "Mature fictional content can exist in private worlds within
-legal/safety bounds; public distribution, discovery, and monetization apply stricter eligibility" —
-and **E-1**, which puts classification in the core platform BEFORE any media request. This ADR does
-not create latitude; it tells the seats about latitude E-2 already granted.
+**Governing rules:** **E-2** (mature fictional content can exist in private worlds within
+legal/safety bounds), **E-1** (private and public-governed are distinct regimes; classification
+happens before any media request), and **ADR-P016**, which defines the regimes and says outright that
+"the platform should not silently moralize or sanitize private world content." This ADR creates no
+latitude — it tells the seats about latitude that was granted in June and never reached them.
 **Owner of decision:** founder ruling — this is adult interactive fiction and the seats must be told so.
 **Evidence (D-9):** `core/api/prompts/*.txt` (all nine), `core/api/prompts/README.md`,
 `core/api/promptlatitude_test.go`.
@@ -47,16 +48,28 @@ The image side carries the same intent in the medium's vocabulary (`artstyle.go`
 picture is a composition — a bar, a blur, a coy crop, a cutaway — so those are named in the negative
 prompt, and the affirmative half asks for the subject itself.
 
-## The boundary this ADR does NOT cross
+## The boundary, stated as ADR-P016 actually draws it
 
-E-2 grants mature content **in private worlds**, and applies stricter eligibility to public
-distribution, discovery and monetization. Everything here is lawful because every world is private:
-the governance envelope this service sends is hardcoded `Visibility: "private"`
-(`core/api/imageclient.go`, `newGovEnvelope`).
+The discriminator is **who can access the content**, and nothing else:
 
-**If sharing, discovery or monetization ever ships, this ADR does not follow it there.** The latitude
-is not a property of the product; it is a property of the private regime. A public surface needs its
-own ruling under E-1/E-2 and ADR-P016 before a single one of these paragraphs applies to it.
+> "A world … is private only when it is **accessible exclusively by its creator/user**."
+> "**Any content accessible by another user** is considered public-governed."
+> — ADR-P016
+
+**Charging for it does not move it.** A user paying for access to their own world is still the only
+person who can reach that world, so it stays private and this ADR applies in full. ADR-P016 makes the
+same point from the other side: an invite-only world "is still public-governed **because another user
+can access it**" — the money was never the test.
+
+What crosses the line is a second pair of eyes: sharing, invites, discovery, marketplace listings,
+public asset packs. On that path the content becomes public-governed and its eligibility is decided by
+ADR-P016's rules, not by this ADR.
+
+And the register is already on this ADR's side for the private case: **"The platform should not
+silently moralize or sanitize private world content"** (ADR-P016), and **"Private world play should
+not be interrupted by public publishing rules."** The latitude block is the seats being told what the
+governance ADR already said. The ONE FLOOR is the hard legal boundary ADR-P016 keeps even in private
+mode.
 
 ## Consequences
 
