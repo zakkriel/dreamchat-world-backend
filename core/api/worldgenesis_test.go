@@ -10,6 +10,8 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -574,5 +576,87 @@ func TestFakeGenesisEmitsCandidatesUnlessIdentityStated(t *testing.T) {
 	}
 	if len(stated.ArrivalCandidates) != 0 {
 		t.Fatalf("identity-stated brief: %d candidates, want 0", len(stated.ArrivalCandidates))
+	}
+}
+
+// postGenesisAndCollectFrames drives the real /worlds/genesis route under a bridge that answers both
+// world_genesis and world_kickstart, and returns every SSE frame decoded into a map. Shared by every
+// test that asserts on the shape of the build stream.
+func postGenesisAndCollectFrames(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	bridge, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatWorldGenesis.Name:   NewFakeWorldGenesisDriver(),
+		SeatWorldKickstart.Name: NewFakeWorldKickstartDriver(),
+	}, SeatWorldGenesis, SeatWorldKickstart)
+	if err != nil {
+		t.Fatalf("bridge: %v", err)
+	}
+	h := NewWorldGenesisHandler(testPool(t), true, bridge, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, jsonPost("/worlds/genesis", body))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("genesis status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	}
+	frames := make([]map[string]any, 0)
+	for _, raw := range sseFrames(t, rec.Body.String()) {
+		var f map[string]any
+		if err := json.Unmarshal(raw, &f); err != nil {
+			t.Fatalf("frame is not JSON: %v", err)
+		}
+		frames = append(frames, f)
+	}
+	return frames
+}
+
+// The stream now pauses for the player's own choice rather than committing straight through: the
+// terminal frame is a `choice`, never a `world` (spec, phase 1 — commit moves to the kickstart route).
+func TestBuildEndsInCharacterChoice(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
+	last := frames[len(frames)-1]
+	if last["kind"] != "choice" {
+		t.Fatalf("terminal frame kind = %v, want choice", last["kind"])
+	}
+	if last["schema_version"] != "world_genesis_frame/2" {
+		t.Fatalf("schema_version = %v", last["schema_version"])
+	}
+	if last["question"] != "Who are you here?" {
+		t.Fatalf("question = %v", last["question"])
+	}
+	opts := last["options"].([]any)
+	if len(opts) != 3 {
+		t.Fatalf("options = %d, want 3", len(opts))
+	}
+	rec := 0
+	for _, o := range opts {
+		if o.(map[string]any)["recommended"] == true {
+			rec++
+		}
+	}
+	if rec != 1 {
+		t.Fatalf("recommended = %d, want 1", rec)
+	}
+	if h, _ := last["handle"].(string); len(h) != 36 {
+		t.Fatalf("handle = %q", h)
+	}
+	// AC-7: the doc never crosses the wire — no frame carries cast, history or hiding.
+	for _, f := range frames {
+		for _, k := range []string{"cast", "history", "hiding", "knowledge"} {
+			if _, present := f[k]; present {
+				t.Fatalf("frame leaked %q", k)
+			}
+		}
+	}
+}
+
+// When the brief already states who the player is, there are no candidates to choose among — the
+// stream authors the scenario options in the same pass and ends there instead, one round-trip saved.
+func TestBuildSkipsToScenarioWhenIdentityStated(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town; I am the debt collector"}`)
+	last := frames[len(frames)-1]
+	if last["kind"] != "choice" || last["question"] != "How does it start?" {
+		t.Fatalf("terminal frame = %v", last)
+	}
+	if len(last["options"].([]any)) != 3 {
+		t.Fatal("want 3 scenario options")
 	}
 }

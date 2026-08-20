@@ -17,6 +17,9 @@ import (
 // of that line would have passed every suite in this repo and reproduced the original complaint
 // exactly.
 func TestGenesisBuild_CommissionsTheWorldsArt(t *testing.T) {
+	// TODO(Task 6): kickArt now fires from the kickstart route's commit, not build() — build() ends
+	// in a choice frame with nothing committed yet. Unskip once /worlds/genesis/kickstart exists.
+	t.Skip("moves to kickstart journey test — Task 6")
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
 

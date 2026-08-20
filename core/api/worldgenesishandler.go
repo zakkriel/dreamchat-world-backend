@@ -69,10 +69,13 @@ type worldGenesisHandler struct {
 	// images commissions the new world's art once it exists. Nil is an ordinary state — the world
 	// is built and playable either way; it simply has no pictures yet.
 	images *imageClient
+	// drafts holds an authored-but-uncommitted world between the choice frame that ends build() and
+	// the kickstart route that turns the user's answer into a commit (genesisdrafts.go).
+	drafts *draftStore
 }
 
 func NewWorldGenesisHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClient) http.Handler {
-	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge, images: images}
+	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge, images: images, drafts: newDraftStore(genesisDraftTTL)}
 }
 
 func (h *worldGenesisHandler) Match(r *http.Request) bool {
@@ -213,49 +216,42 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// One transaction for the whole world (AC-2), rolled back on every failure path below.
-	tx, err := h.pool.Begin(ctx)
-	if err != nil {
-		h.fail(frames, fmt.Errorf("build: begin: %w", err))
-		return
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
-
-	newID, err := commitWorldGenesis(ctx, tx, doc, req.Brief, req.ArtStyle)
-	if err != nil {
-		h.fail(frames, err)
-		return
-	}
-
-	// The frames narrate work that is now done and about to be made permanent. Emitted from the AUTHORED
-	// document rather than re-read from the database on purpose: what the user is told was authored is
-	// exactly what was authored, with no second projection to disagree with the first.
+	// Narration first — every line names authored content (law 2), commit or not.
 	for _, line := range genesisNarration(doc) {
-		_ = frames.emit("working", map[string]any{"stated": line})
+		if err := frames.emit("working", map[string]any{"stated": line}); err != nil {
+			return
+		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		h.fail(frames, fmt.Errorf("build: commit: %w", err))
-		return
+	draft := &genesisDraft{doc: doc, brief: req.Brief, artStyle: req.ArtStyle}
+	usd, in, out, cached, calls := costs.snapshot()
+	draft.tally.add(usd, in, out, cached, calls)
+
+	var question string
+	var options []map[string]any
+	if len(doc.ArrivalCandidates) > 0 {
+		question = "Who are you here?"
+		options = characterTurnOptions(doc)
+	} else {
+		// Identity stated in the brief: author the scenario options now, so the stream
+		// ends in the scenario question with no extra round-trip (spec, phase 1).
+		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), doc, req.Brief, doc.Arrival.CanonicalName, "")
+		if err != nil {
+			h.fail(frames, err)
+			return
+		}
+		draft.identity = &k.Identity
+		draft.scenarios = k.Scenarios
+		usd, in, out, cached, calls = costs.snapshot()
+		draft.tally = draftTally{}
+		draft.tally.add(usd, in, out, cached, calls) // snapshot is cumulative per sink; reset-then-add keeps the tally honest
+		question = "How does it start?"
+		options = scenarioTurnOptions(k.Scenarios)
 	}
-	worldID = newID
 
-	_ = frames.emit("world", map[string]any{
-		"id":           newID,
-		"display_name": strings.TrimSpace(doc.World.DisplayName),
-		"tagline":      strings.TrimSpace(doc.World.Tagline),
-		"playable":     true,
-	})
-
-	// The world is committed and the user has been told it is ready; its pictures are commissioned
-	// after that line, not before it. A dozen images is several minutes of another service, and
-	// nothing in the world is waiting on them: `image` is null until it is not, and swaps in on a
-	// later read (image_ref/1, D-8). Making the user watch a spinner for art they have not asked to
-	// see yet — or worse, losing an authored world because an image provider was down — is the
-	// trade this ordering refuses.
-	//
-	// It is detached from this request deliberately: the stream ends here, and the sweep outlives it.
-	kickArt(h.pool, h.images, newID)
+	handle := h.drafts.mint()
+	h.drafts.put(handle, draft)
+	_ = frames.emit("choice", map[string]any{"handle": handle, "question": question, "options": options})
 }
 
 // fail ends the stream honestly. A refusal carries the seat's own stated reason, because the user asked for
@@ -284,15 +280,47 @@ func genesisNarration(doc *genesisDoc) []string {
 	for _, a := range doc.Cast {
 		people = append(people, strings.TrimSpace(a.Descriptor))
 	}
-	return []string{
+	lines := []string{
 		fmt.Sprintf("%s — %s", strings.TrimSpace(doc.World.DisplayName), strings.TrimSpace(doc.World.Tagline)),
 		fmt.Sprintf("The place: %s.", strings.TrimSpace(doc.Region.Descriptor)),
 		"Rooms: " + strings.Join(rooms, "; ") + ".",
 		"Already here: " + strings.Join(people, "; ") + ".",
 		fmt.Sprintf("%d thing(s) that matter, and %d thing(s) somebody is not saying.", len(doc.Objects), len(doc.Cast)),
 		fmt.Sprintf("Before you: %d moment(s), and everyone remembers them differently.", len(doc.History)),
-		strings.TrimSpace(doc.Arrival.Stated),
 	}
+	// The arrival line names what has been decided. When candidates are offered, nothing has been
+	// decided yet — the arrival is a guess pending the user's choice — so law 2 forbids stating it.
+	if len(doc.ArrivalCandidates) == 0 {
+		lines = append(lines, strings.TrimSpace(doc.Arrival.Stated))
+	}
+	return lines
+}
+
+// characterTurnOptions renders candidates as choice options; recommended = the one matching the arrival.
+func characterTurnOptions(doc *genesisDoc) []map[string]any {
+	opts := make([]map[string]any, 0, len(doc.ArrivalCandidates))
+	rec := strings.TrimSpace(doc.Arrival.CanonicalName)
+	for _, c := range doc.ArrivalCandidates {
+		o := map[string]any{"label": c.CanonicalName, "implication": c.Descriptor + " — " + c.Why}
+		if strings.TrimSpace(c.CanonicalName) == rec {
+			o["recommended"] = true
+		}
+		opts = append(opts, o)
+	}
+	return opts
+}
+
+// scenarioTurnOptions renders authored scenarios as choice options.
+func scenarioTurnOptions(scenarios []kickstartScenario) []map[string]any {
+	opts := make([]map[string]any, 0, len(scenarios))
+	for _, s := range scenarios {
+		o := map[string]any{"label": s.Label, "implication": s.Why}
+		if s.Recommended {
+			o["recommended"] = true
+		}
+		opts = append(opts, o)
+	}
+	return opts
 }
 
 // genesisCostCeilingUSD reads the per-build warning ceiling. 0 disables it, mirroring
