@@ -19,8 +19,9 @@ mistake was made more than once.
 
 1. **`/docs/30_architecture/system_map.md`** — what exists, which repo owns it, and the seams you must
    not duplicate. If you are about to write something that already has an owner there, stop.
-2. **`/docs/30_architecture/adr/`** — the decisions. `ADR-P020`…`ADR-P023` are the operational ones
-   this repo bleeds from when they are not known.
+2. **`/docs/30_architecture/adr/`** — the decisions. Read `ADR-P020`…`ADR-P024` first: they cover
+   migrations, art, prompts, art styles and seat config. Not knowing them has caused a production
+   outage, a world shipped with no images, and a day of unnecessary work.
 3. **The pre-flight below**, run before you open a PR.
 4. **`/docs/00_strategy/06_rules_register.md`** — the law, as it always was.
 
