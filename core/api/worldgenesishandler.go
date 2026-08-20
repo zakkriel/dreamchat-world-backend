@@ -418,8 +418,6 @@ func (h *worldGenesisHandler) kickstart(w http.ResponseWriter, r *http.Request) 
 	// back from here on: the handle is spent. A repeat answer lands on the expired-handle 410 above,
 	// which is the truth — there is nothing left to retry.
 
-	usd, in, out, cached, calls := costs.snapshot()
-	draft.tally.add(usd, in, out, cached, calls)
 	// The aggregate line: draft.tally is the WHOLE build's spend — every seat call across every turn,
 	// genesis authoring through both kickstart answers — not just this request's. Mirrors build()'s own
 	// "world genesis timing" line exactly, but logged once, here, because this is the only moment a
