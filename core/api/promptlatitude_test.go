@@ -132,7 +132,7 @@ func TestImageStyleCarriesTheSameLatitude(t *testing.T) {
 	f := newFakePlatform()
 	c := testImageClient(t, f)
 
-	if _, err := c.ensureStyle(context.Background(), "dreamchat-default"); err != nil {
+	if _, err := c.ensureStyle(context.Background(), mustResolve(t, "")); err != nil {
 		t.Fatalf("ensureStyle: %v", err)
 	}
 

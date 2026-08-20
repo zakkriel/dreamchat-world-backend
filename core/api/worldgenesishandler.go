@@ -80,8 +80,12 @@ func (h *worldGenesisHandler) Match(r *http.Request) bool {
 // genesisRequest is the whole input surface of both routes: the brief, and whatever has been asked and
 // answered so far. The Fast lane omits answers and is otherwise identical — one pipeline, two lanes.
 type genesisRequest struct {
-	Brief   string            `json:"brief"`
-	Answers []InterviewAnswer `json:"answers,omitempty"`
+	Brief string `json:"brief"`
+	// ArtStyle is the look every picture this world ever renders is drawn in: a preset key from the
+	// catalogue, or "custom:" and the user's own description. Omitted is a real answer — it means the
+	// house look, which is what every world made before the picker existed still uses.
+	ArtStyle string            `json:"art_style,omitempty"`
+	Answers  []InterviewAnswer `json:"answers,omitempty"`
 }
 
 func (h *worldGenesisHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +192,15 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	// The style is validated BEFORE the seat call, because an unusable style key is the one refusal
+	// that can cost nothing: authoring a whole world and then discovering we cannot draw it would
+	// spend a build to report a typo. The module's own message is what the user reads — it names the
+	// styles that do exist.
+	if _, err := ResolveArtStyle(req.ArtStyle); err != nil {
+		h.fail(frames, refuse("%s", err.Error()))
+		return
+	}
+
 	// Authoring first, and it is the slow part: one seat call for a whole world. Nothing is written yet, so
 	// a refusal here costs nothing but the call.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
@@ -205,7 +218,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	newID, err := commitWorldGenesis(ctx, tx, doc, req.Brief)
+	newID, err := commitWorldGenesis(ctx, tx, doc, req.Brief, req.ArtStyle)
 	if err != nil {
 		h.fail(frames, err)
 		return

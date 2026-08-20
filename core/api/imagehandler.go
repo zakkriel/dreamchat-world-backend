@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -189,6 +191,35 @@ func portraitAppearance(descriptor, name string) string {
 	return name
 }
 
+// resolveWorldArtStyle reads the look this world was created with.
+//
+// Read per fill rather than cached: a style is a property of the world, and the day one can be
+// changed after creation this path already picks it up. A world with no choice — every world made
+// before the picker existed — resolves to the house style and keeps the profile its art is already
+// stored under.
+func resolveWorldArtStyle(ctx context.Context, pool *pgxpool.Pool, worldID string) (ArtStyle, error) {
+	var raw *string
+	err := pool.QueryRow(ctx, `SELECT art_style FROM world WHERE world_id = $1::uuid`, worldID).Scan(&raw)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		// No directory row for this id. That is not a style question and this is not the place to
+		// answer it: the fills' own target queries return nothing for a world that does not exist, so
+		// policing existence here would only duplicate that check and give it a misleading error.
+		return artStyleFallback, nil
+	case err != nil:
+		return ArtStyle{}, fmt.Errorf("resolve world art style: %w", err)
+	}
+	choice := ""
+	if raw != nil {
+		choice = *raw
+	}
+	style, err := ResolveArtStyle(choice)
+	if err != nil {
+		return ArtStyle{}, fmt.Errorf("resolve world art style: %w", err)
+	}
+	return style, nil
+}
+
 // fillPortraits requests a portrait for up to `limit` actors in this world that do not have one and
 // do not already have a job in flight, then waits for each to settle.
 //
@@ -212,7 +243,11 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 	}
 	out.Reclaimed = reclaimed
 
-	styleID, err := client.ensureStyle(ctx, "dreamchat-default")
+	style, err := resolveWorldArtStyle(ctx, pool, worldID)
+	if err != nil {
+		return out, err
+	}
+	styleID, err := client.ensureStyle(ctx, style)
 	if err != nil {
 		return out, err
 	}
@@ -519,7 +554,11 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 	}
 	out.Reclaimed = reclaimed
 
-	styleID, err := client.ensureStyle(ctx, "dreamchat-default")
+	style, err := resolveWorldArtStyle(ctx, pool, worldID)
+	if err != nil {
+		return out, err
+	}
+	styleID, err := client.ensureStyle(ctx, style)
 	if err != nil {
 		return out, err
 	}

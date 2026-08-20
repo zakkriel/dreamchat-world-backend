@@ -3957,6 +3957,8 @@ CREATE TABLE public.world (
     template_key text,
     archived_at timestamp with time zone,
     brief text,
+    art_style text,
+    CONSTRAINT world_art_style_check CHECK (((art_style IS NULL) OR (length(btrim(art_style)) > 0))),
     CONSTRAINT world_brief_check CHECK (((brief IS NULL) OR (length(btrim(brief)) > 0))),
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
     CONSTRAINT world_tagline_check CHECK (((tagline IS NULL) OR (length(btrim(tagline)) > 0))),
@@ -3983,6 +3985,13 @@ COMMENT ON COLUMN public.world.archived_at IS 'Superseded marker so retired worl
 --
 
 COMMENT ON COLUMN public.world.brief IS 'The prose a user typed to author this world. Operational provenance, never rendered: no projection selects it. NULL for hand-authored worlds.';
+
+
+--
+-- Name: COLUMN world.art_style; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.world.art_style IS 'Requested art style choice for this world (preset key or custom prose). NULL means no explicit choice and resolves to the house fallback profile.';
 
 
 --
@@ -4774,4 +4783,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260813160000'),
     ('20260814140000'),
     ('20260814170000'),
-    ('20260815150000');
+    ('20260815150000'),
+    ('20260815150001');

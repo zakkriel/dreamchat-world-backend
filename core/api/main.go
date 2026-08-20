@@ -35,6 +35,10 @@ func (rt *router) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // exactly the failure mode "hand-drive everything" exists to catch.
 func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClient) *router {
 	return &router{handlers: []matcher{
+		// GET /worlds/art-styles — the catalogue world creation offers. FIRST in the list because
+		// dispatch is first-match-wins and the id matchers below would otherwise read "art-styles"
+		// as a world id and 404 it.
+		NewWorldArtStylesHandler().(matcher),
 		NewPageHandler(pool, debug, "actors", "fn_actor_page").(matcher),
 		NewPageHandler(pool, debug, "locations", "fn_location_page").(matcher),
 		NewPageHandler(pool, debug, "artifacts", "fn_artifact_page").(matcher),
