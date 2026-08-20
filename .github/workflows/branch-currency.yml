@@ -15,6 +15,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # The PR HEAD, not the default refs/pull/N/merge.
+          #
+          # That merge ref contains origin/main BY CONSTRUCTION, so checking it out makes this gate
+          # pass on every branch — including the stale ones it exists to catch. The first version of
+          # this file did exactly that and reported SUCCESS on a probe branch cut twelve commits
+          # behind main. A gate that cannot fail is worse than no gate: it is a green tick that means
+          # nothing.
+          ref: ${{ github.event.pull_request.head.sha }}
       - name: The branch must contain origin/main
         run: |
           git fetch origin main --quiet
