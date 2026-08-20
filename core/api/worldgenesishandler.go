@@ -17,8 +17,11 @@ package main
 // WHY GENESIS STREAMS. A build is a long authored act with intermediate results — the same shape as a
 // beat, and the same transport for the same reason. The alternative was a two-minute blank screen ending
 // in a redirect, which tells the user nothing while it works and nothing about why if it fails. Every
-// frame here names something that was actually authored, in the world's own language; there is no
-// percentage, no ETA and no stage checklist rendered from a timer (law 2: never invent a displayed value).
+// frame here names something real, in the world's own language; there is no percentage, no ETA and no
+// stage checklist rendered from nothing (law 2: never invent a displayed value). While the one long seat
+// call is in flight the stream also says it is still alive — each liveness line states only measured
+// fact (the call is running, and for how long), because a silent minute is indistinguishable from a
+// hang and was reported as one.
 //
 // THREE PHASES, ONE TRANSACTION AT THE END. build() authors the whole world and stops — it narrates what
 // it wrote, then ends the stream in a `choice` frame instead of committing; nothing is written yet.
@@ -229,13 +232,24 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Authoring first, and it is the slow part: one seat call for a whole world. Nothing is written yet, so
-	// a refusal here costs nothing but the call.
+	// a refusal here costs nothing but the call. While the author writes, the stream keeps saying so —
+	// every heartbeat carries only measured fact (the call is in flight, and for how long), never a
+	// percentage or a stage. The heartbeats also keep an idle-sensitive proxy from closing the stream.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
+	stopHeartbeat := stillWriting(frames, start)
 	doc, err := authorWorld(ctx, h.bridge.Driver(SeatWorldGenesis.Name), req.Brief, req.Answers)
+	stopHeartbeat()
 	if err != nil {
 		h.fail(frames, err)
 		return
 	}
+
+	// The reply is back and already validated (authorWorld runs every belt check before returning), so
+	// these counts are facts about a world that now exists on paper — said first because the user has
+	// been staring at heartbeats for the whole authoring call.
+	_ = frames.emit("working", map[string]any{"stated": fmt.Sprintf(
+		"The author answered — %d places, %d people, %d objects, %d moments of history.",
+		len(doc.Places), len(doc.Cast), len(doc.Objects), len(doc.History))})
 
 	// Narration first — every line names authored content (law 2), commit or not.
 	for _, line := range genesisNarration(doc) {
@@ -273,6 +287,37 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	handle := h.drafts.mint()
 	h.drafts.put(handle, draft)
 	_ = frames.emit("choice", map[string]any{"handle": handle, "question": question, "options": options})
+}
+
+// genesisHeartbeatEvery is how often the build stream says the author is still writing. A var rather
+// than a const only so the handler test can shrink it; nothing else writes it.
+var genesisHeartbeatEvery = 10 * time.Second
+
+// stillWriting emits a liveness frame at a steady interval until stopped. Each line carries only
+// measured fact: the seat call is still in flight, and for how long — never a percentage, an ETA or a
+// stage (law 2). The returned stop blocks until the ticker goroutine has exited, so the caller can go
+// back to emitting on its own without racing it.
+func stillWriting(frames *frameWriter, start time.Time) (stop func()) {
+	done := make(chan struct{})
+	exited := make(chan struct{})
+	go func() {
+		defer close(exited)
+		tick := time.NewTicker(genesisHeartbeatEvery)
+		defer tick.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-tick.C:
+				_ = frames.emit("working", map[string]any{"stated": fmt.Sprintf(
+					"Still writing — %d seconds in.", int(time.Since(start).Seconds()))})
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-exited
+	}
 }
 
 // fail ends the stream honestly. A refusal carries the seat's own stated reason, because the user asked for
