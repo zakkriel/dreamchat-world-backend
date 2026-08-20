@@ -252,7 +252,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// trade this ordering refuses.
 	//
 	// It is detached from this request deliberately: the stream ends here, and the sweep outlives it.
-	commissionArtInBackground(h.pool, h.images, newID)
+	kickArt(h.pool, h.images, newID)
 }
 
 // fail ends the stream honestly. A refusal carries the seat's own stated reason, because the user asked for

@@ -32,6 +32,7 @@ mistake was made more than once.
 | Did I add a migration? Then `make migrate` and commit **BOTH** `core/db/schema.sql` and `core/api/migrations.txt`. | `make schema-check` fails otherwise. And see ADR-P020: merging is not applying. |
 | Did I publish a schema under `core/api/schema/`? Then a real payload must be captured in `ci/gen_payloads.sh`. | SPEC-011 fails the build on any published schema with no payload behind it. |
 | Do my tests fail if I revert the fix? | A fake must be at least as strict as the service it stands in for. Bugs have shipped green because the stand-in accepted what production rejects. Revert your fix, watch the test fail, restore it. |
+| Changing the latitude block? Then EVERY `core/api/prompts/*.txt` and the image latitude in `artstyle.go`, in one PR. | Editing two files and stopping is the exact miss that needed a founder to catch it. `go test -run Latitude` before you open the PR. |
 | Am I restating something a module already owns? | A style's look, a seat's latitude, an entity's art status. See the seam table in the system map. |
 | Did I change the shape the system map describes? | Then amend it in the SAME PR. |
 
@@ -56,6 +57,13 @@ mistake was made more than once.
 - **In-world time is a logical tick + display label** (B-5, ADR-030). Wall-clock `TIMESTAMPTZ` is
   operational telemetry, never domain time.
 - **Every JSONB payload carries `schema_version` and is validated** (D-4).
+- **Do not invent constraints.** If you cannot cite a rule ID, an ADR, or a line of code, you do not
+  have a constraint — you have a preference, and it does not belong in a plan, a PR, or a refusal.
+  The private/public test is ACCESS, not payment (ADR-P016): charging a user for their own world
+  keeps it private. Absence of a rule is not a prohibition, and a caution the register did not ask
+  for is noise that costs the reader time.
+- **A listed gap is ordered work, not a question.** Anything in `system_map.md` §7 under "not
+  enforced" may be built without asking. Same for a test that locks a Standing answer down.
 - **Clean cutover is the default.** Migrate every caller and delete the old path. Where a
   compatibility field genuinely survives it is documented AT the code and is not precedent — e.g. the
   legacy joined `narration` string in `beathandler.go` is kept deliberately for older clients. Adding
