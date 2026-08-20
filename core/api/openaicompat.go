@@ -87,6 +87,29 @@ type openAICompatDriver struct {
 // preamble, and far below any model's window. A seat that needs more says so in config.
 const defaultMaxTokens = 2048
 
+// defaultRequestTimeout preserves the existing fast-failure behavior for ordinary seats. World
+// genesis receives its longer default through seat configuration, and every value stays bounded.
+const (
+	defaultRequestTimeout = time.Minute
+	maxRequestTimeout     = 5 * time.Minute
+)
+
+// requestTimeoutFromParams parses the per-seat/provider wall-clock limit before any request can run.
+func requestTimeoutFromParams(params map[string]string) (time.Duration, error) {
+	timeout := defaultRequestTimeout
+	if v := strings.TrimSpace(params["request_timeout_seconds"]); v != "" {
+		seconds, err := strconv.Atoi(v)
+		if err != nil || seconds <= 0 {
+			return 0, fmt.Errorf("request_timeout_seconds %q is not a positive integer", v)
+		}
+		timeout = time.Duration(seconds) * time.Second
+		if timeout > maxRequestTimeout {
+			return 0, fmt.Errorf("request_timeout_seconds %q exceeds the maximum %s", v, maxRequestTimeout)
+		}
+	}
+	return timeout, nil
+}
+
 // newOpenAICompatDriver constructs an openai-compat driver from DriverConfig.
 // base_url and api_key are read from dc.Params; model from dc.Model.
 func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
@@ -128,6 +151,10 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		}
 		maxTokens = n
 	}
+	requestTimeout, err := requestTimeoutFromParams(dc.Params)
+	if err != nil {
+		return nil, err
+	}
 	var temperature *float64
 	if v := strings.TrimSpace(dc.Params["temperature"]); v != "" {
 		f, err := strconv.ParseFloat(v, 64)
@@ -160,7 +187,7 @@ func newOpenAICompatDriver(dc DriverConfig) (Driver, error) {
 		reasoning:   reasoning,
 		maxTokens:   maxTokens,
 		temperature: temperature,
-		client:      &http.Client{Timeout: 60 * time.Second},
+		client:      &http.Client{Timeout: requestTimeout},
 	}, nil
 }
 

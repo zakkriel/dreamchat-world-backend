@@ -451,6 +451,46 @@ func TestSeatConfig_MaxTokensIsPerSeatConfiguration(t *testing.T) {
 	}
 }
 
+// A whole-world authoring call is allowed more wall time than a beat seat, but that is a seat
+// property rather than a global relaxation: a slow decompose must still fail promptly.
+func TestSeatConfig_RequestTimeoutIsPerSeatConfiguration(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":                               "route:cheap",
+		"DREAMCHAT_SEATS":                                      "world_genesis=route:big",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":                    "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_REQUEST_TIMEOUT_SECONDS":     "45",
+		"DREAMCHAT_SEAT_REQUEST_TIMEOUT_SECONDS_WORLD_GENESIS": "180",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["decompose"].Params["request_timeout_seconds"]; got != "45" {
+		t.Fatalf("decompose request_timeout_seconds = %q, want the provider default", got)
+	}
+	if got := cfg["world_genesis"].Params["request_timeout_seconds"]; got != "180" {
+		t.Fatalf("world_genesis request_timeout_seconds = %q, want the seat override", got)
+	}
+}
+
+// World creation is the one intentionally long structured call. Its five-minute default replaces the
+// driver's former universal sixty-second deadline, while leaving all other seats at their existing
+// default unless configured otherwise.
+func TestSeatConfig_WorldGenesisRequestTimeoutDefaultsToFiveMinutes(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":            "route:m",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL": "https://aggregator.example/api/v1",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["world_genesis"].Params["request_timeout_seconds"]; got != "300" {
+		t.Fatalf("world_genesis request_timeout_seconds = %q, want 300", got)
+	}
+	if got := cfg["decompose"].Params["request_timeout_seconds"]; got != "" {
+		t.Fatalf("decompose request_timeout_seconds = %q, want no override", got)
+	}
+}
+
 // The combination that cost a live debugging session: json_object mandates an object reply, so an
 // array-rooted schema cannot be satisfied under it. The model returned a bare object, the belt
 // rejected it as "outside the closed vocabulary", and the error blamed the model's vocabulary for
@@ -820,5 +860,21 @@ func TestOpenAICompat_EmptyStreamIsAnError(t *testing.T) {
 	d, _ := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{"base_url": srv.URL}})
 	if _, err := d.(StreamingDriver).GenerateStream(t.Context(), GenRequest{Prompt: "p"}, func(string) {}); err == nil {
 		t.Fatal("an empty stream must be an error")
+	}
+}
+
+// A provider-wide timeout is still an explicit choice for world_genesis; its five-minute value is
+// only the fallback when neither configuration level names a timeout.
+func TestSeatConfig_ProviderTimeoutOverridesWorldGenesisFallback(t *testing.T) {
+	cfg, err := seatConfigFromEnv(env(map[string]string{
+		"DREAMCHAT_SEAT_DEFAULT":                           "route:m",
+		"DREAMCHAT_PROVIDER_ROUTE_BASE_URL":                "https://aggregator.example/api/v1",
+		"DREAMCHAT_PROVIDER_ROUTE_REQUEST_TIMEOUT_SECONDS": "120",
+	}))
+	if err != nil {
+		t.Fatalf("seatConfigFromEnv: %v", err)
+	}
+	if got := cfg["world_genesis"].Params["request_timeout_seconds"]; got != "120" {
+		t.Fatalf("world_genesis request_timeout_seconds = %q, want the provider override", got)
 	}
 }

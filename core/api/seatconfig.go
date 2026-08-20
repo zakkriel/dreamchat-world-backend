@@ -165,6 +165,17 @@ func routingFor(seat, provider string, lookup func(string) string) string {
 	return perSeatOrProvider(seat, provider, "ROUTING", seatRoutingEnvFmt, lookup)
 }
 
+// requestTimeoutFor keeps the ordinary short request deadline for every seat except world_genesis,
+// whose one whole-world document legitimately takes longer to author. Operators can override either
+// level; a positive timeout remains mandatory so one provider request cannot occupy a worker forever.
+func requestTimeoutFor(seat, provider string, lookup func(string) string) string {
+	timeout := perSeatOrProvider(seat, provider, "REQUEST_TIMEOUT_SECONDS", "DREAMCHAT_SEAT_REQUEST_TIMEOUT_SECONDS_%s", lookup)
+	if timeout == "" && seat == SeatWorldGenesis.Name {
+		return "300"
+	}
+	return timeout
+}
+
 // perSeatOrProvider reads a setting that has both a per-seat and a per-provider spelling, seat
 // first. Two settings use it and both want the same precedence, so the rule lives in one place
 // rather than being re-derived and eventually diverging.
@@ -200,6 +211,7 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 	maxTokens := perSeatOrProvider(seat, provider, "MAX_TOKENS", seatMaxTokensEnvFmt, lookup)
 	temperature := perSeatOrProvider(seat, provider, "TEMPERATURE", seatTemperatureEnvFmt, lookup)
 	reasoning := perSeatOrProvider(seat, provider, "REASONING", seatReasoningEnvFmt, lookup)
+	requestTimeout := requestTimeoutFor(seat, provider, lookup)
 	dialect := env("DIALECT")
 	if dialect == "" {
 		dialect = dialectOpenAICompat
@@ -231,15 +243,17 @@ func driverConfigForSeat(seat, spec string, lookup func(string) string) (DriverC
 			"temperature": temperature,
 			// Reasoning policy, verbatim JSON. Empty means "do not send one", which leaves the
 			// MODEL'S OWN default in force — and that default is not neutral: see the driver.
-			"reasoning": reasoning,
+			"reasoning":               reasoning,
+			"request_timeout_seconds": requestTimeout,
 		}
 		return DriverConfig{Provider: dialect, Model: model, Params: params}, nil
 	case dialectAnthropic:
 		// Reachable, and deliberately not special: Anthropic is one provider among several now, and
 		// the only thing that makes it different is that it is no longer the default.
 		return DriverConfig{Provider: dialect, Model: model, Params: map[string]string{
-			"api_key":        env("API_KEY"),
-			"provider_alias": provider,
+			"api_key":                 env("API_KEY"),
+			"provider_alias":          provider,
+			"request_timeout_seconds": requestTimeout,
 		}}, nil
 	default:
 		return DriverConfig{}, fmt.Errorf("provider %q: unknown dialect %q (known: %s, %s)",

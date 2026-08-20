@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 // anthropicCapturingRT records the outgoing request and returns a canned response, so the test
@@ -80,5 +81,24 @@ func TestAnthropicSchemaWrappedAsObject(t *testing.T) {
 	}
 	if len(chain) != 1 || chain[0]["type"] != "move" {
 		t.Fatalf("unexpected unwrapped chain: %q", out)
+	}
+}
+
+// The timeout configuration is provider-neutral: moving world_genesis between OpenAI-compatible and
+// Anthropic drivers must not bring back the fixed sixty-second limit.
+func TestAnthropic_RequestTimeoutIsConfiguredAndValidated(t *testing.T) {
+	drv, err := newAnthropicDriver(DriverConfig{Model: "claude-test", Params: map[string]string{
+		"request_timeout_seconds": "180",
+	}})
+	if err != nil {
+		t.Fatalf("newAnthropicDriver: %v", err)
+	}
+	if got := drv.(*anthropicDriver).client.Timeout; got != 3*time.Minute {
+		t.Fatalf("client timeout = %v, want 3m", got)
+	}
+	if _, err := newAnthropicDriver(DriverConfig{Model: "claude-test", Params: map[string]string{
+		"request_timeout_seconds": "0",
+	}}); err == nil {
+		t.Fatal("request_timeout_seconds=0 was accepted")
 	}
 }

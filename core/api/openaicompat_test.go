@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 // cannedChatCompletionsBody returns a minimal OpenAI-compatible chat/completions response.
@@ -266,5 +267,32 @@ func TestOpenAICompat_DefaultDriverFactory(t *testing.T) {
 	}
 	if drv == nil {
 		t.Fatal("DefaultDriverFactory(openai-compat) returned nil driver")
+	}
+}
+
+// Timeout policy is configuration, not a driver constant: long world authoring can wait while
+// ordinary seats retain the short default. Invalid values fail at startup instead of the first call.
+func TestOpenAICompat_RequestTimeoutIsConfiguredAndValidated(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(cannedChatCompletionsBody("x")))
+	}))
+	defer srv.Close()
+
+	drv, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+		"base_url": srv.URL, "request_timeout_seconds": "180",
+	}})
+	if err != nil {
+		t.Fatalf("newOpenAICompatDriver: %v", err)
+	}
+	if got := drv.(*openAICompatDriver).client.Timeout; got != 3*time.Minute {
+		t.Fatalf("client timeout = %v, want 3m", got)
+	}
+
+	for _, bad := range []string{"0", "-1", "slow", "301"} {
+		if _, err := newOpenAICompatDriver(DriverConfig{Model: "m", Params: map[string]string{
+			"base_url": srv.URL, "request_timeout_seconds": bad,
+		}}); err == nil {
+			t.Fatalf("request_timeout_seconds=%q was accepted", bad)
+		}
 	}
 }
