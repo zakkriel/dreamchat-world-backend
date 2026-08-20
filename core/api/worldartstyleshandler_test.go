@@ -33,17 +33,26 @@ func TestArtStylesEndpoint_ServesTheCatalogueInOrder(t *testing.T) {
 		t.Errorf("schema_version = %q", body.SchemaVersion)
 	}
 
-	want := []string{"anime", "realistic", "manhwa", "comic", "3d"}
+	// Derived from the module, never a second hardcoded list. ADR-P023 promises that adding a look is
+	// ONE entry in artStylePresets — a copy of the keys here would make that promise false, and the
+	// agent who believed it would find out from a red suite instead of from the ADR.
+	want := ArtStyleCatalogue()
 	if len(body.Styles) != len(want) {
-		t.Fatalf("got %d styles, want %d", len(body.Styles), len(want))
+		t.Fatalf("got %d styles, want %d — the endpoint and the catalogue disagree", len(body.Styles), len(want))
 	}
-	for i, key := range want {
-		if body.Styles[i].Key != key {
-			t.Errorf("style %d = %q, want %q", i, body.Styles[i].Key, key)
+	for i, style := range want {
+		if body.Styles[i].Key != style.Key {
+			t.Errorf("style %d = %q, want %q — display order is the catalogue's order", i, body.Styles[i].Key, style.Key)
 		}
-		if body.Styles[i].Label == "" || body.Styles[i].Blurb == "" {
-			t.Errorf("%s arrives with nothing to render", key)
+		if body.Styles[i].Label != style.Label || body.Styles[i].Blurb != style.Blurb {
+			t.Errorf("%s arrives with a label/blurb the catalogue did not author", style.Key)
 		}
+	}
+
+	// The catalogue itself must stay non-empty and renderable; deriving the expectation above would
+	// otherwise pass vacuously against an empty list.
+	if len(want) < 2 {
+		t.Fatalf("the catalogue has %d styles — this assertion would be vacuous", len(want))
 	}
 }
 

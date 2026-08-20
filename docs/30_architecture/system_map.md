@@ -184,7 +184,8 @@ honest split:
 | The style catalogue is served, in order, without leaking prompt prose | `worldartstyleshandler_test.go` |
 | Portals are not drawn | `artcommission_test.go` |
 | A PR branch contains `origin/main` | `.github/workflows/branch-currency.yml` |
-| Frontend contracts match backend `main` | `bun run verify:contract` |
+| A built world commissions its own art | `genesisart_test.go` |
+| Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 
 ### Not enforced — honour system, and known to be weak
 
@@ -194,7 +195,37 @@ honest split:
 | Mutation-test the guard you wrote | nothing forces the revert; the discipline is in the pre-flight only |
 | Amend this map in the PR that changes its shape | a CI check that a PR touching `art*.go`, `worldgenesis*`, `image*`, `prompts/`, `schemaversion*` also touches `system_map.md` |
 | The frontend must not hardcode the style catalogue | a contract test in `dream-weaver-visuals` |
-| New creation paths must not call the manual image triggers | a grep gate limiting who may call `fillScenes`/`fillPortraits` |
+| New creation paths must not call the manual image triggers | a grep gate limiting who may call `fillScenes`/`fillPortraits` (the KICK is now tested; the ban on hand-calling is not) |
 | Cite register rule IDs in plans and PRs | a PR-body check |
 
 Adding any row from the second table to the first is always in scope and never needs permission.
+
+
+---
+
+## 8. Trails that are longer than they look
+
+Three things an agent will do, and every file each one actually touches. These are written down
+because the ADRs promised shorter trails than the code has, and an agent that believed them found out
+from a red suite instead.
+
+**Adding an art style** — `artStylePresets` in `core/api/artstyle.go`, and nothing else. The endpoint
+test derives its expectation from `ArtStyleCatalogue()`, so the promise in ADR-P023 is now true. A
+preset naming a world genre (`cyberpunk`, `high-fantasy`) violates GA-2 and must not be added.
+
+**Adding a seat** — four places, and the suite will name the ones you miss:
+1. `core/api/prompts/<seat>.txt`, carrying the latitude block verbatim (ADR-P022).
+2. `allSeatNames` in `core/api/seatconfig.go` — omit it and `seatConfigFromEnv` rejects the seat's own
+   provider override with `unknown seat`.
+3. The `embedded` map in `core/api/promptlatitude_test.go` — the test fails on a prompt file with no
+   entry, by design.
+4. Its `Seat` definition and capability floor (D-13), plus a deterministic fake shaped like its own
+   output — a stand-in laxer than the real driver is how three bugs shipped green.
+
+**Publishing a schema under `core/api/schema/`** — SPEC-011 requires a REAL payload, and how you
+capture one depends on what produces it:
+- SQL projection → a query in `ci/gen_payloads.sh`.
+- Go-assembled response, SSE frame, or handler output → a Go test that writes the payload, invoked
+  from `gen_payloads.sh` (see how the genesis frames and `art_styles/1` are captured).
+- A seat/input contract rather than a response → also register it in `INPUT_CONTRACT_SCHEMAS` in
+  `ci/schema_contract.py`, or coverage fails on a schema that legitimately has no wire payload.

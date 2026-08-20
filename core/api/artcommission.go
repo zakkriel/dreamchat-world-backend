@@ -147,6 +147,12 @@ func commissionWorldArt(ctx context.Context, pool *pgxpool.Pool, client *imageCl
 // must outlive that request, so it takes a fresh context rather than the caller's. One sweep per
 // world at a time — genesis kicks one and the ticker may arrive moments later, and both would
 // otherwise pay for the same slots.
+// kickArt is the seam creation paths call, and exists as a var for one reason: a direct call is
+// unobservable, so nothing could prove that genesis actually commissions anything. The founder's
+// first report on this feature was a created world with no pictures — a silent missing call is
+// exactly the failure that started it, and it must be a test, not a comment.
+var kickArt = commissionArtInBackground
+
 func commissionArtInBackground(pool *pgxpool.Pool, client *imageClient, worldID string) {
 	if client == nil {
 		return
@@ -206,7 +212,7 @@ func runArtReconciler(pool *pgxpool.Pool, client *imageClient) {
 			cancel()
 
 			for _, id := range worlds {
-				commissionArtInBackground(pool, client, id)
+				kickArt(pool, client, id)
 			}
 		}
 	}()
