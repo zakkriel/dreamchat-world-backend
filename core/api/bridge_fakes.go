@@ -26,8 +26,10 @@ func NewFakeStructuredDriver(name string, table map[string]string) Driver {
 	return &fakeStructuredDriver{name: name, table: table}
 }
 
-func (f *fakeStructuredDriver) Name() string                { return f.name }
-func (f *fakeStructuredDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeStructuredDriver) Name() string { return f.name }
+func (f *fakeStructuredDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeStructuredDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -155,8 +157,10 @@ type fakeResolveDriver struct{ name string }
 
 func NewFakeResolveDriver() Driver { return &fakeResolveDriver{name: "fake-resolve"} }
 
-func (f *fakeResolveDriver) Name() string                { return f.name }
-func (f *fakeResolveDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeResolveDriver) Name() string { return f.name }
+func (f *fakeResolveDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeResolveDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -192,8 +196,10 @@ type fakeCognitionDriver struct{ name string }
 
 func NewFakeCognitionDriver() Driver { return &fakeCognitionDriver{name: "fake-cognition"} }
 
-func (f *fakeCognitionDriver) Name() string                { return f.name }
-func (f *fakeCognitionDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeCognitionDriver) Name() string { return f.name }
+func (f *fakeCognitionDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -220,12 +226,12 @@ func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (strin
 // same truth the seat's own scope check consults. Two lawful shapes exist (worldactor.go), and this
 // picks whichever the scene admits, preferring the first:
 //
-//   1. THE PRESENCE-BOUNDARY MOVE — an actor who is NOT here walks in (`ActorMoved` whose target is
-//      the scene). Always lawful by construction, and it is the shape that matters for a journey:
-//      the traveller is alone on the road, and the world's answer is that someone arrives. That IS
-//      the interruption the Journey design is built around.
-//   2. Otherwise, if two or more actors are already here, one speaks to another — the old behaviour,
-//      but with ids read from the scene instead of assumed.
+//  1. THE PRESENCE-BOUNDARY MOVE — an actor who is NOT here walks in (`ActorMoved` whose target is
+//     the scene). Always lawful by construction, and it is the shape that matters for a journey:
+//     the traveller is alone on the road, and the world's answer is that someone arrives. That IS
+//     the interruption the Journey design is built around.
+//  2. Otherwise, if two or more actors are already here, one speaks to another — the old behaviour,
+//     but with ids read from the scene instead of assumed.
 //
 // Actors are ordered by id so the choice is deterministic (replay-safe, like every other fake here).
 // Shape 2 picks from the END of that order, which in the seeded world means the two hooded figures
@@ -237,8 +243,10 @@ type fakeWorldActorDriver struct{ name string }
 
 func NewFakeWorldActorDriver() Driver { return &fakeWorldActorDriver{name: "fake-world-actor"} }
 
-func (f *fakeWorldActorDriver) Name() string                { return f.name }
-func (f *fakeWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeWorldActorDriver) Name() string { return f.name }
+func (f *fakeWorldActorDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 // worldSlicePresence is the slice shape this fake reads back: where the intrusion must land, and who
 // is standing where. Mirrors worldSliceScene (worldactorprompt.go) plus the presence roster.
@@ -352,8 +360,10 @@ var (
 
 func NewFakePlaceAuthorDriver() Driver { return &fakePlaceAuthorDriver{name: "fake-place-author"} }
 
-func (f *fakePlaceAuthorDriver) Name() string                { return f.name }
-func (f *fakePlaceAuthorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakePlaceAuthorDriver) Name() string { return f.name }
+func (f *fakePlaceAuthorDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakePlaceAuthorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -406,8 +416,10 @@ type fakeIntentDriver struct{ name string }
 
 func NewFakeIntentDriver() Driver { return &fakeIntentDriver{name: "fake-intent"} }
 
-func (f *fakeIntentDriver) Name() string                { return f.name }
-func (f *fakeIntentDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeIntentDriver) Name() string { return f.name }
+func (f *fakeIntentDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeIntentDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -517,15 +529,16 @@ func devSpokenContent(input string) string {
 // Two accommodations for how people and labels actually read, both needed once labels started
 // carrying disambiguating detail (fn_display_names_distinct):
 //
-//   • A LEADING ARTICLE is ignored on the candidate side. Labels are authored as descriptors —
+//   - A LEADING ARTICLE is ignored on the candidate side. Labels are authored as descriptors —
 //     "a hooded figure" — while players type "ask THE hooded figure". Requiring the article to match
 //     made the most natural sentence in the game bind nothing at all.
-//   • The BASE of a detailed label matches too. "a hooded figure by the bar" is offered so the player
+//   - The BASE of a detailed label matches too. "a hooded figure by the bar" is offered so the player
 //     CAN be specific, but they will usually start vague; "the hooded figure" must still name both
 //     and produce the UNRESOLVED that invites them to be specific. So each label is tried whole
 //     first (the specific answer wins, and wins by being longer), then at its base — the text before
 //     " by ". Without this the detail would make the ask unanswerable in the opposite direction: the
 //     player could pick one, but could no longer ask the vague question that raises the choice.
+//
 // Returns the winning candidates AND the form that matched them, so the caller can recover the
 // player's own words for an UNRESOLVED `reference`.
 func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) ([]Candidate, string) {
@@ -868,4 +881,67 @@ func (f *fakeWorldInterviewDriver) Generate(_ context.Context, req GenRequest) (
 		return "", fmt.Errorf("%s: marshal question: %w", f.name, err)
 	}
 	return string(out), nil
+}
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────────
+// FAKE: world_kickstart. Re-extracts the authored world from the prompt (see sectionAfter below) so
+// the fake grounds itself in the SAME doc the genesis fake made — prompt and fake cannot drift, and
+// the belt checks in kickstartDoc.validate() pass against whatever world is actually in front of it.
+// Offers three scenarios normally; grounds exactly the user's own opening as one when it is supplied.
+type fakeWorldKickstartDriver struct{}
+
+func NewFakeWorldKickstartDriver() Driver { return &fakeWorldKickstartDriver{} }
+
+func (f *fakeWorldKickstartDriver) Name() string { return "fake-world-kickstart" }
+
+func (f *fakeWorldKickstartDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+
+func (f *fakeWorldKickstartDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("fake world kickstart requires a schema, got none")
+	}
+	// Re-extract the authored world from the prompt: the fake grounds itself in the real doc,
+	// so prompt and fake cannot drift and the belt checks pass against whatever the genesis fake made.
+	world := sectionAfter(req.Prompt, worldKickstartWorldMarker, worldKickstartBriefMarker)
+	var doc genesisDoc
+	if err := json.Unmarshal([]byte(strings.TrimSpace(world)), &doc); err != nil {
+		return "", fmt.Errorf("fake world kickstart could not parse the world block: %w", err)
+	}
+	who := strings.TrimSpace(sectionAfter(req.Prompt, worldKickstartWhoMarker, worldKickstartOpeningMarker))
+	opening := strings.TrimSpace(sectionAfter(req.Prompt, worldKickstartOpeningMarker, ""))
+	place := strings.TrimSpace(doc.Arrival.Place) // populated by construction (worldgenesis.go:374-383)
+	name := who
+	if len(name) > 40 || strings.ContainsAny(name, ".,;") { // free text, not a candidate name: derive a short name
+		name = "The One Who Wrote In"
+	}
+	ident := fmt.Sprintf(`{"descriptor":"a stranger the room was not expecting","canonical_name":%q}`, name)
+	if opening != "" {
+		return fmt.Sprintf(`{"identity":%s,"scenarios":[{"label":"as you wrote it","place":%q,"why":"exactly what the user asked for","stated":%q}]}`,
+			ident, place, "I arrived the way I said I would."), nil
+	}
+	return fmt.Sprintf(`{"identity":%s,"scenarios":[`+
+		`{"label":"through the front door","place":%q,"why":"expected by nobody","stated":"I stepped in off the street.","recommended":true},`+
+		`{"label":"in the middle of it","place":%q,"why":"summoned by a note","stated":"I walked into an argument already going."},`+
+		`{"label":"the wrong address","place":%q,"why":"looking for somewhere else","stated":"I came in out of the rain."}]}`,
+		ident, place, place, place), nil
+}
+
+// sectionAfter returns the substring of s after the first occurrence of from, up to (but not
+// including) the first occurrence of until at or after that point — or to the end of s when until
+// is empty or not found. Shared by the fakes that parse their own prompt back apart (world_genesis,
+// world_kickstart) so no two of them drift on how a marker block's boundary is found.
+func sectionAfter(s, from, until string) string {
+	_, rest, ok := strings.Cut(s, from)
+	if !ok {
+		return ""
+	}
+	if until == "" {
+		return rest
+	}
+	if before, _, found := strings.Cut(rest, until); found {
+		return before
+	}
+	return rest
 }

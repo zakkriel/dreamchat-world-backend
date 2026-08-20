@@ -124,7 +124,7 @@ func main() {
 	}
 	bridge, err := NewBridge(seatCfg, DefaultDriverFactory,
 		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor,
-		SeatWorldGenesis, SeatWorldInterview)
+		SeatWorldGenesis, SeatWorldInterview, SeatWorldKickstart)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -203,6 +203,7 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 			"place_author":       {Provider: "fake-place-author", Model: "dev"},
 			"world_genesis":      {Provider: "fake-world-genesis", Model: "dev"},
 			"world_interview":    {Provider: "fake-world-interview", Model: "dev"},
+			"world_kickstart":    {Provider: "fake-world-kickstart", Model: "dev"},
 		}, nil
 	}
 	return seatConfigFromEnv(lookup)
