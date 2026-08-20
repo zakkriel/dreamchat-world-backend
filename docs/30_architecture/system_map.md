@@ -167,13 +167,13 @@ Services: `world-api`, `image-api`, `image-worker`, `Postgres` (image platform),
 
 ---
 
-## 7. What is mechanical, and what is still only written down
+## 7. Which rules a test enforces, and which are only written here
 
-A rule with a gate survives. A rule that relies on an agent choosing to comply gets re-taught by the
-founder, out loud, every few weeks — which is the failure this whole harness exists to end. So the
-honest split:
+A rule with a test or a CI check is obeyed. A rule that is only written down gets broken, and the
+founder has to notice and say so. Both lists below are accurate as of this commit — if you add a
+gate, move the row.
 
-### Enforced by a gate
+### Enforced — a test or CI check fails if you break it
 
 | Rule | Gate |
 |---|---|
@@ -187,7 +187,7 @@ honest split:
 | A built world commissions its own art | `genesisart_test.go` |
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 
-### Not enforced — honour system, and known to be weak
+### Not enforced — nothing stops you breaking these
 
 | Rule | The gate that does not exist yet |
 |---|---|
@@ -203,17 +203,22 @@ Adding any row from the second table to the first is always in scope and never n
 
 ---
 
-## 8. Trails that are longer than they look
+## 8. Which files to edit for common tasks
 
-Three things an agent will do, and every file each one actually touches. These are written down
-because the ADRs promised shorter trails than the code has, and an agent that believed them found out
-from a red suite instead.
+Every file you must change to add an art style, add a seat, or publish a schema.
 
-**Adding an art style** — `artStylePresets` in `core/api/artstyle.go`, and nothing else. The endpoint
+This list exists because the ADRs understated it. ADR-P023 said adding an art style is "one entry in
+`artStylePresets`. Do not add it anywhere else." That was wrong — a test file also hardcoded the list
+of styles, so a sixth style broke a test the ADR promised would not exist. (That test now reads the
+list from the module, so for art styles the ADR is finally correct.)
+
+Adding a seat is the worse case: the docs implied "write a prompt file," and it is four files.
+
+**Adding an art style — 1 file.** `artStylePresets` in `core/api/artstyle.go`. The endpoint
 test derives its expectation from `ArtStyleCatalogue()`, so the promise in ADR-P023 is now true. A
 preset naming a world genre (`cyberpunk`, `high-fantasy`) violates GA-2 and must not be added.
 
-**Adding a seat** — four places, and the suite will name the ones you miss:
+**Adding a seat — 4 files.** Miss one and a test names it:
 1. `core/api/prompts/<seat>.txt`, carrying the latitude block verbatim (ADR-P022).
 2. `allSeatNames` in `core/api/seatconfig.go` — omit it and `seatConfigFromEnv` rejects the seat's own
    provider override with `unknown seat`.
@@ -222,8 +227,8 @@ preset naming a world genre (`cyberpunk`, `high-fantasy`) violates GA-2 and must
 4. Its `Seat` definition and capability floor (D-13), plus a deterministic fake shaped like its own
    output — a stand-in laxer than the real driver is how three bugs shipped green.
 
-**Publishing a schema under `core/api/schema/`** — SPEC-011 requires a REAL payload, and how you
-capture one depends on what produces it:
+**Publishing a schema — 2 or 3 files.** The schema itself, plus a captured payload (SPEC-011 fails
+the build without one). Where the payload comes from depends on what produces it:
 - SQL projection → a query in `ci/gen_payloads.sh`.
 - Go-assembled response, SSE frame, or handler output → a Go test that writes the payload, invoked
   from `gen_payloads.sh` (see how the genesis frames and `art_styles/1` are captured).

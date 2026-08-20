@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P021 — the art reconciler ticker and the boot-time schema refusal (ADR-P020) are wired here.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"context"
 	"log"

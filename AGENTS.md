@@ -19,8 +19,9 @@ mistake was made more than once.
 
 1. **`/docs/30_architecture/system_map.md`** — what exists, which repo owns it, and the seams you must
    not duplicate. If you are about to write something that already has an owner there, stop.
-2. **`/docs/30_architecture/adr/`** — the decisions. `ADR-P020`…`ADR-P023` are the operational ones
-   this repo bleeds from when they are not known.
+2. **`/docs/30_architecture/adr/`** — the decisions. Read `ADR-P020`…`ADR-P024` first: they cover
+   migrations, art, prompts, art styles and seat config. Not knowing them has caused a production
+   outage, a world shipped with no images, and a day of unnecessary work.
 3. **The pre-flight below**, run before you open a PR.
 4. **`/docs/00_strategy/06_rules_register.md`** — the law, as it always was.
 
@@ -69,14 +70,39 @@ mistake was made more than once.
   legacy joined `narration` string in `beathandler.go` is kept deliberately for older clients. Adding
   a new shim needs a reason written next to it; "for safety" is not one.
 
-## Ground truth (read in this order)
-1. `/docs/MASTER_INDEX.md` — map of all docs, statuses, decisions.
-2. `/docs/00_strategy/06_rules_register.md` — **the law.** Every rule has an ID (B/C/D/E/F/GA + engine ADRs/invariants). Cite IDs in plans and PRs.
-3. `/docs/30_architecture/canon_engine/` — **FROZEN build contract (v4.1).** Start at its `00_INDEX.md`. The Master DDL (doc 03) is the only core schema. Never propose changes to this set; if implementation reveals a genuine problem, the output is a *proposed new ADR superseding by number in doc 02* — never a code workaround.
-4. `/docs/30_architecture/mvp_slice_and_bridge.md` — API contract + slice plan.
-5. `/docs/30_architecture/implementation_playbook_superpowers.md` — the chunk ladder we are executing.
-6. `/docs/superpowers/handovers/2026-08-08-three-repo-integration-handover.md` — **history, not current state.** Useful for the cross-repo contracts and the mistakes that cost time. **Superseded on world creation and images** by `system_map.md` + ADR-P021/P023: it still describes explicit image triggers and a `POST /worlds` that authors no entities. Where they disagree, the system map wins.
-7. `/docs/runbooks/full-stack-from-zero.md` — bringing up all four processes (DB, backend, image platform, frontend) with exact verified commands, plus the battery order that actually works and why.
+## Reference — the file you open tells you which docs it needs
+
+**Open the file you are about to change and read its first lines.** A file bound by a decision says
+so: `// Governed-by: ADR-P0xx — <one line on what it decides>`. Read that ADR before you edit. A file
+with no such line is not governed by a specific decision; the always-list below still applies.
+
+A test holds this together in both directions: an ADR that names a file as evidence and a file that
+names the ADR must agree, and a `Governed-by` pointing at an ADR that does not exist fails the build
+(`core/api/governance_test.go`).
+
+The list below is what those pointers lead INTO. It is not a reading list you work through.
+
+**Always, regardless of route:**
+- `/docs/00_strategy/06_rules_register.md` — **the law.** Every rule has an ID. Cite the IDs you rely on.
+- `/docs/30_architecture/system_map.md` — what exists and who owns it.
+
+**Routed — read the one that covers what you are touching:**
+- `/docs/30_architecture/adr/` — the decisions. P020 migrations · P021 art · P022 prompts ·
+  P023 art styles · P024 seat config.
+- `/docs/30_architecture/canon_engine/` — **FROZEN build contract (v4.1)**, start at `00_INDEX.md`.
+  Required before touching the gate, the Master DDL (doc 03), or any invariant. Never propose changes
+  to this set; a genuine problem produces a proposed superseding ADR in doc 02, never a code workaround.
+- `/docs/30_architecture/mvp_slice_and_bridge.md` — API contract + slice plan.
+- `/docs/open-spec-items.md` — the deferred seams. Check before building something that was parked.
+
+**Look up, do not read front-to-back:**
+- `/docs/MASTER_INDEX.md` — the map of everything, with statuses.
+- `/docs/30_architecture/implementation_playbook_superpowers.md` — the chunk ladder.
+- `/docs/runbooks/full-stack-from-zero.md` — exact commands to bring the stack up. Open it when you
+  are bringing the stack up.
+- `/docs/superpowers/handovers/2026-08-08-three-repo-integration-handover.md` — **history.**
+  Superseded on world creation and images by `system_map.md` + ADR-P021/P023. Where they disagree,
+  the system map wins.
 
 ## Iron rules (non-negotiable; full versions in the register)
 - **Canon events are immutable; nothing mutates canon directly.** LLMs and modules *propose*; the deterministic validation gate decides (ADR-001/009, D-1).
