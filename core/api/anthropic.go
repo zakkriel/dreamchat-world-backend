@@ -19,7 +19,6 @@ import (
 	"io"
 	"net/http"
 	"os"
-	"time"
 )
 
 const anthropicMessagesURL = "https://api.anthropic.com/v1/messages"
@@ -47,6 +46,10 @@ func newAnthropicDriver(dc DriverConfig) (Driver, error) {
 	if dc.Model == "" {
 		return nil, fmt.Errorf("anthropic: Model is required")
 	}
+	requestTimeout, err := requestTimeoutFromParams(dc.Params)
+	if err != nil {
+		return nil, fmt.Errorf("anthropic: %w", err)
+	}
 	// The key rides Params like every other provider's, so one scheme configures all of them.
 	// ANTHROPIC_API_KEY stays as a fallback because it is what an operator will reach for first.
 	apiKey := dc.Params["api_key"]
@@ -56,7 +59,7 @@ func newAnthropicDriver(dc DriverConfig) (Driver, error) {
 	return &anthropicDriver{
 		model:  dc.Model,
 		apiKey: apiKey,
-		client: &http.Client{Timeout: 60 * time.Second},
+		client: &http.Client{Timeout: requestTimeout},
 	}, nil
 }
 
