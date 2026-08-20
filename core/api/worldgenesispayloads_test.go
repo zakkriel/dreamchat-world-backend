@@ -96,6 +96,16 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	}
 	h := NewWorldGenesisHandler(pool, true, bridge, nil)
 
+	// The style catalogue, through the real handler. Captured here rather than in a fixture because
+	// SPEC-011 validates what the WIRE carried: a published schema with no real payload behind it has
+	// only ever been checked against someone's idea of the shape.
+	styleRec := httptest.NewRecorder()
+	NewWorldArtStylesHandler().ServeHTTP(styleRec, httptest.NewRequest(http.MethodGet, "/worlds/art-styles", nil))
+	if styleRec.Code != http.StatusOK {
+		t.Fatalf("art-styles status = %d, want 200", styleRec.Code)
+	}
+	writePayload(t, dir, "art_styles_1.json", bytes.TrimSpace(styleRec.Body.Bytes()))
+
 	// The interview turn, through the real handler.
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, jsonPost("/worlds/interview", `{"brief":"`+testBrief+`"}`))
