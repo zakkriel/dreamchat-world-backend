@@ -3,6 +3,8 @@
 **Status:** Accepted (2026-08-16)
 **Date:** 2026-08-16
 **Series:** Platform / Operations (ADR-P###, per D-5) — does NOT touch frozen engine canon.
+**Governing rules:** D-9 (evidence once code runs) and D-6 (git `/docs` is the source of truth) —
+this ADR records an operational contract the register did not previously cover.
 **Owner of decision:** the naming-wall incident (below).
 **Evidence (D-9):** `core/api/schemaversion.go`, `core/api/migrations.txt`, the manifest guard in
 `Makefile` (`migrate` regenerates, `schema-check` diffs), `core/api/schemaversion_test.go`. Filed

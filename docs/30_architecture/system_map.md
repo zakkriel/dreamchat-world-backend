@@ -12,6 +12,13 @@ found it.
 
 ## 1. Three repositories, one product
 
+The split itself is not decided here — it is **D-3** (the Image Platform never owns world truth) and
+**D-7** (the frontend owns presentation only), described at length in
+`modules/modular_architecture_world_engine.md` §2.1–2.3 and `modules/plug_and_play_module_architecture.md`.
+Those documents are largely *proposed* module architecture and use "should"; this section records only
+what is running today, and where they disagree with reality, reality is here and the module system
+they describe is still unbuilt.
+
 ```mermaid
 graph LR
   FE["dream-weaver-visuals<br/>(React, Lovable-deployed)<br/>renders, never decides"]

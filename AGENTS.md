@@ -48,6 +48,14 @@ mistake was made more than once.
 - **A style's look lives in `artstyle.go` and nowhere else** (ADR-P023). Clients pick by key.
 - **The live frontend is `dream-weaver-visuals`.** `dreamchat-frontend` is the older repo.
   `dc-fix/` is a stale git WORKTREE of this repo, not a separate project, and is not deployed.
+- **Canon is written through `apply_event` / `apply_ruled_event`, never directly** (D-1, ADR-009).
+  Genesis' `origin='fast_path'` is the one documented exception and it exists because the actors an
+  event would reference do not exist yet. Bypassing the gate corrupts replay (I-1) and provenance (I-2).
+- **A user-facing read goes through the perception functions** (B-1, I-3) — `fn_visible_perceptions`,
+  `fn_display_name`. Querying `*_state` for a payload leaks canon and is how a page learns to lie.
+- **In-world time is a logical tick + display label** (B-5, ADR-030). Wall-clock `TIMESTAMPTZ` is
+  operational telemetry, never domain time.
+- **Every JSONB payload carries `schema_version` and is validated** (D-4).
 - **Clean cutover is the default.** Migrate every caller and delete the old path. Where a
   compatibility field genuinely survives it is documented AT the code and is not precedent — e.g. the
   legacy joined `narration` string in `beathandler.go` is kept deliberately for older clients. Adding

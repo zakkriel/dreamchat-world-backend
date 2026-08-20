@@ -6,6 +6,7 @@
 axis. Attaches to D-13 / ADR-P018 (per-seat routing).
 **Owner of decision:** raised by the harness review (Challenger §5), on evidence from the
 world-creation bring-up.
+**Governing rules:** D-13 (per-seat routing) and D-9 (evidence once code runs).
 **Evidence (D-9):** `core/api/seatconfig.go` (`DREAMCHAT_SEAT_MAX_TOKENS_%s`,
 `DREAMCHAT_SEAT_JSON_MODE_%s`), `.env.example` (the measured genesis figures), and the production
 incident recorded below.
