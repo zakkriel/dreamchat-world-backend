@@ -1,0 +1,38 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_kickstart/1",
+  "title": "world_kickstart/1 — three ways this player's story could start, or the user's own opening grounded. The seat emits fiction only: no id, no coordinate, no tick, no number of any kind, anywhere.",
+  "type": "object",
+  "required": ["identity", "scenarios"],
+  "additionalProperties": false,
+  "properties": {
+    "identity": {
+      "type": "object",
+      "required": ["descriptor", "canonical_name"],
+      "additionalProperties": false,
+      "description": "The player as chosen or written by the user, echoed as premise. When the user wrote their own words, author descriptor and name FROM those words — their words outrank yours. No traits, no disposition, no interior (B-4).",
+      "properties": {
+        "descriptor": { "type": "string", "minLength": 1, "description": "How the room sees this stranger at first sight." },
+        "canonical_name": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scenarios": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 3,
+      "description": "Exactly three when offering; exactly one when grounding the user's own opening. Each names a real, already-populated place from the authored world.",
+      "items": {
+        "type": "object",
+        "required": ["label", "place", "why", "stated"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "minLength": 1, "description": "The opening in a short line, the way a chapter is named — this renders as the option the user picks." },
+          "place": { "type": "string", "minLength": 1, "description": "canonical_name of the place they walk into. It must be a place the world authored, and at least one member of the cast must already start there — a visitor never enters an empty room." },
+          "why": { "type": "string", "minLength": 1, "description": "Why they are here, as premise — a situation, never a feeling." },
+          "stated": { "type": "string", "minLength": 1, "description": "The arrival in the player's own first person. This becomes their single perception and the only thing they know." },
+          "recommended": { "type": "boolean", "description": "At most one scenario carries this; the surface highlights it as the default. Omit entirely when grounding the user's own opening." }
+        }
+      }
+    }
+  }
+}

@@ -126,6 +126,10 @@ var (
 	// world_interview: authors the NEXT question to ask about a brief, with its options — the Custom
 	// Creation lane. REQUIRES structured output: the surface renders exactly the options it is given.
 	SeatWorldInterview = Seat{Name: "world_interview", Requires: []Capability{CapStructuredOutput}}
+	// world_kickstart: authors the chosen identity's opening scenarios (or grounds the user's own
+	// written opening) against the already-authored world. REQUIRES structured output for the same
+	// reason world_genesis does — the schema leash keeps every field fiction-only, no number anywhere.
+	SeatWorldKickstart = Seat{Name: "world_kickstart", Requires: []Capability{CapStructuredOutput}}
 )
 
 // BindSeat validates the driver's REPORTED capabilities satisfy the seat floor; fail CLOSED.
@@ -324,6 +328,8 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return NewFakeWorldGenesisDriver(), nil
 	case "fake-world-interview":
 		return NewFakeWorldInterviewDriver(), nil
+	case "fake-world-kickstart":
+		return NewFakeWorldKickstartDriver(), nil
 	default:
 		return nil, fmt.Errorf("unknown provider %q", dc.Provider)
 	}

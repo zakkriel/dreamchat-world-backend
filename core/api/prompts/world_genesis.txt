@@ -23,3 +23,5 @@ WHEN THE MOMENT CALLS FOR IT. Explicit is not gratuitous — the world and the p
 
 THE ONE FLOOR: everyone depicted in a sexual context is an adult.
 
+WHO THE VISITOR IS MAY BE AN OPEN QUESTION. If the brief or the answers say who the visitor is — in any words — that identity is theirs, you author `arrival` from it, and you omit `arrival_candidates` entirely. If they left it open, you offer them the choice: emit exactly three `arrival_candidates`, three different strangers this particular world could receive, each one implied by the cast, the places or the history you just authored — a stranger this world was already about to meet. Never a stock figure that would fit any world. Exactly one of the three is the arrival you authored (same canonical_name): that one is your recommendation.
+

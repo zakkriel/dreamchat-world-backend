@@ -81,12 +81,13 @@ type genesisDoc struct {
 		Descriptor  string `json:"descriptor"`
 		ExtentClass string `json:"extent_class"`
 	} `json:"region"`
-	Places  []genesisPlace  `json:"places"`
-	Ways    []genesisWay    `json:"ways"`
-	Cast    []genesisActor  `json:"cast"`
-	Objects []genesisObject `json:"objects"`
-	History []genesisEvent  `json:"history"`
-	Arrival genesisArrival  `json:"arrival"`
+	Places            []genesisPlace     `json:"places"`
+	Ways              []genesisWay       `json:"ways"`
+	Cast              []genesisActor     `json:"cast"`
+	Objects           []genesisObject    `json:"objects"`
+	History           []genesisEvent     `json:"history"`
+	Arrival           genesisArrival     `json:"arrival"`
+	ArrivalCandidates []genesisCandidate `json:"arrival_candidates,omitempty"`
 }
 
 type genesisPlace struct {
@@ -151,6 +152,12 @@ type genesisArrival struct {
 	Place         string `json:"place"`
 	Stated        string `json:"stated"`
 	Why           string `json:"why,omitempty"`
+}
+
+type genesisCandidate struct {
+	Descriptor    string `json:"descriptor"`
+	CanonicalName string `json:"canonical_name"`
+	Why           string `json:"why"`
 }
 
 // InterviewAnswer is one question the user was asked and what they said back. Carried by the client on
@@ -380,6 +387,32 @@ func (d *genesisDoc) validate() error {
 	}
 	if !someoneThere {
 		return refuse("nobody is in %q when the player walks in", d.Arrival.Place)
+	}
+
+	// Arrival candidates: optional, but when present the offer must be coherent — exactly three,
+	// every field filled, names distinct, and exactly one of them IS the arrival (the recommendation).
+	if len(d.ArrivalCandidates) > 0 {
+		if len(d.ArrivalCandidates) != 3 {
+			return refuse("arrival candidates must number exactly three, got %d", len(d.ArrivalCandidates))
+		}
+		seen := map[string]bool{}
+		matches := 0
+		for _, c := range d.ArrivalCandidates {
+			name := strings.TrimSpace(c.CanonicalName)
+			if name == "" || strings.TrimSpace(c.Descriptor) == "" || strings.TrimSpace(c.Why) == "" {
+				return refuse("an arrival candidate is missing its name, descriptor or why")
+			}
+			if seen[name] {
+				return refuse("two arrival candidates share the name %q", name)
+			}
+			seen[name] = true
+			if name == strings.TrimSpace(d.Arrival.CanonicalName) {
+				matches++
+			}
+		}
+		if matches != 1 {
+			return refuse("exactly one arrival candidate must be the arrival itself (the recommended default); %d match", matches)
+		}
 	}
 
 	// Objects: somewhere findable, exactly one somewhere.

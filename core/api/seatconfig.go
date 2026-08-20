@@ -72,7 +72,7 @@ var allSeatNames = []string{
 	SeatDecompose.Name, SeatNarrate.Name, SeatResolve.Name,
 	SeatCognitionBatch.Name, SeatCognitionIsolated.Name,
 	SeatWorldActor.Name, SeatPlaceAuthor.Name,
-	SeatWorldGenesis.Name, SeatWorldInterview.Name,
+	SeatWorldGenesis.Name, SeatWorldInterview.Name, SeatWorldKickstart.Name,
 }
 
 // seatConfigFromEnv resolves the seat→driver map from the environment. Pure apart from the reads,
