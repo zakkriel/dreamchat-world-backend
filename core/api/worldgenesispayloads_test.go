@@ -186,6 +186,11 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	if err := json.Unmarshal(turn1Rec.Body.Bytes(), &turn1); err != nil {
 		t.Fatalf("kickstart turn 1 response is not JSON: %v", err)
 	}
+	if turn1["done"] != false {
+		t.Fatalf("kickstart turn 1 done = %v, want false — both oneOf branches validate against the same "+
+			"schema, so a regressed commit path would still pass the schema-contract gate while this "+
+			"capture silently stopped being the `question` branch it is named for", turn1["done"])
+	}
 
 	// Kickstart turn 2: the scenario choice — the one transaction that commits (AC-2). The response is
 	// the `done:true` branch, carrying the playable world.
@@ -197,6 +202,15 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	h.ServeHTTP(turn2Rec, jsonPost("/worlds/genesis/kickstart", string(turn2Body)))
 	if turn2Rec.Code != http.StatusOK {
 		t.Fatalf("kickstart turn 2 status = %d, want 200 (body %s)", turn2Rec.Code, turn2Rec.Body.String())
+	}
+	var turn2 map[string]any
+	if err := json.Unmarshal(turn2Rec.Body.Bytes(), &turn2); err != nil {
+		t.Fatalf("kickstart turn 2 response is not JSON: %v", err)
+	}
+	if turn2["done"] != true {
+		t.Fatalf("kickstart turn 2 done = %v, want true — same schema, both branches: a stalled commit "+
+			"would still validate while world_kickstart_turn_1_world.json silently captured a question "+
+			"instead of the world branch it is named for", turn2["done"])
 	}
 	writePayload(t, dir, "world_kickstart_turn_1_world.json", bytes.TrimSpace(turn2Rec.Body.Bytes()))
 
