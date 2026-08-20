@@ -24,6 +24,7 @@ import (
 var imageAssetRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/([A-Za-z0-9_-]{1,128})$`)
 var imagePortraitsRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/portraits$`)
 var imageScenesRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/scenes$`)
+var imageRegenerateRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/images/regenerate$`)
 
 type imageHandler struct {
 	pool   *pgxpool.Pool
@@ -42,13 +43,15 @@ func (h *imageHandler) Match(r *http.Request) bool {
 			!imagePortraitsRoute.MatchString(r.URL.Path) &&
 			!imageScenesRoute.MatchString(r.URL.Path)
 	case http.MethodPost:
-		return imagePortraitsRoute.MatchString(r.URL.Path) || imageScenesRoute.MatchString(r.URL.Path)
+		return imagePortraitsRoute.MatchString(r.URL.Path) || imageScenesRoute.MatchString(r.URL.Path) || imageRegenerateRoute.MatchString(r.URL.Path)
 	}
 	return false
 }
 
 func (h *imageHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case r.Method == http.MethodPost && imageRegenerateRoute.MatchString(r.URL.Path):
+		h.regenerate(w, r)
 	case r.Method == http.MethodPost && imageScenesRoute.MatchString(r.URL.Path):
 		h.trigger(w, r, imageScenesRoute, fillScenes)
 	case r.Method == http.MethodPost:
@@ -123,6 +126,35 @@ func forgetAsset(ctx context.Context, pool *pgxpool.Pool, worldID, assetID, reas
 	}
 }
 
+type imageRegenerateResult struct {
+	SchemaVersion string `json:"schema_version"`
+	Cleared       int64  `json:"cleared"`
+}
+
+func (h *imageHandler) regenerate(w http.ResponseWriter, r *http.Request) {
+	m := imageRegenerateRoute.FindStringSubmatch(r.URL.Path)
+	if m == nil {
+		http.NotFound(w, r)
+		return
+	}
+	worldID := m[1]
+	// Refusing BEFORE the delete: clearing the cast's slots with no platform configured would erase
+	// the world's existing art with nothing able to redraw it — a destructive no-op wearing a 200.
+	if h.client == nil {
+		http.Error(w, "image platform not configured", http.StatusServiceUnavailable)
+		return
+	}
+	tag, err := h.pool.Exec(r.Context(), `DELETE FROM image_slot WHERE world_id=$1::uuid AND owner_kind='actor'`, worldID)
+	if err != nil {
+		log.Printf("images: regenerate %s: %v", worldID, err)
+		http.Error(w, "image regeneration failed", http.StatusInternalServerError)
+		return
+	}
+	kickArt(h.pool, h.client, worldID)
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(imageRegenerateResult{SchemaVersion: "image_regenerate/1", Cleared: tag.RowsAffected()})
+}
+
 type portraitsResult struct {
 	SchemaVersion string `json:"schema_version"`
 	// Slots freed because the asset they named will not be served again. This is the number that
@@ -183,6 +215,50 @@ func (h *imageHandler) trigger(w http.ResponseWriter, r *http.Request, route *re
 // respecting the concurrency cap is also what keeps polling inside the request-rate budget, so this
 // is one number serving both limits rather than two guesses.
 const imageBatchLimit = 5
+
+var spriteEmotionOrder = []string{"neutral", "happy", "angry", "sad"}
+
+func spriteVariantKey(emotion string) string {
+	return "emotion_" + emotion
+}
+
+// The sprite vocabulary lives HERE, not on the image platform. The platform renders caller-defined
+// pack cells verbatim — it stores, anchors, and reuses variants without knowing what a key means —
+// so what a "happy" bust looks like is this repo's decision, changeable without touching their API.
+const (
+	// spriteFramingPrompt is the visual-novel staging contract: a bust the frontend layers over a
+	// backdrop, so never a full body and never a scene.
+	spriteFramingPrompt = "bust portrait, head and chest only, subject centered, facing viewer, plain uniform background"
+	// spriteConsistencyPrompt holds the outfit constant across the four renders of one anchored
+	// identity — the whole reason the variants are one pack against one anchor.
+	spriteConsistencyPrompt = "same character, same outfit, same hairstyle as the reference"
+	// spriteAspectRatio is portrait orientation for a bust.
+	spriteAspectRatio = "3:4"
+)
+
+// spriteEmotionPrompts is the per-emotion expression phrase, written in the vocabulary image models
+// respond to (face and posture, not abstract mood words alone).
+var spriteEmotionPrompts = map[string]string{
+	"neutral": "calm, composed expression",
+	"happy":   "warm open smile, bright eyes",
+	"angry":   "furrowed brow, gritted teeth, hard stare",
+	"sad":     "downcast eyes, sorrowful expression",
+}
+
+// spritePackVariants composes the four caller-defined cells for one actor: the entity's authored
+// appearance, the framing and consistency clauses, then the emotion. The appearance is the same
+// prose the identity was registered with — a picture is of the THING, and the thing is described
+// once (portraitAppearance).
+func spritePackVariants(appearance string) []imagePackVariant {
+	out := make([]imagePackVariant, 0, len(spriteEmotionOrder))
+	for _, emotion := range spriteEmotionOrder {
+		out = append(out, imagePackVariant{
+			Key:    spriteVariantKey(emotion),
+			Prompt: appearance + ". " + spriteFramingPrompt + ". " + spriteConsistencyPrompt + ". Expression: " + spriteEmotionPrompts[emotion] + ".",
+		})
+	}
+	return out
+}
 
 func portraitAppearance(descriptor, name string) string {
 	if descriptor != "" {
@@ -252,22 +328,33 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		return out, err
 	}
 
-	// Actors with no picture and nothing in flight. fn_display_name is NOT used: a portrait is of the
-	// entity itself, not of anyone's opinion of it, so the platform is told the canonical name. This
-	// is the one place a canonical name legitimately leaves the engine, and it leaves it to a private
-	// service rather than to a player — no perception boundary is crossed (B-1 governs what reaches
-	// the FRONTEND, and a portrait's prompt never does).
 	rows, err := pool.Query(ctx, `
 		SELECT er.entity_id::text, er.canonical_name,
 		       coalesce(a.attrs->>'descriptor', '')
 		  FROM entity_registry er
 		  LEFT JOIN actor_state a ON a.entity_id = er.entity_id AND a.world_id = er.world_id
-		  LEFT JOIN image_slot s
-		    ON s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
+		  LEFT JOIN LATERAL (
+			SELECT
+				count(*) AS slot_count,
+				count(*) FILTER (WHERE s.variant = ANY($3::text[])) AS emotion_rows,
+				count(*) FILTER (WHERE s.variant = ANY($3::text[]) AND s.asset_id IS NOT NULL) AS emotion_filled,
+				bool_or(s.variant = ANY($3::text[]) AND s.job_id IS NOT NULL) AS emotion_in_flight,
+				count(*) FILTER (WHERE s.variant = 'default' AND s.asset_id IS NOT NULL) AS default_filled,
+				bool_or(s.variant = 'default' AND s.job_id IS NOT NULL) AS default_in_flight
+			  FROM image_slot s
+			 WHERE s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
+		  ) st ON true
 		 WHERE er.world_id = $1 AND er.entity_kind = 'actor'
-		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+		   AND (
+			 st.slot_count = 0 OR
+			 (st.emotion_rows > 0 AND st.emotion_filled < 4 AND NOT coalesce(st.emotion_in_flight, false)) OR
+			 -- Legacy rows whose one picture is GONE (reaped or errored): #58's rule holds — a dead
+			 -- reference refills, and it refills in the sprite format. A FILLED legacy slot stays
+			 -- untouched; converting live art is the regenerate button's job, not the sweep's.
+			 (st.emotion_rows = 0 AND st.default_filled = 0 AND NOT coalesce(st.default_in_flight, false))
+		   )
 		 ORDER BY er.entity_id
-		 LIMIT $2`, worldID, limit)
+		 LIMIT $2`, worldID, limit, spriteEmotionOrder)
 	if err != nil {
 		return out, err
 	}
@@ -287,24 +374,24 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 	}
 
 	for _, t := range targets {
-		// canonical_visual_traits is REQUIRED on upsert (a 400 the quickstart's prose does not flag,
-		// found on the first live handshake). The honest source is the entity's own Tier-2 descriptor
-		// — literally "what a stranger sees" — so the portrait is conditioned on what the world
-		// already says the thing looks like, rather than on traits invented at the boundary. An actor
-		// with no descriptor falls back to its name, which is thin but true; nothing is fabricated.
 		appearance := portraitAppearance(t.descriptor, t.name)
-		identityID, err := client.upsertIdentity(ctx, "character", t.id, worldID, t.name, styleID,
-			map[string]string{"appearance": appearance})
-		if err != nil {
+		// The identity id is re-read below via getIdentity — the platform keys anchors and packs on it,
+		// and the freshly-read copy is the one whose anchor list is trusted.
+		if _, err := client.upsertIdentity(ctx, "character", t.id, worldID, t.name, styleID,
+			map[string]string{"appearance": appearance}); err != nil {
 			out.Failed++
-			recordSlotError(ctx, pool, worldID, t.id, err.Error())
+			for _, emotion := range spriteEmotionOrder {
+				recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+			}
 			continue
 		}
 
 		identity, err := client.getIdentity(ctx, t.id, worldID)
 		if err != nil {
 			out.Failed++
-			recordSlotError(ctx, pool, worldID, t.id, err.Error())
+			for _, emotion := range spriteEmotionOrder {
+				recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+			}
 			continue
 		}
 		if len(identity.AnchorAssetIDs) == 0 {
@@ -315,102 +402,111 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 			bootstrapJobID, _, err := client.bootstrapAnchor(ctx, t.id, worldID, styleID, appearance, bootstrapKey, bootstrapEnv)
 			if err != nil {
 				out.Failed++
-				recordSlotError(ctx, pool, worldID, t.id, err.Error())
+				for _, emotion := range spriteEmotionOrder {
+					recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+				}
 				continue
 			}
 			if bootstrapJobID != "" {
 				bootstrapJob, err := client.awaitJob(ctx, bootstrapJobID, defaultPollBackoff())
 				if err != nil {
 					out.Failed++
-					recordSlotError(ctx, pool, worldID, t.id, err.Error())
+					for _, emotion := range spriteEmotionOrder {
+						recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+					}
 					continue
 				}
 				if bootstrapJob.Status != "completed" || len(bootstrapJob.FinalAssetIDs) == 0 {
 					out.Failed++
-					recordSlotError(ctx, pool, worldID, t.id, bootstrapJob.ErrorCode+": "+bootstrapJob.ErrorMessage)
+					errText := bootstrapJob.ErrorCode + ": " + bootstrapJob.ErrorMessage
+					for _, emotion := range spriteEmotionOrder {
+						recordSlotError(ctx, pool, worldID, t.id, emotion, errText)
+					}
 					continue
 				}
 			}
-
-			// Re-read rather than assume the job's asset is the anchor. The bind happens worker-side
-			// and is deliberately best-effort, so the identity is the only place that can say whether
-			// it actually took. Generating against an anchor the identity does not hold would put a
-			// reference in the reuse key that nothing else will ever reproduce.
 			identity, err = client.getIdentity(ctx, t.id, worldID)
 			if err != nil {
 				out.Failed++
-				recordSlotError(ctx, pool, worldID, t.id, err.Error())
+				for _, emotion := range spriteEmotionOrder {
+					recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+				}
 				continue
 			}
 		}
 
-		// The anchor the portrait is actually conditioned on, and part of the platform's reuse key.
-		anchorAssetID := ""
-		if len(identity.AnchorAssetIDs) > 0 {
-			anchorAssetID = identity.AnchorAssetIDs[0]
-		}
-
-		// The envelope is pinned HERE, once, and stored with the key. Their idempotency key hashes the
-		// whole body, and issued_at moves every time an envelope is built — so composing a fresh one
-		// on retry is a different body under the same key and returns 409 idempotency_conflict. This
-		// is the trap their own verification run hit, and the reason both values live in the row.
 		issuedAt := time.Now().UTC()
-		// The key CARRIES the timestamp. Their key is bound to a hash of the whole body, so a stable
-		// key plus a fresh issued_at is a different body under the same key: 409 idempotency_conflict.
-		// A deterministic key looked right and was wrong — the first live run hit it on the second
-		// attempt for the same slot, which no fake caught because the fake was always handed a pinned
-		// envelope. Their doc states both remedies: pin one issued_at per logical request, OR derive a
-		// new key whenever the body changes. This does both — the pair is stored so an in-flight retry
-		// replays byte-identically, and a genuinely NEW attempt gets a new key rather than colliding.
-		//
-		// Nothing is lost by not deduplicating across attempts: reuse is the platform's default, so a
-		// repeat request is a zero-cost cache hit returning the same asset.
-		key := "portrait-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
-		env := newGovEnvelope(issuedAt, "character_portrait")
-
-		jobID, err := client.requestGeneration(ctx, identityID, anchorAssetID, key, env)
+		key := "sprite-pack-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
+		env := newGovEnvelope(issuedAt, "expression")
+		jobID, err := client.generateCharacterSpritePack(ctx, t.id, worldID, styleID, spritePackVariants(appearance), key, env)
 		if err != nil {
 			out.Failed++
-			recordSlotError(ctx, pool, worldID, t.id, err.Error())
+			for _, emotion := range spriteEmotionOrder {
+				recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+			}
 			continue
 		}
 		out.Requested++
-		if _, err := pool.Exec(ctx, `
-			INSERT INTO image_slot (world_id, owner_kind, owner_id, visual_identity_id, job_id, idempotency_key, issued_at, updated_at)
-			VALUES ($1,'actor',$2,$3,$4,$5,$6, now())
-			ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
-			   SET visual_identity_id = EXCLUDED.visual_identity_id,
-			       job_id             = EXCLUDED.job_id,
-			       idempotency_key    = EXCLUDED.idempotency_key,
-			       issued_at          = EXCLUDED.issued_at,
-			       last_error         = NULL,
-			       updated_at         = now()`,
-			worldID, t.id, identityID, jobID, key, issuedAt); err != nil {
-			return out, err
+
+		for _, emotion := range spriteEmotionOrder {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, visual_identity_id, job_id, idempotency_key, issued_at, updated_at)
+				VALUES ($1,'actor',$2,$3,$4,$5,$6,$7, now())
+				ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
+				   SET visual_identity_id = EXCLUDED.visual_identity_id,
+				       job_id             = EXCLUDED.job_id,
+				       idempotency_key    = EXCLUDED.idempotency_key,
+				       issued_at          = EXCLUDED.issued_at,
+				       last_error         = NULL,
+				       updated_at         = now()`,
+				worldID, t.id, emotion, identity.ID, jobID, key, issuedAt); err != nil {
+				return out, err
+			}
 		}
 
 		job, err := client.awaitJob(ctx, jobID, defaultPollBackoff())
 		if err != nil {
-			// Still in flight, or the budget ran out. The row keeps job_id, so a later call resumes
-			// this job rather than paying for a second one.
 			log.Printf("images: job %s not settled: %v", jobID, err)
 			continue
 		}
-		if job.Status != "completed" || len(job.FinalAssetIDs) == 0 {
+		if job.Status != "completed" {
 			out.Failed++
-			recordSlotError(ctx, pool, worldID, t.id, job.ErrorCode+": "+job.ErrorMessage)
+			errText := job.ErrorCode + ": " + job.ErrorMessage
+			for _, emotion := range spriteEmotionOrder {
+				recordSlotError(ctx, pool, worldID, t.id, emotion, errText)
+			}
 			continue
 		}
 
-		// final_asset_ids is OMITTED entirely while empty rather than sent as [], so its presence is
-		// itself the signal — checked above before indexing.
-		if _, err := pool.Exec(ctx, `
-			UPDATE image_slot SET asset_id=$1, job_id=NULL, last_error=NULL, updated_at=now()
-			 WHERE world_id=$2 AND owner_kind='actor' AND owner_id=$3`,
-			job.FinalAssetIDs[0], worldID, t.id); err != nil {
-			return out, err
+		assets, err := client.resolveEmotionPackAssets(ctx, jobID, identity.ID)
+		if err != nil {
+			out.Failed++
+			for _, emotion := range spriteEmotionOrder {
+				recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
+			}
+			continue
 		}
-		out.Completed++
+
+		complete := true
+		for _, emotion := range spriteEmotionOrder {
+			assetID := assets[emotion]
+			if assetID == "" {
+				complete = false
+				recordSlotError(ctx, pool, worldID, t.id, emotion, "missing variant asset")
+				continue
+			}
+			if _, err := pool.Exec(ctx, `
+				UPDATE image_slot SET asset_id=$1, job_id=NULL, last_error=NULL, updated_at=now()
+				 WHERE world_id=$2 AND owner_kind='actor' AND owner_id=$3 AND variant=$4`,
+				assetID, worldID, t.id, emotion); err != nil {
+				return out, err
+			}
+		}
+		if complete {
+			out.Completed++
+		} else {
+			out.Failed++
+		}
 	}
 	out.Skipped = len(targets) - out.Requested - out.Failed
 	if out.Skipped < 0 {
@@ -437,7 +533,7 @@ func reapRetiredAssets(ctx context.Context, pool *pgxpool.Pool, client *imageCli
 		SELECT asset_id
 		  FROM image_slot
 		 WHERE world_id = $1::uuid AND owner_kind = ANY($2) AND asset_id IS NOT NULL
-		 ORDER BY owner_kind, owner_id
+		 ORDER BY owner_kind, owner_id, variant
 		 LIMIT $3`, worldID, kinds, limit)
 	if err != nil {
 		return 0, err
@@ -475,13 +571,13 @@ func reapRetiredAssets(ctx context.Context, pool *pgxpool.Pool, client *imageCli
 // recordSlotError leaves the reason on the slot so a blank portrait can explain itself. It clears
 // job_id: a failed attempt is not in flight, and leaving a dead id there would make the next run
 // poll a job that will never move.
-func recordSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerID, msg string) {
+func recordSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerID, variant, msg string) {
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO image_slot (world_id, owner_kind, owner_id, last_error, job_id, updated_at)
-		VALUES ($1,'actor',$2,$3,NULL, now())
-		ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, last_error, job_id, updated_at)
+		VALUES ($1,'actor',$2,$3,$4,NULL, now())
+		ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
 		   SET last_error = EXCLUDED.last_error, job_id = NULL, updated_at = now()`,
-		worldID, ownerID, msg); err != nil {
+		worldID, ownerID, variant, msg); err != nil {
 		log.Printf("images: recording slot error for %s: %v", ownerID, err)
 	}
 }
@@ -498,9 +594,8 @@ func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind st
 		return out, nil
 	}
 	rows, err := pool.Query(ctx, `
-		SELECT owner_id::text, fn_image_ref($1::uuid, $2, owner_id)::text
-		  FROM image_slot
-		 WHERE world_id = $1 AND owner_kind = $2 AND owner_id = ANY($3::uuid[]) AND asset_id IS NOT NULL`,
+		SELECT id::text, fn_image_ref($1::uuid, $2, id)::text
+		  FROM unnest($3::uuid[]) AS q(id)`,
 		worldID, ownerKind, ownerIDs)
 	if err != nil {
 		return nil, err
@@ -514,6 +609,32 @@ func imageRefsFor(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind st
 		}
 		if ref != nil {
 			out[id] = json.RawMessage(*ref)
+		}
+	}
+	return out, rows.Err()
+}
+
+func spriteSetsFor(ctx context.Context, pool *pgxpool.Pool, worldID string, ownerIDs []string) (map[string]json.RawMessage, error) {
+	out := make(map[string]json.RawMessage, len(ownerIDs))
+	if len(ownerIDs) == 0 {
+		return out, nil
+	}
+	rows, err := pool.Query(ctx, `
+		SELECT id::text, fn_sprite_set($1::uuid, id)::text
+		  FROM unnest($2::uuid[]) AS q(id)`,
+		worldID, ownerIDs)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var id string
+		var payload *string
+		if err := rows.Scan(&id, &payload); err != nil {
+			return nil, err
+		}
+		if payload != nil {
+			out[id] = json.RawMessage(*payload)
 		}
 	}
 	return out, rows.Err()
@@ -570,7 +691,7 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		SELECT 'world', w.world_id::text, w.tagline
 		  FROM world w
 		  LEFT JOIN image_slot s
-		    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id
+		    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id AND s.variant = 'default'
 		 WHERE w.world_id = $1 AND w.tagline IS NOT NULL
 		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 		UNION ALL
@@ -578,7 +699,7 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		  FROM entity_registry er
 		  JOIN location_state l ON l.world_id = er.world_id AND l.entity_id = er.entity_id
 		  LEFT JOIN image_slot s
-		    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id
+		    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id AND s.variant = 'default'
 		 WHERE er.world_id = $1 AND er.entity_kind = 'location'
 		   AND coalesce(btrim(l.attrs->>'description'), '') <> ''
 		   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
@@ -594,7 +715,7 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		  FROM entity_registry er
 		  JOIN artifact_state a ON a.world_id = er.world_id AND a.entity_id = er.entity_id
 		  LEFT JOIN image_slot s
-		    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id
+		    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id AND s.variant = 'default'
 		 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
 		   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
 		   AND NOT (a.attrs ? 'connects')
@@ -638,9 +759,9 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		}
 		out.Requested++
 		if _, err := pool.Exec(ctx, `
-			INSERT INTO image_slot (world_id, owner_kind, owner_id, job_id, idempotency_key, issued_at, updated_at)
-			VALUES ($1,$2,$3,$4,$5,$6, now())
-			ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
+			INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, job_id, idempotency_key, issued_at, updated_at)
+			VALUES ($1,$2,$3,'default',$4,$5,$6, now())
+			ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
 			   SET job_id          = EXCLUDED.job_id,
 			       idempotency_key = EXCLUDED.idempotency_key,
 			       issued_at       = EXCLUDED.issued_at,
@@ -664,7 +785,7 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 		}
 		if _, err := pool.Exec(ctx, `
 			UPDATE image_slot SET asset_id=$1, job_id=NULL, last_error=NULL, updated_at=now()
-			 WHERE world_id=$2 AND owner_kind=$3 AND owner_id=$4`,
+			 WHERE world_id=$2 AND owner_kind=$3 AND owner_id=$4 AND variant='default'`,
 			job.FinalAssetIDs[0], worldID, t.kind, t.id); err != nil {
 			return out, err
 		}
@@ -681,9 +802,9 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 // itself, and a dead job_id is cleared so the next run does not poll it forever" contract.
 func recordSceneSlotError(ctx context.Context, pool *pgxpool.Pool, worldID, ownerKind, ownerID, msg string) {
 	if _, err := pool.Exec(ctx, `
-		INSERT INTO image_slot (world_id, owner_kind, owner_id, last_error, updated_at)
-		VALUES ($1,$2,$3,$4, now())
-		ON CONFLICT (world_id, owner_kind, owner_id) DO UPDATE
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, last_error, updated_at)
+		VALUES ($1,$2,$3,'default',$4, now())
+		ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
 		   SET last_error = EXCLUDED.last_error, job_id = NULL, updated_at = now()`,
 		worldID, ownerKind, ownerID, msg); err != nil {
 		log.Printf("images: record scene slot error: %v", err)

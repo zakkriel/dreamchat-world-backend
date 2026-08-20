@@ -90,7 +90,7 @@ var narratePresentIDRe = regexp.MustCompile(`\[([0-9a-fA-F-]{36})\]`)
 // defect the resolve/cognition/world_actor/place_author fakes above were wired to fix — a seat whose
 // dev stand-in is not shaped like the seat's own output — and narrate was the last one left.
 //
-// It reports CapStructuredOutput because it genuinely answers the narration/2 schema, and it stays
+// It reports CapStructuredOutput because it genuinely answers the narration/3 schema, and it stays
 // belt-safe BY CONSTRUCTION rather than by luck:
 //   - the narrator segment carries speaker_id null and no quote (the only always-legal shape);
 //   - the attributed segment is kind=action, so the verbatim belt (speech only) cannot bite, and its
@@ -133,16 +133,20 @@ func (f *fakeNarrateDriver) Generate(_ context.Context, req GenRequest) (string,
 	// and independent of the player's words — the two things the remaining belts check on an action.
 	if m := narratePresentIDRe.FindStringSubmatch(req.Prompt); len(m) > 1 {
 		id := m[1]
+		// The emotion tag rides the attributed segment so keyless dev exercises the narration/3
+		// field end to end — belt, frame, transcript — exactly as a live model would supply it.
+		emotion := "neutral"
 		segs = append(segs, NarrationSegment{
 			SpeakerID: &id,
 			Kind:      "action",
 			Text:      "shifts their weight and watches you, saying nothing.",
+			Emotion:   &emotion,
 		})
 	}
 
 	out, err := json.Marshal(segs)
 	if err != nil {
-		return "", fmt.Errorf("%s: marshalling narration/2: %w", f.name, err)
+		return "", fmt.Errorf("%s: marshalling narration/3: %w", f.name, err)
 	}
 	return string(out), nil
 }

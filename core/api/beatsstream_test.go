@@ -181,19 +181,19 @@ func scalarSchemaTypeMatches(t string, value any) bool {
 // could mask a load failure in one test while another already primed it.
 func beatFrameSchemaRoot(t *testing.T) miniSchema {
 	t.Helper()
-	b, err := os.ReadFile("schema/beat_frame.v4.schema.json")
+	b, err := os.ReadFile("schema/beat_frame.v5.schema.json")
 	if err != nil {
-		t.Fatalf("read schema/beat_frame.v4.schema.json: %v", err)
+		t.Fatalf("read schema/beat_frame.v5.schema.json: %v", err)
 	}
 	var root miniSchema
 	if err := json.Unmarshal(b, &root); err != nil {
-		t.Fatalf("schema/beat_frame.v4.schema.json is not valid JSON: %v", err)
+		t.Fatalf("schema/beat_frame.v5.schema.json is not valid JSON: %v", err)
 	}
 	return root
 }
 
 // assertValidBeatFrame decodes raw (one SSE frame's data payload) and fails t unless it validates
-// against the published beat_frame/4 schema — the plan's "assert every frame validates against the
+// against the published beat_frame/5 schema — the plan's "assert every frame validates against the
 // published schema" (Task 3, step 1). Returns the decoded frame so callers can inspect fields.
 func assertValidBeatFrame(t *testing.T, raw []byte) map[string]any {
 	t.Helper()
@@ -203,7 +203,7 @@ func assertValidBeatFrame(t *testing.T, raw []byte) map[string]any {
 	}
 	root := beatFrameSchemaRoot(t)
 	if errs := validateAgainstSchema(schemaDefs(root), root, frame, "$"); len(errs) > 0 {
-		t.Fatalf("frame does not validate against beat_frame/4:\n%s\nraw=%s", strings.Join(errs, "\n"), raw)
+		t.Fatalf("frame does not validate against beat_frame/5:\n%s\nraw=%s", strings.Join(errs, "\n"), raw)
 	}
 	return frame
 }

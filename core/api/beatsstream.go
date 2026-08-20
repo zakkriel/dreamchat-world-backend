@@ -62,8 +62,8 @@ type narrationFrame struct {
 }
 
 // sceneFrame carries the Task 1 scene projection wholesale (scenehandler.go's sceneView, produced by
-// buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/3) is preserved
-// rather than clobbered by the envelope's beat_frame/4.
+// buildScene) — nested under "scene" so its own nested "schema_version" (scene_current/4) is preserved
+// rather than clobbered by the envelope's beat_frame/5.
 type sceneFrame struct {
 	Scene sceneView `json:"scene"`
 }
@@ -470,7 +470,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var segments []NarrationSegment
 	var lastErr error
 	streamed := false
-	// Both narration attempts below are STRUCTURED (they carry narrationV2SchemaJSON), and a schema is
+	// Both narration attempts below are STRUCTURED (they carry narrationV3SchemaJSON), and a schema is
 	// exactly what a driver reporting no CapStructuredOutput cannot answer — it fails on the request,
 	// before generating anything. Asking anyway spent two round trips per beat to collect the same
 	// refusal twice and then took the plain fallback regardless: free against a fake, two billed calls
@@ -482,7 +482,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	structured := nd.Capabilities().Has(CapStructuredOutput)
 	if sd, ok := nd.(StreamingDriver); ok && structured {
 		prompt := buildNarratePrompt(post, viewerID, preIDs, outcome.HaltReason, outcome.QueryAnswers...)
-		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON)}
+		req := GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV3SchemaJSON)}
 		segs, err := narrateStream(ctx, sd, req, belts, labelFor, frames)
 		if len(segs) > 0 {
 			delivered, _ = narrateMessages(segs, labelFor)
@@ -507,7 +507,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				if attempt > 0 && lastErr != nil {
 					prompt = buildNarrateRepairPrompt(post, viewerID, preIDs, outcome.HaltReason, lastErr.Error(), outcome.QueryAnswers...)
 				}
-				raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV2SchemaJSON), Repair: attempt > 0})
+				raw, genErr := nd.Generate(ctx, GenRequest{Payload: post, Prompt: prompt, Schema: json.RawMessage(narrationV3SchemaJSON), Repair: attempt > 0})
 				if genErr != nil {
 					log.Printf("beats stream: narrate structured Generate failed (attempt %d/2): %v", attempt+1, genErr)
 					lastErr = genErr
@@ -641,7 +641,7 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 // narrationLineSplitter incrementally extracts complete top-level elements of a JSON array of objects
-// (narration/1's shape: `[{"speaker_id":…,"kind":…,"text":…}, …]`) from a growing text buffer fed one
+// (narration/3's shape: `[{"speaker_id":…,"kind":…,"text":…}, …]`) from a growing text buffer fed one
 // delta at a time — the mechanism that lets narrateStream validate and emit each narration LINE (one
 // array element) the moment its closing brace arrives, rather than waiting for the whole array to
 // close. It tracks object/array nesting depth and string/escape state so a brace or comma inside a
@@ -695,7 +695,7 @@ func (s *narrationLineSplitter) feed(delta string) []string {
 	return elems
 }
 
-// narrateStream drives a StreamingDriver's GenerateStream call, splitting the growing narration/1
+// narrateStream drives a StreamingDriver's GenerateStream call, splitting the growing narration/3
 // array text into complete elements as they arrive and running EACH one through the SAME belt
 // (DecodeAndValidateNarration, narration.go) an ordinary batch call would — one line, wrapped as its
 // own single-element array, so the ghost-speaker/verbatim-speech checks judge it exactly as they

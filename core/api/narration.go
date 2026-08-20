@@ -7,16 +7,16 @@ import (
 	"strings"
 )
 
-// narrationV2SchemaJSON is the structured-output leash handed to the narrate seat (founder envelope):
+// narrationV3SchemaJSON is the structured-output leash handed to the narrate seat (founder envelope):
 // the beat response stops being one narrator blob and becomes an ORDERED list of typed segments —
 // narrator prose plus attributed NPC speech and single-NPC actions. Registered as an input-contract
 // schema (ci/schema_contract.py, SPEC-011 house rule) — it is the seat's leash, not a projection
 // payload, so it has no SQL payload generator by design.
 //
-//go:embed schema/narration.v2.schema.json
-var narrationV2SchemaJSON string
+//go:embed schema/narration.v3.schema.json
+var narrationV3SchemaJSON string
 
-// NarrationSegment is one element of narration/2: narrator prose (SpeakerID nil, Kind "narration") or an
+// NarrationSegment is one element of narration/3: narrator prose (SpeakerID nil, Kind "narration") or an
 // attributed NPC line (SpeakerID non-nil, Kind "speech" for the mind's exact words, "action" for one
 // clean single-NPC act). SpeakerID is a *string so the null⇔narration correlation is decodable (an
 // absent/explicit-null speaker is distinct from the empty string).
@@ -30,10 +30,12 @@ type NarrationSegment struct {
 	// when Kind is "speech". Separating it from Text is what lets the frontend format speech and lets
 	// the verbatim belt check the words claimed to be spoken instead of a sentence of narrator prose.
 	Quote *string `json:"quote"`
+	// Emotion is optional speaker-affect metadata for sprite selection.
+	Emotion *string `json:"emotion,omitempty"`
 }
 
 // DecodeAndValidateNarration is the DEFENSE-IN-DEPTH belt behind the narrate seat's structured-output
-// leash (schema/narration.v2.schema.json). Structured decoding makes the output schema-valid by
+// leash (schema/narration.v3.schema.json). Structured decoding makes the output schema-valid by
 // construction; this belt re-enforces the same contract AND adds two engine-grounded checks the schema
 // alone cannot express:
 //
@@ -69,7 +71,7 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 	presentIDs, speechTexts, wall := b.PresentIDs, b.SpeechTexts, b.Wall
 	var segs []NarrationSegment
 	if err := json.Unmarshal([]byte(raw), &segs); err != nil {
-		return nil, fmt.Errorf("narration/2 not valid JSON: %w", err)
+		return nil, fmt.Errorf("narration/3 not valid JSON: %w", err)
 	}
 	present := make(map[string]bool, len(presentIDs))
 	for _, id := range presentIDs {
@@ -101,6 +103,9 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 			if quoteOf(s) != "" {
 				return nil, fmt.Errorf("segment %d: kind=narration carries a quote — spoken words belong to a speech segment with a speaker", i)
 			}
+			if s.Emotion != nil {
+				return nil, fmt.Errorf("segment %d: kind=narration forbids emotion", i)
+			}
 		case "speech", "action":
 			if s.SpeakerID == nil {
 				return nil, fmt.Errorf("segment %d: kind=%s requires a non-null speaker_id", i, s.Kind)
@@ -108,7 +113,7 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 			if !present[*s.SpeakerID] {
 				return nil, fmt.Errorf("segment %d: speaker_id %q is not present this beat (ghost speaker)", i, *s.SpeakerID)
 			}
-			// THE SPLIT (narration/2). A speech segment's words live in `quote`; an action never has
+			// THE SPLIT (narration/3). A speech segment's words live in `quote`; an action never has
 			// words at all. The verbatim belt then checks exactly what is claimed to be SPOKEN, rather
 			// than substring-matching a whole line of narrator prose and passing whenever the staging
 			// happened to be borrowed from the perception.
@@ -122,6 +127,9 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 				if !speechIsVerbatim(*s.SpeakerID, quoteOf(s), speechTexts) {
 					return nil, fmt.Errorf("segment %d: quote %q is not verbatim — it does not appear in speaker %s's spoken words this beat", i, quoteOf(s), *s.SpeakerID)
 				}
+			}
+			if s.Emotion != nil && !isAllowedNarrationEmotion(*s.Emotion) {
+				return nil, fmt.Errorf("segment %d: emotion %q outside {neutral,happy,angry,sad}", i, *s.Emotion)
 			}
 			// THE PLAYER'S OWN VOICE. An attributed segment may not perform the player's act or quote
 			// his words: he is never in PRESENT, so the only way his line lands under someone's id is
@@ -146,7 +154,7 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 		kept = append(kept, s)
 	}
 	if len(kept) == 0 {
-		return nil, fmt.Errorf("narration/2 carried no segment with any text (%d blank)", len(segs))
+		return nil, fmt.Errorf("narration/3 carried no segment with any text (%d blank)", len(segs))
 	}
 	return kept, nil
 }
@@ -155,6 +163,16 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 // perception contents this beat. Substring (not equality) is deliberate: the perception content can wrap
 // the spoken words in scaffolding (see the extraction note above), so the model quoting exactly the
 // words is a substring of the fuller line. A paraphrase is not a substring and fails.
+
+func isAllowedNarrationEmotion(v string) bool {
+	switch v {
+	case "neutral", "happy", "angry", "sad":
+		return true
+	default:
+		return false
+	}
+}
+
 func speechIsVerbatim(speaker, text string, speechTexts map[string][]string) bool {
 	for _, content := range speechTexts[speaker] {
 		if strings.Contains(content, text) {

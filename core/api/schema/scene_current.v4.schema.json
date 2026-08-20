@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "scene_current/3",
-  "title": "scene_current/2 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
+  "$id": "scene_current/4",
+  "title": "scene_current/4 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -14,7 +14,7 @@
   ],
   "properties": {
     "schema_version": {
-      "const": "scene_current/3"
+      "const": "scene_current/4"
     },
     "place": {
       "type": "object",
@@ -85,7 +85,8 @@
           "id",
           "label",
           "kind",
-          "image"
+          "image",
+          "sprites"
         ],
         "properties": {
           "id": {
@@ -123,6 +124,114 @@
                   "path": {
                     "type": "string",
                     "minLength": 1
+                  }
+                }
+              }
+            ]
+          },
+          "sprites": {
+            "description": "Sprite set for the participant. Null until all four emotion variants exist; non-null only when every variant is filled.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "neutral",
+                  "happy",
+                  "angry",
+                  "sad"
+                ],
+                "properties": {
+                  "neutral": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schema_version",
+                      "asset_id",
+                      "path"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "image_ref/1"
+                      },
+                      "asset_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "happy": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schema_version",
+                      "asset_id",
+                      "path"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "image_ref/1"
+                      },
+                      "asset_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "angry": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schema_version",
+                      "asset_id",
+                      "path"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "image_ref/1"
+                      },
+                      "asset_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
+                  },
+                  "sad": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "schema_version",
+                      "asset_id",
+                      "path"
+                    ],
+                    "properties": {
+                      "schema_version": {
+                        "const": "image_ref/1"
+                      },
+                      "asset_id": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "path": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    }
                   }
                 }
               }

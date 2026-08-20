@@ -62,7 +62,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			SELECT w.world_id
 			  FROM world w
 			  LEFT JOIN image_slot s
-			    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id
+			    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id AND s.variant = 'default'
 			 WHERE w.world_id = $1 AND w.tagline IS NOT NULL
 			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
 			UNION ALL
@@ -70,7 +70,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			  FROM entity_registry er
 			  JOIN location_state l ON l.world_id = er.world_id AND l.entity_id = er.entity_id
 			  LEFT JOIN image_slot s
-			    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id
+			    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id AND s.variant = 'default'
 			 WHERE er.world_id = $1 AND er.entity_kind = 'location'
 			   AND coalesce(btrim(l.attrs->>'description'), '') <> ''
 			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
@@ -79,7 +79,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			  FROM entity_registry er
 			  JOIN artifact_state a ON a.world_id = er.world_id AND a.entity_id = er.entity_id
 			  LEFT JOIN image_slot s
-			    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id
+			    ON s.world_id = er.world_id AND s.owner_kind = 'artifact' AND s.owner_id = er.entity_id AND s.variant = 'default'
 			 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
 			   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
 			   AND NOT (a.attrs ? 'connects')
@@ -87,10 +87,24 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			UNION ALL
 			SELECT er.entity_id
 			  FROM entity_registry er
-			  LEFT JOIN image_slot s
-			    ON s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
+			  LEFT JOIN LATERAL (
+				SELECT
+					count(*) AS slot_count,
+					count(*) FILTER (WHERE s.variant = ANY(ARRAY['neutral','happy','angry','sad'])) AS emotion_rows,
+					count(*) FILTER (WHERE s.variant = ANY(ARRAY['neutral','happy','angry','sad']) AND s.asset_id IS NOT NULL) AS emotion_filled,
+					count(*) FILTER (WHERE s.variant = 'default' AND s.asset_id IS NOT NULL) AS default_filled,
+					bool_or(s.variant = 'default' AND s.job_id IS NOT NULL) AS default_in_flight
+				  FROM image_slot s
+				 WHERE s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
+			  ) st ON true
 			 WHERE er.world_id = $1 AND er.entity_kind = 'actor'
-			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+			   AND (
+				 st.slot_count = 0 OR
+				 (st.emotion_rows > 0 AND st.emotion_filled < 4) OR
+				 -- Mirrors the fill's own rule: a legacy slot whose one picture is gone refills as
+				 -- sprites; a FILLED legacy slot is left alone until the regenerate button clears it.
+				 (st.emotion_rows = 0 AND st.default_filled = 0 AND NOT coalesce(st.default_in_flight, false))
+			   )
 		) pending`, worldID).Scan(&n)
 	return n, err
 }

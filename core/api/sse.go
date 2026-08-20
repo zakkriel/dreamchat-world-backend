@@ -8,14 +8,14 @@ import (
 )
 
 // beatFrameSchemaVersion stamps every SSE frame POST /worlds/{w}/beats emits
-// (schema/beat_frame.v4.schema.json — core/api/schema/, the frontend repo generates its types from
+// (schema/beat_frame.v5.schema.json — core/api/schema/, the frontend repo generates its types from
 // that directory).
 //
 // v2 (2026-08-08), a CLEAN CUTOVER with no v1 alias: the result frame's unresolved_candidates
 // changed from bare ids to {id, label} pairs. The frontend pins this string exactly and fails the
 // load on a mismatch (pin-and-fail, the agreed negotiation policy), so a silent reshape under the
 // v1 id was never an option — the version moving IS the notification.
-const beatFrameSchemaVersion = "beat_frame/4"
+const beatFrameSchemaVersion = "beat_frame/5"
 
 // frameWriter emits one SSE `data:` line per frame and flushes IMMEDIATELY after each — the whole reason
 // POST /worlds/{w}/beats exists as a stream rather than a buffered response (design §4.8, plan rung3
@@ -24,7 +24,7 @@ const beatFrameSchemaVersion = "beat_frame/4"
 // lie told in a nicer shape (plan Task 3).
 //
 // The schema version is per-writer rather than a constant because there are now two streams: the beat
-// loop (beat_frame/4) and world creation (world_genesis_frame/1). Both are long authored acts with
+// loop (beat_frame/5) and world creation (world_genesis_frame/1). Both are long authored acts with
 // intermediate results, which is what this transport is for; neither may stamp the other's contract.
 type frameWriter struct {
 	w       http.ResponseWriter
@@ -49,7 +49,7 @@ func newFrameWriter(w http.ResponseWriter, schemaVersion string) (*frameWriter, 
 }
 
 // emit marshals payload, merges its fields into the frame envelope
-// ({"schema_version":"beat_frame/4","kind":kind, ...payload fields}), writes the result as one SSE
+// ({"schema_version":"beat_frame/5","kind":kind, ...payload fields}), writes the result as one SSE
 // event, and flushes before returning — the flush is not an afterthought, it is the point (plan Task
 // 3's "flush after every frame, or the whole exercise is theatre"). payload must marshal to a JSON
 // object; every per-kind payload type in beatsstream.go does, and deliberately NESTS any reused shape

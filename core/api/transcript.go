@@ -73,7 +73,7 @@ func nullableJSON(b []byte) any {
 	return string(b)
 }
 
-// transcriptHandler serves GET /worlds/{w}/transcript → transcript/1: the viewer's story, newest
+// transcriptHandler serves GET /worlds/{w}/transcript → transcript/2: the viewer's story, newest
 // first, paginated with an entry_no cursor.
 //
 // Thin reader (ADR-P017): the lens is fn_transcript. Viewer-scoped by the same ResolveViewer every

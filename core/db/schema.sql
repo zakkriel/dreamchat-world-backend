@@ -1808,15 +1808,16 @@ $$;
 CREATE FUNCTION public.fn_image_ref(p_world_id uuid, p_owner_kind text, p_owner_id uuid) RETURNS json
     LANGUAGE sql STABLE
     AS $$
-  SELECT CASE WHEN s.asset_id IS NULL THEN NULL
-              ELSE json_build_object(
-                     'schema_version', 'image_ref/1',
-                     'asset_id',       s.asset_id,
-                     'path',           '/worlds/' || p_world_id::text || '/images/' || s.asset_id
-                   )
-         END
+  SELECT json_build_object(
+           'schema_version', 'image_ref/1',
+           'asset_id',       s.asset_id,
+           'path',           '/worlds/' || p_world_id::text || '/images/' || s.asset_id
+         )
     FROM image_slot s
-   WHERE s.world_id = p_world_id AND s.owner_kind = p_owner_kind AND s.owner_id = p_owner_id;
+   WHERE s.world_id = p_world_id AND s.owner_kind = p_owner_kind AND s.owner_id = p_owner_id
+     AND s.variant IN ('default', 'neutral') AND s.asset_id IS NOT NULL
+   ORDER BY CASE s.variant WHEN 'default' THEN 0 ELSE 1 END
+   LIMIT 1;
 $$;
 
 
@@ -2769,6 +2770,29 @@ CREATE FUNCTION public.fn_regexp_quote(p_text text) RETURNS text
 
 
 --
+-- Name: fn_sprite_set(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_sprite_set(p_world_id uuid, p_owner_id uuid) RETURNS json
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT CASE WHEN count(*) = 4 THEN
+           json_object_agg(
+             s.variant,
+             json_build_object(
+               'schema_version', 'image_ref/1',
+               'asset_id',       s.asset_id,
+               'path',           '/worlds/' || p_world_id::text || '/images/' || s.asset_id
+             )
+           )
+         END
+    FROM image_slot s
+   WHERE s.world_id = p_world_id AND s.owner_kind = 'actor' AND s.owner_id = p_owner_id
+     AND s.variant IN ('neutral', 'happy', 'angry', 'sad') AND s.asset_id IS NOT NULL;
+$$;
+
+
+--
 -- Name: fn_target_position(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2857,7 +2881,7 @@ CREATE FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before
     LIMIT (SELECT n FROM lim)
   )
   SELECT jsonb_build_object(
-    'schema_version', 'transcript/1',
+    'schema_version', 'transcript/2',
     'world_id',       p_world_id,
     'viewer_id',      p_viewer_id,
     'entries',        COALESCE((
@@ -2887,7 +2911,7 @@ $$;
 -- Name: FUNCTION fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint, p_limit integer); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint, p_limit integer) IS 'transcript/1 — one viewer''s delivered story, newest-first, cursor-paginated on entry_no. Returns stored prose verbatim: no re-labelling, no re-derivation.';
+COMMENT ON FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_before bigint, p_limit integer) IS 'transcript/2 — one viewer''s delivered story, newest-first, cursor-paginated on entry_no. Returns stored prose verbatim: no re-labelling, no re-derivation; segments may carry the optional narration/3 emotion tag.';
 
 
 --
@@ -3695,7 +3719,9 @@ CREATE TABLE public.image_slot (
     issued_at timestamp with time zone,
     last_error text,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT image_slot_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text, 'world'::text])))
+    variant text DEFAULT 'default'::text NOT NULL,
+    CONSTRAINT image_slot_owner_kind_check CHECK ((owner_kind = ANY (ARRAY['actor'::text, 'location'::text, 'artifact'::text, 'world'::text]))),
+    CONSTRAINT image_slot_variant_check CHECK ((variant = ANY (ARRAY['default'::text, 'neutral'::text, 'happy'::text, 'angry'::text, 'sad'::text])))
 );
 
 
@@ -4135,7 +4161,7 @@ ALTER TABLE ONLY public.held_outcome
 --
 
 ALTER TABLE ONLY public.image_slot
-    ADD CONSTRAINT image_slot_pkey PRIMARY KEY (world_id, owner_kind, owner_id);
+    ADD CONSTRAINT image_slot_pkey PRIMARY KEY (world_id, owner_kind, owner_id, variant);
 
 
 --
@@ -4784,4 +4810,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260814140000'),
     ('20260814170000'),
     ('20260815150000'),
-    ('20260815150001');
+    ('20260815150001'),
+    ('20260820200000');

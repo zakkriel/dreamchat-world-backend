@@ -17,7 +17,7 @@ var (
 // Happy path: a narrator segment (null speaker), a VERBATIM speech segment (its text a substring of the
 // speaker's perception line), and an action segment (no verbatim requirement) all decode cleanly.
 func TestDecodeAndValidateNarration_HappyPath(t *testing.T) {
-	// narration/2: the spoken words live in `quote`, and `text` carries only the staging around them.
+	// narration/3: the spoken words live in `quote`, and `text` carries only the staging around them.
 	raw := `[
 	  {"speaker_id":null,"kind":"narration","text":"The common room is low and dim.","quote":null},
 	  {"speaker_id":"m1","kind":"speech","text":"she looks up from the tap","quote":"The tide turns at dusk."},
@@ -243,7 +243,7 @@ func TestNarration_BeltsStillRunAfterDropping(t *testing.T) {
 	}
 }
 
-// ── narration/2: the speech/staging split ────────────────────────────────────────────────────────
+// ── narration/3: the speech/staging split ────────────────────────────────────────────────────────
 
 // The split is only real if the shape enforces it. Words in the wrong field must not decode, or the
 // frontend's "format speech differently" reduces to guessing where a quotation mark starts.
@@ -312,5 +312,39 @@ func TestNarration_BeltsInspectTheQuoteToo(t *testing.T) {
 			Player: newPlayerVoice("I raise both hands. 'Easy. I mean no trouble.'")},
 	); err == nil || !strings.Contains(err.Error(), "PLAYER's own") {
 		t.Fatalf("the player's words inside an NPC's QUOTE must be rejected, got: %v", err)
+	}
+}
+
+// narration/3's emotion tag: optional, closed-set, and speech/action-only. The belt is the wall a
+// misbehaving driver hits — the schema constrains a cooperative provider, this constrains reality.
+func TestNarration_EmotionIsClosedSetAndNeverOnNarratorProse(t *testing.T) {
+	speaker := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	belts := NarrationBelts{PresentIDs: []string{speaker},
+		SpeechTexts: map[string][]string{speaker: {"The tide turns at dusk.", "Hm."}}}
+
+	segs, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"`+speaker+`","kind":"speech","text":"","quote":"The tide turns at dusk.","emotion":"happy"}]`, belts)
+	if err != nil {
+		t.Fatalf("a tagged speech segment was rejected: %v", err)
+	}
+	if segs[0].Emotion == nil || *segs[0].Emotion != "happy" {
+		t.Fatalf("emotion = %v, want happy carried through the belt", segs[0].Emotion)
+	}
+
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"`+speaker+`","kind":"speech","text":"","quote":"Hm.","emotion":"smug"}]`, belts); err == nil {
+		t.Fatal("an out-of-vocabulary emotion was accepted")
+	}
+
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":null,"kind":"narration","text":"The room is dim.","quote":null,"emotion":"sad"}]`, belts); err == nil {
+		t.Fatal("narrator prose carried an emotion — the narrator is not a character and has no sprite")
+	}
+
+	// Absent is the ordinary state: an untagged line is simply neutral downstream.
+	segs, err = DecodeAndValidateNarration(
+		`[{"speaker_id":"`+speaker+`","kind":"action","text":"sets a tankard down.","quote":null}]`, belts)
+	if err != nil || segs[0].Emotion != nil {
+		t.Fatalf("untagged action: err=%v emotion=%v, want accepted with no emotion", err, segs[0].Emotion)
 	}
 }

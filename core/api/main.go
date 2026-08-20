@@ -53,7 +53,7 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// segment: the carrier is the resolved viewer, which is what makes "Carrying for NPCs" (a
 		// PRD non-goal) unreachable by construction rather than by a check.
 		NewCarryingHandler(pool, debug).(matcher),
-		// GET /worlds/{w}/transcript — the persistent transcript (transcript/1). Viewer-scoped, newest
+		// GET /worlds/{w}/transcript — the persistent transcript (transcript/2). Viewer-scoped, newest
 		// first, cursor-paginated. The one read surface that is a RECORD rather than a projection: the
 		// prose a model wrote once cannot be recomputed from world state.
 		NewTranscriptHandler(pool, debug).(matcher),
@@ -194,7 +194,7 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 		// candidate whitelist and commits, and the first adjudicated attempt reaches a ruling.
 		//
 		// narrate was the LAST seat left pointing at a stand-in not shaped like its own output:
-		// fake-text reports no capabilities, so it errored on the narration/2 schema and every
+		// fake-text reports no capabilities, so it errored on the narration/2 schema (of the day) and every
 		// hand-driven beat fell through to the belt-less plain prose fallback.
 		return SeatConfig{
 			"decompose":          {Provider: "fake-intent", Model: "dev"},

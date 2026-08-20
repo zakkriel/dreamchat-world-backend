@@ -1,0 +1,20 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "image_regenerate/1",
+  "title": "image_regenerate/1 \u2014 response for POST /worlds/{w}/images/regenerate",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cleared"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "image_regenerate/1"
+    },
+    "cleared": {
+      "type": "integer",
+      "minimum": 0
+    }
+  }
+}

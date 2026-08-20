@@ -10,7 +10,7 @@ import (
 
 // A STREAMED speech line must reach the wire carrying its quote.
 //
-// Regression test with a live scar. narration/2 added `quote`; narrateMessages learned to carry it;
+// Regression test with a live scar. narration/3 added `quote`; narrateMessages learned to carry it;
 // the streaming emit site — which built its beatMessage BY HAND from four fields — silently kept
 // emitting the old four. The frontend received
 //
@@ -72,8 +72,8 @@ func TestNarrateStream_SpeechFrameCarriesItsQuote(t *testing.T) {
 		if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &f); err != nil {
 			t.Fatalf("frame is not JSON: %v", err)
 		}
-		if f.SchemaVersion != "beat_frame/4" {
-			t.Fatalf("frame envelope = %q, want beat_frame/4", f.SchemaVersion)
+		if f.SchemaVersion != "beat_frame/5" {
+			t.Fatalf("frame envelope = %q, want beat_frame/5", f.SchemaVersion)
 		}
 		if f.Message.Kind != "speech" {
 			continue
