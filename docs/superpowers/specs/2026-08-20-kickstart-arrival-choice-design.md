@@ -86,8 +86,10 @@ before playing it. The client sees candidate *premises* only.
   (`prompts/world_genesis.txt:9`) applies to every scenario candidate, not just the default.
 - **Genesis schema change** — `world_genesis/1` gains `arrival_candidates` (exactly 3
   items, premise-shaped) beside the existing `arrival`, which becomes the recommended
-  default. Emitted only when the brief left identity open; the Go validator enforces the
-  brief-wins rule (candidates present XOR identity stated).
+  default. Emitted only when the brief left identity open; the schema leaves candidates
+  optional and the prompt carries the brief-wins rule; the Go validator's checks are
+  mechanical — exactly three, distinct names, non-blank fields, exactly one candidate
+  matching the arrival.
 - **New seat `world_kickstart`** — authors 3 scenario options for one chosen character
   against the full doc. Schema-leashed like every seat: `additionalProperties:false`, no
   number of any kind anywhere (PRD AC-7). Prompt carries the same GA-2/GA-3 discipline:
@@ -153,4 +155,6 @@ unrelated briefs is a defect, not a convenience (GA-2/GA-3, PRD §8).
    arrival is exactly one perception regardless of which candidate or custom text was
    chosen.
 10. One `world genesis timing:` line per build includes the kickstart seat's calls,
-    tokens and cost; the ceiling refuses rather than overspends.
+    tokens and cost; the configured ceiling logs a COST WARNING when a build spends past
+    it. (The refusing ceiling of PRD AC-11 is pre-existing debt, deliberately out of this
+    feature's scope — decision 2026-08-20.)

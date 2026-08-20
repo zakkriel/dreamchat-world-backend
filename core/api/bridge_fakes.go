@@ -930,8 +930,8 @@ func (f *fakeWorldKickstartDriver) Generate(_ context.Context, req GenRequest) (
 
 // sectionAfter returns the substring of s after the first occurrence of from, up to (but not
 // including) the first occurrence of until at or after that point — or to the end of s when until
-// is empty or not found. Shared by the fakes that parse their own prompt back apart (world_genesis,
-// world_kickstart) so no two of them drift on how a marker block's boundary is found.
+// is empty or not found. Written to be shareable by any fake that parses its own prompt back
+// apart; currently used by the world_kickstart fake.
 func sectionAfter(s, from, until string) string {
 	_, rest, ok := strings.Cut(s, from)
 	if !ok {
