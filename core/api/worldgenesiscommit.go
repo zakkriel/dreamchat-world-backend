@@ -67,7 +67,7 @@ type genesisIDs struct {
 // Order is load-bearing and follows the template: the directory row and operating defaults first (every
 // later call fails without them), then identity, then the events that justify knowledge, then knowledge,
 // then state, then the arrival that makes the world playable.
-func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief string) (string, error) {
+func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, artStyleChoice string) (string, error) {
 	theme, err := json.Marshal(map[string]string{
 		"schema_version": "world_theme/1",
 		"accent":         genesisAccent(doc.World.DisplayName),
@@ -111,11 +111,22 @@ func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief s
 	// and the brief that produced it. Last on purpose: until every entity and event is in place, a
 	// non-null player_entity_id would advertise a world that cannot be entered.
 	if _, err := tx.Exec(ctx,
-		`UPDATE world SET player_entity_id = $2::uuid, tagline = $3, brief = $4 WHERE world_id = $1::uuid`,
-		worldID, ids.player, strings.TrimSpace(doc.World.Tagline), strings.TrimSpace(brief)); err != nil {
+		`UPDATE world SET player_entity_id = $2::uuid, tagline = $3, brief = $4, art_style = $5 WHERE world_id = $1::uuid`,
+		worldID, ids.player, strings.TrimSpace(doc.World.Tagline), strings.TrimSpace(brief),
+		nullableArtStyleChoice(artStyleChoice)); err != nil {
 		return "", fmt.Errorf("commitWorldGenesis: stamp player: %w", err)
 	}
 	return worldID, nil
+}
+
+// nullableArtStyleChoice keeps "no choice" as SQL NULL rather than an empty string. The column's
+// CHECK refuses blank text on purpose: "set, but to nothing" is a third state every reader would
+// have to special-case beside NULL, and it means nothing a person chose.
+func nullableArtStyleChoice(choice string) any {
+	if strings.TrimSpace(choice) == "" {
+		return nil
+	}
+	return choice
 }
 
 // registerEntities mints an id for every authored thing and writes entity_registry. The descriptor goes

@@ -37,7 +37,7 @@ func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-	worldID, err := commitWorldGenesis(ctx, tx, doc, testBrief)
+	worldID, err := commitWorldGenesis(ctx, tx, doc, testBrief, "")
 	if err != nil {
 		t.Fatalf("commitWorldGenesis: %v", err)
 	}

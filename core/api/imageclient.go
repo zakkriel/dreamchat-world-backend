@@ -221,7 +221,7 @@ type styleProfile struct {
 // are tenant-wide (world_id NULL) and per-world ones are not creatable, so there is exactly one to
 // find. Listing first keeps this idempotent without relying on a create-conflict behaviour they do
 // not document.
-func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, error) {
+func (c *imageClient) ensureStyle(ctx context.Context, style ArtStyle) (string, error) {
 	var list struct {
 		Styles []styleProfile `json:"styles"`
 	}
@@ -237,7 +237,7 @@ func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, err
 		return "", fmt.Errorf("ensureStyle: listing styles: %w", err)
 	}
 	for _, s := range list.Styles {
-		if s.Name == name {
+		if s.Name == style.ProfileName() {
 			return s.ID, nil
 		}
 	}
@@ -245,19 +245,14 @@ func (c *imageClient) ensureStyle(ctx context.Context, name string) (string, err
 	// positive_prompt is the required field (NOT prompt_fragment), and style_mode must be one of
 	// open_prompt | preset_style | creator_style | provider_native — both traps hit on the first
 	// attempts of their verification run.
-	// The style profile is the ONLY prompt this app authors on the image side — the subject comes
-	// from the world's own descriptor, and everything else the provider infers. So the seats' latitude
-	// has to be said here too, in the medium's vocabulary rather than the seats'.
-	//
-	// Censorship in a picture is not a refusal, it is a composition: a bar, a blur, a coy crop, a
-	// cutaway to the curtains. Naming those in the NEGATIVE prompt is how an image model is told not
-	// to do them; a paragraph of policy prose in the positive prompt does nothing here and reads to a
-	// provider's own classifier as a reason to look harder. "unflinching" carries the rest.
+	// The look, the latitude and the refusals all come from artstyle.go — this call knows how to
+	// register a style with the platform and nothing about what any style IS. That separation is the
+	// point of the module: five looks, a written sixth, and one place that decides what each means.
 	err := c.do(ctx, http.MethodPost, "/v1/styles", map[string]any{
-		"name":                 name,
+		"name":                 style.ProfileName(),
 		"style_mode":           "open_prompt",
-		"positive_prompt":      "painterly, soft rim light, cinematic, unflinching, explicit when the subject is explicit, full anatomy rendered",
-		"negative_prompt":      "text, watermark, censorship bar, black bar, pixelation, blurred subject, coy crop, tasteful cutaway",
+		"positive_prompt":      style.Positive(),
+		"negative_prompt":      style.Negative(),
 		"default_quality_tier": "standard",
 	}, "", &created)
 	if err != nil {

@@ -360,7 +360,7 @@ func TestImageClient_RunsTheVerifiedSequence(t *testing.T) {
 	c := testImageClient(t, f)
 	ctx := context.Background()
 
-	styleID, err := c.ensureStyle(ctx, "dreamchat-default")
+	styleID, err := c.ensureStyle(ctx, mustResolve(t, ""))
 	if err != nil || styleID == "" {
 		t.Fatalf("ensureStyle: %v / %q", err, styleID)
 	}
@@ -570,7 +570,7 @@ func TestEnsureStyle_ARefusedListIsAnErrorNotAnEmptyList(t *testing.T) {
 	f.stylesListStatus = 403
 	c := testImageClient(t, f)
 
-	if _, err := c.ensureStyle(context.Background(), "dreamchat-default"); err == nil {
+	if _, err := c.ensureStyle(context.Background(), mustResolve(t, "")); err == nil {
 		t.Fatal("a 403 on the style list must fail, not fall through to creating another profile")
 	}
 
