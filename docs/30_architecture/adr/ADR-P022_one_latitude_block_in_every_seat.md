@@ -3,6 +3,10 @@
 **Status:** Accepted (2026-08-17)
 **Date:** 2026-08-17
 **Series:** Platform / Bridge (ADR-P###, per D-5). Attaches to D-13 (per-seat routing, ADR-P018).
+**Governing rules:** **E-2** — "Mature fictional content can exist in private worlds within
+legal/safety bounds; public distribution, discovery, and monetization apply stricter eligibility" —
+and **E-1**, which puts classification in the core platform BEFORE any media request. This ADR does
+not create latitude; it tells the seats about latitude E-2 already granted.
 **Owner of decision:** founder ruling — this is adult interactive fiction and the seats must be told so.
 **Evidence (D-9):** `core/api/prompts/*.txt` (all nine), `core/api/prompts/README.md`,
 `core/api/promptlatitude_test.go`.
@@ -42,6 +46,17 @@ about what may be shown.
 The image side carries the same intent in the medium's vocabulary (`artstyle.go`): censorship in a
 picture is a composition — a bar, a blur, a coy crop, a cutaway — so those are named in the negative
 prompt, and the affirmative half asks for the subject itself.
+
+## The boundary this ADR does NOT cross
+
+E-2 grants mature content **in private worlds**, and applies stricter eligibility to public
+distribution, discovery and monetization. Everything here is lawful because every world is private:
+the governance envelope this service sends is hardcoded `Visibility: "private"`
+(`core/api/imageclient.go`, `newGovEnvelope`).
+
+**If sharing, discovery or monetization ever ships, this ADR does not follow it there.** The latitude
+is not a property of the product; it is a property of the private regime. A public surface needs its
+own ruling under E-1/E-2 and ADR-P016 before a single one of these paragraphs applies to it.
 
 ## Consequences
 

@@ -3,6 +3,9 @@
 **Status:** Accepted (2026-08-16)
 **Date:** 2026-08-16
 **Series:** Platform / Images (ADR-P###, per D-5).
+**Governing rules:** **D-8** — "Synchronous path stays small … images … run async" — which is the law
+this ADR implements rather than invents; **D-3** — the Image Platform is a separate service and never
+owns world truth, which is why `image_slot` lives here and the mapping is ours to keep.
 **Owner of decision:** the founder's report that a created world had no pictures.
 **Evidence (D-9):** `core/api/artcommission.go`, the genesis kick in `core/api/worldgenesishandler.go`,
 the ticker in `core/api/main.go`, `core/api/artcommission_test.go`.
@@ -36,7 +39,8 @@ which path created the entity or when.
 5. **Outside the genesis transaction.** One image is 25–90s of somebody else's service; a dozen would
    put minutes inside the transaction holding the world's canon, and a provider outage would then
    destroy an authored world rather than delay its pictures. The payload already promises this shape:
-   `image` is null until it is not and swaps in on a later read (`image_ref/1`, D-8).
+   `image` is null until it is not and swaps in on a later read (`image_ref/1`). **D-8 already
+   required this**; the reconciler is how it is finally true for creation as well as for play.
 
 ## Consequences
 

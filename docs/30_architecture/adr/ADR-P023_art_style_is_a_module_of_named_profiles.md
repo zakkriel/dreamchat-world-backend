@@ -3,6 +3,9 @@
 **Status:** Accepted (2026-08-20)
 **Date:** 2026-08-20
 **Series:** Platform / Images (ADR-P###, per D-5). Extends ADR-P021.
+**Governing rules:** **D-15** — "Two independent atmosphere layers: *world art* … is **content** bound
+to the world (Image Platform — D-3, D-8); *chrome theme* … is a **swappable skin**" — which is why
+this is a column of its own and not a `world.theme` token; **GA-2 / GA-3**, answered below.
 **Owner of decision:** founder — five presets or your own, chosen at world creation, built to be reused.
 **Evidence (D-9):** `core/api/artstyle.go`, `core/api/worldartstyleshandler.go`,
 `core/api/schema/art_styles.v1.schema.json`, migration `20260815150001_world_art_style.sql`,
@@ -16,6 +19,21 @@ and `ornament` genesis authors for each world never reached the thing drawing it
 The catalogue is about to be reused hard: the same looks will front creation, per-character overrides,
 redraw-in-another-style, and whatever comes next. A second copy of "anime means cel shaded" in a
 frontend constant is how those surfaces start disagreeing about what a world already chose.
+
+## Two questions the register asks of this, answered
+
+**Why `world.art_style` and not a `theme` token?** Because D-15 names them as two *independent*
+layers. `world.theme` (accent / mood / ornament, landed by SPEC-019) is the **chrome theme** — a
+swappable skin the world supplies as a default and the user may override. An art style is **world
+art**: content bound to the world, produced by the Image Platform. Collapsing them would let a user
+re-skinning their UI silently re-key every picture the world owns.
+
+**Is a fixed list of `anime | realistic | manhwa | comic | 3d` a genre taxonomy (GA-2 / GA-3)?** No,
+and the register's own test is what settles it: GA-2 asks whether a term "makes sense in a sci-fi
+thriller, a workplace drama, and a horror story." All five do — they are **rendering media**, not
+world content. Any of those three stories can be drawn in any of these five styles, and none of them
+tells the engine what a world contains. A preset named `cyberpunk` or `high-fantasy` WOULD violate
+GA-2, and must not be added. The line is: how it is drawn, never what it is about.
 
 ## Decision
 
