@@ -38,7 +38,10 @@ import (
 // worldGenesisFrameSchemaVersion stamps every frame of the build stream. The frontend pins it exactly and
 // fails the load on a mismatch, so reshaping a frame means moving this string — the version moving IS the
 // notification.
-const worldGenesisFrameSchemaVersion = "world_genesis_frame/1"
+const worldGenesisFrameSchemaVersion = "world_genesis_frame/2"
+
+// worldKickstartTurnSchemaVersion stamps the kickstart response. Same contract discipline.
+const worldKickstartTurnSchemaVersion = "world_kickstart_turn/1"
 
 // worldInterviewTurnSchemaVersion stamps the interview response. Same contract discipline.
 const worldInterviewTurnSchemaVersion = "world_interview_turn/1"

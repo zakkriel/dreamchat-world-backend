@@ -1,0 +1,46 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_genesis_frame/2",
+  "title": "world_genesis_frame/2 — ONE SSE frame of POST /worlds/genesis. A world build is a long authored act with intermediate results, so it streams for the same reason a beat does. Every frame names something that was really authored: `working` frames carry a line of the world's own language as each part lands, `choice` is the terminal success of the stream — the stream now ends in a choice, not a world; the world itself arrives later, on the kickstart turn's done:true, because commit no longer happens inside the stream. `refused` means the brief could not become a world and says why, `error` means the machine failed and says so without pretending to be the world's voice. There is deliberately no progress percentage, no ETA and no stage list — a client must never render a number nothing produced (frontend law 2).",
+  "type": "object",
+  "required": ["schema_version", "kind"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "world_genesis_frame/2" },
+    "kind": {
+      "type": "string",
+      "enum": ["working", "choice", "refused", "error"]
+    },
+    "stated": {
+      "type": "string",
+      "minLength": 1,
+      "description": "World-authored text on `working` and `refused`, an honest failure line on `error`. Renders VERBATIM — never rewritten, summarised or title-cased (frontend law 1)."
+    },
+    "handle": { "type": "string", "minLength": 36, "maxLength": 36, "description": "The draft's opaque handle. POST it to /worlds/genesis/kickstart with each answer. It expires; an expired handle is a stated refusal, and the build is simply made again." },
+    "question": { "type": "string", "minLength": 1 },
+    "options": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["label"],
+        "additionalProperties": false,
+        "properties": {
+          "label": { "type": "string", "minLength": 1 },
+          "implication": { "type": "string", "minLength": 1 },
+          "recommended": { "type": "boolean", "description": "At most one option per question carries this." }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "properties": { "kind": { "enum": ["working", "refused", "error"] } },
+      "required": ["stated"]
+    },
+    {
+      "properties": { "kind": { "const": "choice" } },
+      "required": ["handle", "question", "options"]
+    }
+  ]
+}
