@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P023 — serves the catalogue by key/label/blurb and never the prompt prose.
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"encoding/json"
 	"net/http"

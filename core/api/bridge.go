@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P018 — per-seat model routing; a seat binds a model only if the driver meets its capability floor (D-13).
+// Change what this file decides, and that ADR changes with it (D-9).
+
 // Chunk-5 LLM bridge — model-agnostic, per-seat routing (D-13; ADR-P018). Each LLM SEAT resolves its
 // driver from config (seat → {provider, model, params}); a driver binds to a seat only if the
 // driver's REPORTED capabilities satisfy the seat's floor. No seat hardcodes a model; no provider SDK
