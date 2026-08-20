@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"sync"
 )
 
 // beatFrameSchemaVersion stamps every SSE frame POST /worlds/{w}/beats emits
@@ -29,6 +30,10 @@ type frameWriter struct {
 	w       http.ResponseWriter
 	flusher http.Flusher
 	version string
+	// mu serialises emit: the genesis build emits liveness frames from a ticker goroutine while the
+	// handler goroutine owns the rest of the stream, and interleaved partial writes would corrupt the
+	// SSE framing for every consumer of that response.
+	mu sync.Mutex
 }
 
 // newFrameWriter wraps w for SSE framing, stamping every frame with schemaVersion. It fails (ok=false)
@@ -66,6 +71,8 @@ func (fw *frameWriter) emit(kind string, payload any) error {
 	if err != nil {
 		return fmt.Errorf("beat frame %s: marshal envelope: %w", kind, err)
 	}
+	fw.mu.Lock()
+	defer fw.mu.Unlock()
 	if _, err := fmt.Fprintf(fw.w, "data: %s\n\n", out); err != nil {
 		return fmt.Errorf("beat frame %s: write: %w", kind, err)
 	}
