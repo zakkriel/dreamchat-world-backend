@@ -8,14 +8,17 @@ package main
 // functions — and leave nothing behind.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const testBrief = "A cargo yard where the paperwork is the weapon. Somebody is skimming crates and the person keeping the book knows."
@@ -579,11 +582,26 @@ func TestFakeGenesisEmitsCandidatesUnlessIdentityStated(t *testing.T) {
 	}
 }
 
-// postGenesisAndCollectFrames drives the real /worlds/genesis route under a bridge that answers both
-// world_genesis and world_kickstart, and returns every SSE frame decoded into a map. Shared by every
-// test that asserts on the shape of the build stream.
-func postGenesisAndCollectFrames(t *testing.T, body string) []map[string]any {
+// kickstartHarness is the handler-and-server pair one test's kickstart turns run against, keyed by the
+// *testing.T that created it so nothing leaks between tests that never share one. A real httptest.Server
+// (not a bare recorder) because the kickstart route is exercised as a genuine second-and-third HTTP call
+// against the SAME draft store the first call populated — a recorder alone has no URL a later call can
+// address independently.
+type kickstartHarness struct {
+	srv  *httptest.Server
+	pool *pgxpool.Pool
+}
+
+var kickstartHarnesses = map[*testing.T]*kickstartHarness{}
+
+// kickstartHarnessFor returns this test's harness, creating it on first use. A test that only calls
+// postKickstartRaw (e.g. against an unknown handle) gets a fresh, otherwise-empty draft store — which is
+// exactly what it needs to prove a handle nobody minted here is expired.
+func kickstartHarnessFor(t *testing.T) *kickstartHarness {
 	t.Helper()
+	if kh, ok := kickstartHarnesses[t]; ok {
+		return kh
+	}
 	bridge, err := NewBridgeWithDrivers(map[string]Driver{
 		SeatWorldGenesis.Name:   NewFakeWorldGenesisDriver(),
 		SeatWorldKickstart.Name: NewFakeWorldKickstartDriver(),
@@ -591,21 +609,108 @@ func postGenesisAndCollectFrames(t *testing.T, body string) []map[string]any {
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
-	h := NewWorldGenesisHandler(testPool(t), true, bridge, nil)
-	rec := httptest.NewRecorder()
-	h.ServeHTTP(rec, jsonPost("/worlds/genesis", body))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("genesis status = %d, want 200 (body %s)", rec.Code, rec.Body.String())
+	pool := testPool(t)
+	t.Cleanup(pool.Close)
+	h := NewWorldGenesisHandler(pool, true, bridge, nil)
+	srv := httptest.NewServer(h)
+	t.Cleanup(srv.Close)
+	kh := &kickstartHarness{srv: srv, pool: pool}
+	kickstartHarnesses[t] = kh
+	return kh
+}
+
+// kickstartPool is the DB pool behind this test's harness, for assertions the kickstart route's own
+// (internal, unexported) commit tx cannot hand back — the world it commits is real and visible on it.
+func kickstartPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	return kickstartHarnessFor(t).pool
+}
+
+// postGenesisAndCollectFrames drives the real /worlds/genesis route under a bridge that answers both
+// world_genesis and world_kickstart, and returns every SSE frame decoded into a map. Shared by every
+// test that asserts on the shape of the build stream.
+func postGenesisAndCollectFrames(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	srv := kickstartHarnessFor(t).srv
+	resp, err := http.Post(srv.URL+"/worlds/genesis", "application/json", strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("post genesis: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read genesis body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("genesis status = %d, want 200 (body %s)", resp.StatusCode, raw)
 	}
 	frames := make([]map[string]any, 0)
-	for _, raw := range sseFrames(t, rec.Body.String()) {
+	for _, frame := range sseFrames(t, string(raw)) {
 		var f map[string]any
-		if err := json.Unmarshal(raw, &f); err != nil {
+		if err := json.Unmarshal(frame, &f); err != nil {
 			t.Fatalf("frame is not JSON: %v", err)
 		}
 		frames = append(frames, f)
 	}
 	return frames
+}
+
+// postKickstartRaw posts one kickstart turn and returns the raw response — for tests asserting on
+// status alone (an expired or already-spent handle).
+func postKickstartRaw(t *testing.T, handle, answer string) *http.Response {
+	t.Helper()
+	srv := kickstartHarnessFor(t).srv
+	body, err := json.Marshal(kickstartRequest{Handle: handle, Answer: answer})
+	if err != nil {
+		t.Fatalf("marshal kickstart request: %v", err)
+	}
+	resp, err := http.Post(srv.URL+"/worlds/genesis/kickstart", "application/json", bytes.NewReader(body))
+	if err != nil {
+		t.Fatalf("post kickstart: %v", err)
+	}
+	return resp
+}
+
+// postKickstart posts one kickstart turn and decodes the JSON response, failing the test on anything
+// but 200.
+func postKickstart(t *testing.T, handle, answer string) map[string]any {
+	t.Helper()
+	resp := postKickstartRaw(t, handle, answer)
+	defer resp.Body.Close()
+	raw, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read kickstart body: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("kickstart status = %d, want 200 (body %s)", resp.StatusCode, raw)
+	}
+	var turn map[string]any
+	if err := json.Unmarshal(raw, &turn); err != nil {
+		t.Fatalf("kickstart response is not JSON: %v", err)
+	}
+	return turn
+}
+
+// recommendedLabel returns the label of the option flagged recommended among a choice turn's options,
+// or fails the test — every character and scenario turn this fake bridge authors carries exactly one.
+func recommendedLabel(t *testing.T, options any) string {
+	t.Helper()
+	opts, ok := options.([]any)
+	if !ok {
+		t.Fatalf("options is not a list: %v (%T)", options, options)
+	}
+	for _, o := range opts {
+		m, ok := o.(map[string]any)
+		if !ok {
+			continue
+		}
+		if m["recommended"] == true {
+			label, _ := m["label"].(string)
+			return label
+		}
+	}
+	t.Fatalf("no recommended option among %v", opts)
+	return ""
 }
 
 // The stream now pauses for the player's own choice rather than committing straight through: the
@@ -658,5 +763,96 @@ func TestBuildSkipsToScenarioWhenIdentityStated(t *testing.T) {
 	}
 	if len(last["options"].([]any)) != 3 {
 		t.Fatal("want 3 scenario options")
+	}
+}
+
+// The whole point: two answers turn an authored-but-uncommitted world into a playable one, in one
+// transaction landed on the final answer — and a third answer against the now-spent handle finds
+// nothing there to retry, because nothing was ever half-written.
+func TestKickstartFullJourney(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
+	choice := frames[len(frames)-1]
+	handle, _ := choice["handle"].(string)
+
+	// Turn 1: pick the recommended character.
+	recLabel := recommendedLabel(t, choice["options"])
+	turn := postKickstart(t, handle, recLabel)
+	if turn["schema_version"] != "world_kickstart_turn/1" || turn["done"] != false {
+		t.Fatalf("turn 1 = %v", turn)
+	}
+	if turn["question"] != "How does it start?" {
+		t.Fatalf("turn 1 question = %v", turn["question"])
+	}
+
+	// Turn 2: pick the recommended scenario — this commits.
+	turn2 := postKickstart(t, handle, recommendedLabel(t, turn["options"]))
+	if turn2["done"] != true {
+		t.Fatalf("turn 2 = %v", turn2)
+	}
+	world, ok := turn2["world"].(map[string]any)
+	if !ok {
+		t.Fatalf("turn 2 carries no world: %v", turn2)
+	}
+	worldID, _ := world["id"].(string)
+	if world["playable"] != true || worldID == "" {
+		t.Fatalf("world = %v", world)
+	}
+
+	// The handle is spent: a third answer finds no draft, no debris.
+	res := postKickstartRaw(t, handle, "anything")
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusGone {
+		t.Fatalf("spent handle status = %d, want 410", res.StatusCode)
+	}
+
+	// DB floor (AC-4/AC-9): the player is stamped on the committed world and holds exactly one
+	// perception — their own arrival. Nothing rolls this back (the kickstart route commits for real,
+	// same as the single-shot build did before the split), so this queries the pool directly.
+	ctx := context.Background()
+	pool := kickstartPool(t)
+	var playerID string
+	if err := pool.QueryRow(ctx,
+		`SELECT player_entity_id::text FROM world WHERE world_id=$1::uuid`, worldID).Scan(&playerID); err != nil {
+		t.Fatalf("player: %v", err)
+	}
+	if playerID == "" {
+		t.Fatal("world has no player_entity_id — the arrival never committed")
+	}
+	var held int
+	if err := pool.QueryRow(ctx,
+		`SELECT count(*) FROM perception_record WHERE world_id=$1::uuid AND holder_id=$2::uuid`,
+		worldID, playerID).Scan(&held); err != nil {
+		t.Fatalf("player perceptions: %v", err)
+	}
+	if held != 1 {
+		t.Fatalf("the player holds %d perceptions, want exactly 1 (their arrival)", held)
+	}
+}
+
+// Free text is a first-class answer at both turns, not a fallback: the character question grounds it as
+// who the player is, the scenario question grounds it as how the opening goes — and either way the
+// build still commits.
+func TestKickstartCustomAnswersFlowIn(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
+	handle, _ := frames[len(frames)-1]["handle"].(string)
+
+	turn := postKickstart(t, handle, "the harbour master's estranged child, back unannounced")
+	if turn["done"] != false {
+		t.Fatalf("custom character rejected: %v", turn)
+	}
+
+	turn2 := postKickstart(t, handle, "I slip in through the kitchen while an argument is going on")
+	if turn2["done"] != true {
+		t.Fatalf("custom scenario did not commit: %v", turn2)
+	}
+}
+
+// An unknown handle — never minted by this or any build — is the same 410 an expired one gets: nothing
+// was ever half-written, so there is nothing to distinguish.
+func TestKickstartExpiredHandle(t *testing.T) {
+	res := postKickstartRaw(t, "00000000-0000-0000-0000-000000000000", "anything")
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusGone {
+		t.Fatalf("status = %d, want 410", res.StatusCode)
 	}
 }

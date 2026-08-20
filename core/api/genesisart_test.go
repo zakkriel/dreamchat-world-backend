@@ -1,8 +1,6 @@
 package main
 
 import (
-	"encoding/json"
-	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -17,46 +15,34 @@ import (
 // of that line would have passed every suite in this repo and reproduced the original complaint
 // exactly.
 func TestGenesisBuild_CommissionsTheWorldsArt(t *testing.T) {
-	// TODO(Task 6): kickArt now fires from the kickstart route's commit, not build() — build() ends
-	// in a choice frame with nothing committed yet. Unskip once /worlds/genesis/kickstart exists.
-	t.Skip("moves to kickstart journey test — Task 6")
-	pool := testPool(t)
-	t.Cleanup(pool.Close)
-
-	bridge, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name: NewFakeWorldGenesisDriver(),
-	}, SeatWorldGenesis)
-	if err != nil {
-		t.Fatalf("bridge: %v", err)
-	}
-
 	var kicked []string
 	original := kickArt
 	kickArt = func(_ *pgxpool.Pool, _ *imageClient, worldID string) { kicked = append(kicked, worldID) }
 	t.Cleanup(func() { kickArt = original })
 
-	rec := httptest.NewRecorder()
-	NewWorldGenesisHandler(pool, true, bridge, nil).
-		ServeHTTP(rec, jsonPost("/worlds/genesis", `{"brief":"`+testBrief+`"}`))
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want 200", rec.Code)
-	}
+	// The full journey: genesis ends in a choice, two kickstart answers commit. Art is commissioned
+	// from the kickstart route's own commit now (build() no longer commits anything), so the kick has
+	// to be observed there or it proves nothing (ADR-P021 — the founder's first report on world
+	// creation was a created world with no pictures, from exactly this kind of unobserved call).
+	frames := postGenesisAndCollectFrames(t, `{"brief":"`+testBrief+`"}`)
+	choice := frames[len(frames)-1]
+	handle, _ := choice["handle"].(string)
 
-	built := ""
-	for _, frame := range sseFrames(t, rec.Body.String()) {
-		var probe struct {
-			Kind string `json:"kind"`
-			ID   string `json:"id"`
-		}
-		if err := json.Unmarshal(frame, &probe); err != nil {
-			t.Fatalf("frame is not JSON: %v", err)
-		}
-		if probe.Kind == "world" {
-			built = probe.ID
-		}
+	turn := postKickstart(t, handle, recommendedLabel(t, choice["options"]))
+	if turn["done"] != false {
+		t.Fatalf("turn 1 = %v", turn)
 	}
+	turn2 := postKickstart(t, handle, recommendedLabel(t, turn["options"]))
+	if turn2["done"] != true {
+		t.Fatalf("turn 2 = %v", turn2)
+	}
+	world, ok := turn2["world"].(map[string]any)
+	if !ok {
+		t.Fatalf("turn 2 carries no world: %v", turn2)
+	}
+	built, _ := world["id"].(string)
 	if built == "" {
-		t.Fatalf("the build produced no world frame: %s", rec.Body.String())
+		t.Fatalf("the build produced no world id: %v", world)
 	}
 
 	if len(kicked) != 1 {
