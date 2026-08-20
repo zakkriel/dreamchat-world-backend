@@ -11,13 +11,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v3.schema.json,
+// sceneCurrentSchemaVersion stamps every scene/current response (schema/scene_current.v4.schema.json,
 // core/api/schema/ — the frontend repo generates its types from that directory).
 //
 // v2 (2026-08-08): participants carry `image`. The payload is additionalProperties:false and the
 // frontend pins this string exactly, so an added field is a breaking change however additive it
 // looks — the version moving IS the notification. Clean cutover, no alias.
-const sceneCurrentSchemaVersion = "scene_current/3"
+const sceneCurrentSchemaVersion = "scene_current/4"
 
 var sceneCurrentRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/scene/current$`)
 
@@ -47,7 +47,8 @@ type sceneParticipant struct {
 	// ordinary state, and the one the frontend's placeholder silhouette is built for. It carries an
 	// asset id and a path back to this service, NEVER a presigned URL: those expire in ~15 minutes,
 	// so a payload embedding one would be a payload that rots in any cache or log.
-	Image json.RawMessage `json:"image"`
+	Image   json.RawMessage `json:"image"`
+	Sprites json.RawMessage `json:"sprites"`
 }
 
 // sceneNow is the moment, expressed as tick (ordering) + display_label (rendering) — wall-clock
@@ -58,7 +59,7 @@ type sceneNow struct {
 	DisplayLabel *string `json:"display_label"`
 }
 
-// sceneView is the scene_current/3 projection: perception-bound, schema_version-stamped, no canon
+// sceneView is the scene_current/4 projection: perception-bound, schema_version-stamped, no canon
 // row crosses (B-1, I-3, D-7). Journey is the rung3 Task 2 block (journey.go's journeyBlock), or nil
 // when the viewer holds no active journey — never an empty/placeholder value for "not travelling".
 type sceneView struct {
@@ -174,8 +175,12 @@ func buildScene(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID strin
 	if err != nil {
 		return sceneView{}, fmt.Errorf("buildScene: image refs: %w", err)
 	}
+	sprites, err := spriteSetsFor(ctx, pool, worldID, actorIDs)
+	if err != nil {
+		return sceneView{}, fmt.Errorf("buildScene: sprite refs: %w", err)
+	}
 	for _, id := range actorIDs {
-		participants = append(participants, sceneParticipant{ID: id, Label: labelFor[id], Kind: "actor", Image: images[id]})
+		participants = append(participants, sceneParticipant{ID: id, Label: labelFor[id], Kind: "actor", Image: images[id], Sprites: sprites[id]})
 	}
 
 	// The backdrop for the place the viewer stands in. One more slot lookup, same table and same

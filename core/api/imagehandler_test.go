@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -52,26 +53,32 @@ func TestFillPortraits_PersistsTheAssetTheAssetRowDoesNotCarry(t *testing.T) {
 		t.Fatalf("result = %+v, want one requested and one completed", res)
 	}
 
-	var assetID, identityID string
-	var jobID, lastErr *string
-	if err := pool.QueryRow(ctx,
-		`SELECT asset_id, visual_identity_id, job_id, last_error FROM image_slot
-		  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2`, worldID, actorID).
-		Scan(&assetID, &identityID, &jobID, &lastErr); err != nil {
-		t.Fatalf("read slot: %v", err)
-	}
-	if assetID != "asset_cf63b1d2e6150906" {
-		t.Fatalf("asset_id = %q — the mapping the platform cannot answer for us was not stored", assetID)
-	}
-	if identityID != "vi_c40c1fc21b057d27" {
-		t.Fatalf("visual_identity_id = %q", identityID)
-	}
-	// job_id is cleared on a terminal status: a settled job must never be polled again.
-	if jobID != nil {
-		t.Fatalf("job_id = %v, want NULL once the job settled", *jobID)
-	}
-	if lastErr != nil {
-		t.Fatalf("last_error = %v, want NULL on success", *lastErr)
+	// One pack call fills FOUR variant rows — the whole point of the sprite migration: each
+	// emotion's asset under its own (owner, variant) key, all mapped on OUR side because the
+	// asset row does not carry the owner.
+	for _, emotion := range spriteEmotionOrder {
+		var assetID, identityID string
+		var jobID, lastErr *string
+		if err := pool.QueryRow(ctx,
+			`SELECT asset_id, visual_identity_id, job_id, last_error FROM image_slot
+			  WHERE world_id=$1 AND owner_kind='actor' AND owner_id=$2 AND variant=$3`,
+			worldID, actorID, emotion).
+			Scan(&assetID, &identityID, &jobID, &lastErr); err != nil {
+			t.Fatalf("read %s slot: %v", emotion, err)
+		}
+		if assetID != "asset_cf63b1d2e6150906_"+emotion {
+			t.Fatalf("%s asset_id = %q — the variant mapping was not stored", emotion, assetID)
+		}
+		if identityID != "vi_c40c1fc21b057d27" {
+			t.Fatalf("visual_identity_id = %q", identityID)
+		}
+		// job_id is cleared on a terminal status: a settled job must never be polled again.
+		if jobID != nil {
+			t.Fatalf("job_id = %v, want NULL once the job settled", *jobID)
+		}
+		if lastErr != nil {
+			t.Fatalf("last_error = %v, want NULL on success", *lastErr)
+		}
 	}
 
 	// Re-running skips the filled slot rather than paying for a second job. Reuse would make a repeat
@@ -225,6 +232,17 @@ func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
 	}
 	if got := f.upsertAppearanceByOwner[actorID]; got != descriptor {
 		t.Fatalf("upsert appearance = %q, want descriptor %q", got, descriptor)
+	}
+
+	// The pack cells are CALLER-authored: each prompt carries the actor's own descriptor, the bust
+	// framing, and its emotion phrase. The platform never composes these — pin that they crossed
+	// the wire composed.
+	for _, emotion := range spriteEmotionOrder {
+		prompt := f.lastPackVariantPrompts[spriteVariantKey(emotion)]
+		if !strings.Contains(prompt, descriptor) || !strings.Contains(prompt, spriteFramingPrompt) ||
+			!strings.Contains(prompt, spriteEmotionPrompts[emotion]) {
+			t.Fatalf("%s cell prompt = %q, want descriptor + framing + emotion phrase composed by THIS repo", emotion, prompt)
+		}
 	}
 }
 
@@ -389,7 +407,7 @@ func TestImageHandler_UnconfiguredPlatformIsAnOrdinaryAnswer(t *testing.T) {
 	}
 }
 
-// scene_current/3: participants carry `image`, null until a portrait exists. The version moved
+// scene_current/4: participants carry `image`, null until a portrait exists. The version moved
 // because the payload is additionalProperties:false and the frontend pins it exactly — an added
 // field is a breaking change however additive it looks.
 func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
@@ -423,8 +441,8 @@ func TestSceneCurrentV2_ParticipantsCarryImageNullUntilReady(t *testing.T) {
 	}
 
 	sv, byID := decode()
-	if sv != "scene_current/3" {
-		t.Fatalf("schema_version = %q, want scene_current/3", sv)
+	if sv != "scene_current/4" {
+		t.Fatalf("schema_version = %q, want scene_current/4", sv)
 	}
 	img, ok := byID[id.Companion]
 	if !ok {
@@ -627,10 +645,12 @@ func TestFillPortraits_ArchivedAssetsAreReapedSoTheTriggerCanRefill(t *testing.T
 		t.Fatalf("result = %+v, want the reaped slot refilled in the same call", res)
 	}
 
+	// The refill lands in the SPRITE format: the neutral variant is the row every legacy reader
+	// (fn_image_ref) falls through to once the default picture is gone.
 	var assetID, identityID string
 	if err := pool.QueryRow(ctx,
 		`SELECT asset_id, visual_identity_id FROM image_slot
-		  WHERE world_id=$1::uuid AND owner_kind='actor' AND owner_id=$2::uuid`, worldID, actorID).
+		  WHERE world_id=$1::uuid AND owner_kind='actor' AND owner_id=$2::uuid AND variant='neutral'`, worldID, actorID).
 		Scan(&assetID, &identityID); err != nil {
 		t.Fatalf("read slot: %v", err)
 	}
@@ -926,7 +946,7 @@ func TestFillScenes_SendsAuthoredFictionVerbatimAndPinsNoProvider(t *testing.T) 
 	}
 }
 
-// scene_current/3: the place carries a backdrop, null until one exists, and it is the SAME
+// scene_current/4: the place carries a backdrop, null until one exists, and it is the SAME
 // image_ref/1 shape a portrait uses so the frontend has one renderer for every picture.
 func TestSceneCurrentV3_PlaceCarriesABackdrop(t *testing.T) {
 	pool := testPool(t)
@@ -937,8 +957,8 @@ func TestSceneCurrentV3_PlaceCarriesABackdrop(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildScene: %v", err)
 	}
-	if scene.SchemaVersion != "scene_current/3" {
-		t.Fatalf("schema_version = %q, want scene_current/3", scene.SchemaVersion)
+	if scene.SchemaVersion != "scene_current/4" {
+		t.Fatalf("schema_version = %q, want scene_current/4", scene.SchemaVersion)
 	}
 	placeID := scene.Place.ID
 
@@ -979,5 +999,188 @@ func TestSceneCurrentV3_PlaceCarriesABackdrop(t *testing.T) {
 	}
 	if ref.Path != "/worlds/"+dlWorldID+"/images/asset_backdrop_zz" {
 		t.Fatalf("path = %q — a backdrop must carry a path back to this service, never a presigned URL", ref.Path)
+	}
+}
+
+// The regenerate trigger through the COMPOSED router — a handler that works perfectly and was never
+// added to newRouter is a 404 in production and a green suite. It clears every actor slot (legacy
+// default rows AND sprite variants — the button's whole promise is a fresh cast) and answers the
+// image_regenerate/1 envelope immediately; the refill happens in a detached sweep.
+func TestImagesRegenerate_ClearsTheCastAndAnswersImmediately(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000fb", "5a5e0000-0000-0000-0000-0000000000ab"
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		 VALUES ($1,$2,'actor','Regenerate Subject')`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, asset_id)
+		VALUES ($1::uuid,'actor',$2::uuid,'default','asset_old_style'),
+		       ($1::uuid,'actor',$2::uuid,'neutral','asset_old_neutral'),
+		       ($1::uuid,'location',$2::uuid,'default','asset_backdrop_kept')`, worldID, actorID); err != nil {
+		t.Fatalf("seed slots: %v", err)
+	}
+
+	f := newFakePlatform()
+	rt := newRouter(pool, false, nil, testImageClient(t, f))
+	rec := httptest.NewRecorder()
+	rt.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/images/regenerate", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	var out imageRegenerateResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response does not parse: %v", err)
+	}
+	if out.SchemaVersion != "image_regenerate/1" || out.Cleared != 2 {
+		t.Fatalf("response = %+v, want image_regenerate/1 with the 2 actor slots cleared", out)
+	}
+
+	var actorSlots, locationSlots int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FILTER (WHERE owner_kind='actor'), count(*) FILTER (WHERE owner_kind='location')
+		  FROM image_slot WHERE world_id=$1::uuid`, worldID).Scan(&actorSlots, &locationSlots); err != nil {
+		t.Fatalf("count slots: %v", err)
+	}
+	// The detached sweep may already be refilling actor slots; what the DELETE guarantees is that no
+	// OLD actor asset survives the button. Backdrops are not the cast and must be untouched.
+	var oldAssets int
+	if err := pool.QueryRow(ctx, `
+		SELECT count(*) FROM image_slot
+		 WHERE world_id=$1::uuid AND owner_kind='actor' AND asset_id IN ('asset_old_style','asset_old_neutral')`,
+		worldID).Scan(&oldAssets); err != nil {
+		t.Fatalf("count old assets: %v", err)
+	}
+	if oldAssets != 0 {
+		t.Fatalf("%d old actor asset(s) survived the regenerate", oldAssets)
+	}
+	if locationSlots != 1 {
+		t.Fatalf("location slots = %d, want the backdrop untouched", locationSlots)
+	}
+}
+
+// With no image platform configured the button must refuse BEFORE deleting anything: clearing the
+// cast with nothing able to redraw it would erase a world's art behind a 200.
+func TestImagesRegenerate_RefusesWithoutAPlatform(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	rt := newRouter(pool, false, nil, nil)
+	rec := httptest.NewRecorder()
+	rt.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/worlds/5a5e0000-0000-0000-0000-0000000000fb/images/regenerate", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503 service unavailable", rec.Code)
+	}
+}
+
+// fn_sprite_set is all-four-or-nothing, and fn_image_ref serves the legacy shape from the sprite
+// rows: default first, else neutral — which is what keeps every image_ref/1 consumer (actor pages,
+// covers, avatars) working unchanged the day a world converts.
+func TestSpriteSet_AllFourOrNothingAndLegacyRefFallsThrough(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID, actorID := "5a5e0000-0000-0000-0000-0000000000fc", "5a5e0000-0000-0000-0000-0000000000ac"
+	clear := func() { _, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID) }
+	clear()
+	t.Cleanup(clear)
+
+	for _, emotion := range []string{"neutral", "happy", "angry"} {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, asset_id)
+			VALUES ($1::uuid,'actor',$2::uuid,$3,$4)`, worldID, actorID, emotion, "asset_"+emotion); err != nil {
+			t.Fatalf("seed %s: %v", emotion, err)
+		}
+	}
+	var set *string
+	if err := pool.QueryRow(ctx, `SELECT fn_sprite_set($1::uuid,$2::uuid)::text`, worldID, actorID).Scan(&set); err != nil {
+		t.Fatalf("fn_sprite_set: %v", err)
+	}
+	if set != nil {
+		t.Fatalf("three variants produced a sprite set %q — a stage showing the wrong face for the fourth is worse than waiting", *set)
+	}
+
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, asset_id)
+		VALUES ($1::uuid,'actor',$2::uuid,'sad','asset_sad')`, worldID, actorID); err != nil {
+		t.Fatalf("seed sad: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT fn_sprite_set($1::uuid,$2::uuid)::text`, worldID, actorID).Scan(&set); err != nil {
+		t.Fatalf("fn_sprite_set: %v", err)
+	}
+	if set == nil {
+		t.Fatal("four filled variants produced no sprite set")
+	}
+	var decoded map[string]struct {
+		SchemaVersion string `json:"schema_version"`
+		AssetID       string `json:"asset_id"`
+		Path          string `json:"path"`
+	}
+	if err := json.Unmarshal([]byte(*set), &decoded); err != nil {
+		t.Fatalf("sprite set does not parse: %v", err)
+	}
+	for _, emotion := range []string{"neutral", "happy", "angry", "sad"} {
+		ref := decoded[emotion]
+		if ref.SchemaVersion != "image_ref/1" || ref.AssetID != "asset_"+emotion ||
+			!strings.HasSuffix(ref.Path, "/images/asset_"+emotion) {
+			t.Fatalf("%s ref = %+v", emotion, ref)
+		}
+	}
+
+	// No default row: the legacy reader serves the neutral sprite as the face.
+	var ref string
+	if err := pool.QueryRow(ctx, `SELECT fn_image_ref($1::uuid,'actor',$2::uuid)::text`, worldID, actorID).Scan(&ref); err != nil {
+		t.Fatalf("fn_image_ref: %v", err)
+	}
+	if !strings.Contains(ref, "asset_neutral") {
+		t.Fatalf("legacy ref = %s, want the neutral sprite standing in", ref)
+	}
+
+	// A default row outranks it: an unconverted world keeps serving exactly the picture it had.
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, asset_id)
+		VALUES ($1::uuid,'actor',$2::uuid,'default','asset_legacy')`, worldID, actorID); err != nil {
+		t.Fatalf("seed default: %v", err)
+	}
+	if err := pool.QueryRow(ctx, `SELECT fn_image_ref($1::uuid,'actor',$2::uuid)::text`, worldID, actorID).Scan(&ref); err != nil {
+		t.Fatalf("fn_image_ref: %v", err)
+	}
+	if !strings.Contains(ref, "asset_legacy") {
+		t.Fatalf("legacy ref = %s, want the default picture winning", ref)
+	}
+}
+
+// TestGenImageRegeneratePayload captures the real wire payload for SPEC-011 (a published schema
+// with no payload behind it fails the build). Gated like every other generator: unset in a normal
+// `go test ./...` run; ci/gen_payloads.sh sets it.
+func TestGenImageRegeneratePayload(t *testing.T) {
+	dir := os.Getenv("IMAGE_PAYLOAD_DIR")
+	if dir == "" {
+		t.Skip("IMAGE_PAYLOAD_DIR unset — payload capture runs only from ci/gen_payloads.sh")
+	}
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+
+	f := newFakePlatform()
+	rt := newRouter(pool, false, nil, testImageClient(t, f))
+	rec := httptest.NewRecorder()
+	rt.ServeHTTP(rec, httptest.NewRequest(http.MethodPost,
+		"/worlds/5a5e0000-0000-0000-0000-0000000000fd/images/regenerate", nil))
+	if rec.Code != 200 {
+		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := os.WriteFile(dir+"/image_regenerate_1.json", rec.Body.Bytes(), 0o644); err != nil {
+		t.Fatalf("write payload: %v", err)
 	}
 }

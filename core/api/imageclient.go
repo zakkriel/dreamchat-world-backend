@@ -422,6 +422,82 @@ func (c *imageClient) requestGeneration(ctx context.Context, identityID, anchorA
 //
 // Same envelope discipline as requestGeneration: the caller pins issued_at and stores it with the
 // key, because their idempotency key hashes the whole body.
+// imagePackVariant is one caller-defined pack cell: an opaque key the platform stores the asset
+// under, and the full subject prose it renders with. The platform owns no vocabulary — what a cell
+// means is decided by the caller (spritePackVariants), which is what keeps a new emotion or a whole
+// new pack a change to THIS repo alone.
+type imagePackVariant struct {
+	Key    string `json:"key"`
+	Prompt string `json:"prompt"`
+}
+
+func (c *imageClient) generateCharacterSpritePack(ctx context.Context, characterID, worldID, styleID string, variants []imagePackVariant, idempotencyKey string, env govEnvelope) (string, error) {
+	body := map[string]any{
+		"governance":       env,
+		"world_id":         worldID,
+		"style_profile_id": styleID,
+		"variants":         variants,
+		"aspect_ratio":     spriteAspectRatio,
+		"background":       "transparent",
+		"render":           map[string]any{"intent": "commit"},
+	}
+	var acc generationAccepted
+	err := c.do(ctx, http.MethodPost, "/v1/characters/"+characterID+"/generate-pack", body, idempotencyKey, &acc)
+	if err != nil {
+		return "", fmt.Errorf("generateCharacterSpritePack: %w", err)
+	}
+	return acc.JobID, nil
+}
+
+func (c *imageClient) resolveEmotionPackAssets(ctx context.Context, jobID, identityID string) (map[string]string, error) {
+	out := map[string]string{}
+	assets, err := c.jobAssets(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	for _, a := range assets {
+		switch a.VariantKey {
+		case "emotion_neutral":
+			out["neutral"] = a.ID
+		case "emotion_happy":
+			out["happy"] = a.ID
+		case "emotion_angry":
+			out["angry"] = a.ID
+		case "emotion_sad":
+			out["sad"] = a.ID
+		}
+	}
+	for _, emotion := range []string{"neutral", "happy", "angry", "sad"} {
+		if out[emotion] != "" {
+			continue
+		}
+		assetID, err := c.searchVariantAsset(ctx, identityID, "emotion_"+emotion)
+		if err != nil {
+			return nil, err
+		}
+		out[emotion] = assetID
+	}
+	return out, nil
+}
+
+func (c *imageClient) searchVariantAsset(ctx context.Context, identityID, variantKey string) (string, error) {
+	body := map[string]any{
+		"visual_identity_id": identityID,
+		"variant_key":        variantKey,
+		"limit":              1,
+	}
+	var out struct {
+		Assets []imageAsset `json:"assets"`
+	}
+	if err := c.do(ctx, http.MethodPost, "/v1/assets/search", body, "", &out); err != nil {
+		return "", fmt.Errorf("searchVariantAsset: %w", err)
+	}
+	if len(out.Assets) == 0 {
+		return "", nil
+	}
+	return out.Assets[0].ID, nil
+}
+
 func (c *imageClient) requestSceneGeneration(ctx context.Context, subjectID, worldID, styleID, description, idempotencyKey string, env govEnvelope) (string, error) {
 	body := map[string]any{
 		"governance":       env,
@@ -470,6 +546,7 @@ func (c *imageClient) getJob(ctx context.Context, jobID string) (imageJob, error
 type imageAsset struct {
 	ID               string  `json:"id"`
 	Status           string  `json:"status"`
+	VariantKey       string  `json:"variant_key"`
 	ThumbnailURL     string  `json:"thumbnail_download_url"`
 	PreviewURL       string  `json:"preview_download_url"`
 	FinalURL         string  `json:"final_download_url"`

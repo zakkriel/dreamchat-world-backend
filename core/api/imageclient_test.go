@@ -43,6 +43,10 @@ type fakePlatform struct {
 	jobCalls           int
 	requestOrder       []string
 
+	// the caller-defined pack cells the last generate-pack request carried, by variant key —
+	// recorded so tests can pin that the VOCABULARY (framing, emotion prose) comes from the caller.
+	lastPackVariantPrompts map[string]string
+
 	// identity and bootstrap
 	identityAnchors             map[string][]string
 	bootstrapFailFor            map[string]bool
@@ -74,7 +78,7 @@ type fakePlatform struct {
 }
 
 func newFakePlatform() *fakePlatform {
-	return &fakePlatform{bodyForKey: map[string]string{}, jobStatus: []string{"completed"}, identityAnchors: map[string][]string{}, bootstrapFailFor: map[string]bool{}, upsertAppearanceByOwner: map[string]string{}}
+	return &fakePlatform{bodyForKey: map[string]string{}, jobStatus: []string{"completed"}, identityAnchors: map[string][]string{}, bootstrapFailFor: map[string]bool{}, upsertAppearanceByOwner: map[string]string{}, lastPackVariantPrompts: map[string]string{}}
 }
 
 func (f *fakePlatform) server(t *testing.T) *httptest.Server {
@@ -105,6 +109,68 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 
 	mux.HandleFunc("/v1/characters/", func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/v1/characters/"), "/")
+		if len(parts) == 2 && parts[1] == "generate-pack" {
+			// The emotion-pack route: one job fans out the four variants. The same idempotency trap
+			// /v1/generations pins applies here — the key is bound to a hash of the whole body.
+			f.mu.Lock()
+			defer f.mu.Unlock()
+			f.generationCalls++
+			f.requestOrder = append(f.requestOrder, "generation")
+			key := r.Header.Get("Idempotency-Key")
+			if key == "" {
+				writeErr(w, 422, "invalid_request", "Idempotency-Key is required")
+				return
+			}
+			f.seenIdempotencyKey = key
+			b, _ := io.ReadAll(r.Body)
+			var body struct {
+				WorldID    string `json:"world_id"`
+				StyleID    string `json:"style_profile_id"`
+				Background string `json:"background"`
+				Aspect     string `json:"aspect_ratio"`
+				Variants   []struct {
+					Key    string `json:"key"`
+					Prompt string `json:"prompt"`
+				} `json:"variants"`
+				Governance map[string]any `json:"governance"`
+			}
+			_ = json.Unmarshal(b, &body)
+			switch {
+			case body.WorldID == "":
+				writeErr(w, 400, "invalid_request", "world_id is required")
+				return
+			case body.StyleID == "":
+				writeErr(w, 400, "invalid_request", "style_profile_id is required")
+				return
+			case len(body.Variants) == 0:
+				writeErr(w, 400, "invalid_request", "variants are required — the platform holds no vocabulary")
+				return
+			case body.Background != "transparent":
+				writeErr(w, 422, "invalid_request", "sprites are transparent; anything else is a caller bug")
+				return
+			case body.Aspect != "3:4":
+				writeErr(w, 422, "invalid_request", "sprites are portrait busts; aspect_ratio must be 3:4")
+				return
+			case body.Governance == nil:
+				writeErr(w, 400, "invalid_request", "governance is required")
+				return
+			}
+			for _, v := range body.Variants {
+				if v.Key == "" || v.Prompt == "" {
+					writeErr(w, 422, "invalid_request", "variants entries need a non-empty key and prompt")
+					return
+				}
+				f.lastPackVariantPrompts[v.Key] = v.Prompt
+			}
+			if prev, ok := f.bodyForKey[key]; ok && prev != string(b) {
+				writeErr(w, 409, "idempotency_conflict", "idempotency key reused with a different body or endpoint")
+				return
+			}
+			f.bodyForKey[key] = string(b)
+			w.WriteHeader(202)
+			_ = json.NewEncoder(w).Encode(map[string]any{"job_id": "job_041c843f24940ad4", "status": "queued"})
+			return
+		}
 		if len(parts) < 2 || parts[1] != "visual-identity" {
 			writeErr(w, 404, "not_found", "route not found")
 			return
@@ -227,15 +293,20 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 		f.mu.Lock()
 		defer f.mu.Unlock()
 		if strings.HasSuffix(r.URL.Path, "/assets") {
-			asset := map[string]any{
-				"id": "asset_cf63b1d2e6150906", "status": "ready", "variant_key": "default",
-				"visual_identity_id":     nil, // NULL on this path — the storage requirement
-				"thumbnail_download_url": "http://minio/thumb.png?X-Amz-Signature=a",
-				"preview_download_url":   "http://minio/low.png?X-Amz-Signature=b",
-				"final_download_url":     "http://minio/high.png?X-Amz-Signature=c",
-				"url_expires_at":         time.Now().Add(15 * time.Minute).Format(time.RFC3339),
+			// Four variant assets, the shape a settled emotion pack answers with. Only the pack path
+			// reads this endpoint (scene/cover jobs read final_asset_ids off the job itself).
+			assets := make([]any, 0, 4)
+			for _, emotion := range []string{"neutral", "happy", "angry", "sad"} {
+				assets = append(assets, map[string]any{
+					"id": "asset_cf63b1d2e6150906_" + emotion, "status": "ready", "variant_key": "emotion_" + emotion,
+					"visual_identity_id":     nil, // NULL on this path — the storage requirement
+					"thumbnail_download_url": "http://minio/thumb.png?X-Amz-Signature=a",
+					"preview_download_url":   "http://minio/low.png?X-Amz-Signature=b",
+					"final_download_url":     "http://minio/high.png?X-Amz-Signature=c",
+					"url_expires_at":         time.Now().Add(15 * time.Minute).Format(time.RFC3339),
+				})
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"assets": []any{asset}})
+			_ = json.NewEncoder(w).Encode(map[string]any{"assets": assets})
 			return
 		}
 		f.jobCalls++
@@ -379,13 +450,16 @@ func TestImageClient_RunsTheVerifiedSequence(t *testing.T) {
 	if job.Status != "completed" || len(job.FinalAssetIDs) != 1 {
 		t.Fatalf("job = %+v, want completed with one final asset", job)
 	}
+	// The assets endpoint answers per VARIANT now (the emotion pack's shape); each asset still
+	// obeys their storage requirement: the ASSET does not carry the identity, the JOB does.
 	assets, err := c.jobAssets(ctx, jobID)
-	if err != nil || len(assets) != 1 {
+	if err != nil || len(assets) != 4 {
 		t.Fatalf("jobAssets: %v / %d", err, len(assets))
 	}
-	// Their storage requirement, reproduced: the ASSET does not carry the identity, the JOB does.
-	if assets[0].VisualIdentityID != nil {
-		t.Fatalf("asset carried visual_identity_id = %v; the mapping must be stored on our side", *assets[0].VisualIdentityID)
+	for _, a := range assets {
+		if a.VisualIdentityID != nil {
+			t.Fatalf("asset carried visual_identity_id = %v; the mapping must be stored on our side", *a.VisualIdentityID)
+		}
 	}
 }
 

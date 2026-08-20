@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "beat_frame/4",
-  "title": "beat_frame/4 \u2014 one SSE frame of POST /worlds/{w}/beats (design \u00a74.8). Supersedes beat_frame/3: a narration message now carries `quote`, the verbatim spoken words, as a field separate from the staging prose in `text`.",
+  "$id": "beat_frame/5",
+  "title": "beat_frame/5 \u2014 one SSE frame of POST /worlds/{w}/beats. Supersedes beat_frame/4 with narration emotion and embedded scene_current/4 sprites.",
   "type": "object",
   "oneOf": [
     {
@@ -37,7 +37,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "interpretation"
@@ -60,7 +60,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "narration"
@@ -103,6 +103,20 @@
                 "null"
               ],
               "description": "The verbatim spoken words, without quotation marks or attribution. Non-empty exactly when kind is speech; null otherwise. Render it as speech; render `text` as prose."
+            },
+            "emotion": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "enum": [
+                "neutral",
+                "happy",
+                "angry",
+                "sad",
+                null
+              ],
+              "description": "Optional per-line speaker emotion for sprite selection. Null/absent means neutral."
             }
           }
         }
@@ -118,7 +132,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "scene"
@@ -138,7 +152,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "journey"
@@ -165,7 +179,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "result"
@@ -234,7 +248,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "error"
@@ -255,7 +269,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "beat_frame/4"
+          "const": "beat_frame/5"
         },
         "kind": {
           "const": "trace"
@@ -1204,8 +1218,8 @@
       ]
     },
     "scene_current": {
-      "$id": "scene_current/3",
-      "title": "scene_current/2 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
+      "$id": "scene_current/4",
+      "title": "scene_current/4 \u2014 where you are, who is present, what matters now (GET /worlds/{w}/scene/current)",
       "type": "object",
       "additionalProperties": false,
       "required": [
@@ -1218,7 +1232,7 @@
       ],
       "properties": {
         "schema_version": {
-          "const": "scene_current/3"
+          "const": "scene_current/4"
         },
         "place": {
           "type": "object",
@@ -1289,7 +1303,8 @@
               "id",
               "label",
               "kind",
-              "image"
+              "image",
+              "sprites"
             ],
             "properties": {
               "id": {
@@ -1327,6 +1342,114 @@
                       "path": {
                         "type": "string",
                         "minLength": 1
+                      }
+                    }
+                  }
+                ]
+              },
+              "sprites": {
+                "description": "Sprite set for the participant. Null until all four emotion variants exist; non-null only when every variant is filled.",
+                "oneOf": [
+                  {
+                    "type": "null"
+                  },
+                  {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "required": [
+                      "neutral",
+                      "happy",
+                      "angry",
+                      "sad"
+                    ],
+                    "properties": {
+                      "neutral": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "schema_version",
+                          "asset_id",
+                          "path"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "image_ref/1"
+                          },
+                          "asset_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "happy": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "schema_version",
+                          "asset_id",
+                          "path"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "image_ref/1"
+                          },
+                          "asset_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "angry": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "schema_version",
+                          "asset_id",
+                          "path"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "image_ref/1"
+                          },
+                          "asset_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
+                      },
+                      "sad": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "schema_version",
+                          "asset_id",
+                          "path"
+                        ],
+                        "properties": {
+                          "schema_version": {
+                            "const": "image_ref/1"
+                          },
+                          "asset_id": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "path": {
+                            "type": "string",
+                            "minLength": 1
+                          }
+                        }
                       }
                     }
                   }

@@ -157,8 +157,8 @@ func TestSceneCurrent_ShowsWhereYouAreAndWhoIsPresent(t *testing.T) {
 		t.Fatalf("decode: %v\nbody: %s", err, rec.Body.String())
 	}
 
-	if scene.SchemaVersion != "scene_current/3" {
-		t.Fatalf("schema_version = %q, want scene_current/3", scene.SchemaVersion)
+	if scene.SchemaVersion != "scene_current/4" {
+		t.Fatalf("schema_version = %q, want scene_current/4", scene.SchemaVersion)
 	}
 
 	// place: the Viewer's OWN name for it (world_genesis perception) — never the canonical secret.

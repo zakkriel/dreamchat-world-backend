@@ -51,10 +51,10 @@ func TestTranscript_StoresWhatWasDeliveredAndServesItBack(t *testing.T) {
 		} `json:"entries"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
-		t.Fatalf("response is not transcript/1 JSON: %v", err)
+		t.Fatalf("response is not transcript/2 JSON: %v", err)
 	}
-	if got.SchemaVersion != "transcript/1" {
-		t.Fatalf("schema_version = %q, want transcript/1", got.SchemaVersion)
+	if got.SchemaVersion != "transcript/2" {
+		t.Fatalf("schema_version = %q, want transcript/2", got.SchemaVersion)
 	}
 	if len(got.Entries) != 1 {
 		t.Fatalf("want the one entry just written, got %d", len(got.Entries))

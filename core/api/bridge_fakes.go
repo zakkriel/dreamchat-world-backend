@@ -26,8 +26,10 @@ func NewFakeStructuredDriver(name string, table map[string]string) Driver {
 	return &fakeStructuredDriver{name: name, table: table}
 }
 
-func (f *fakeStructuredDriver) Name() string                { return f.name }
-func (f *fakeStructuredDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeStructuredDriver) Name() string { return f.name }
+func (f *fakeStructuredDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeStructuredDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -88,7 +90,7 @@ var narratePresentIDRe = regexp.MustCompile(`\[([0-9a-fA-F-]{36})\]`)
 // defect the resolve/cognition/world_actor/place_author fakes above were wired to fix — a seat whose
 // dev stand-in is not shaped like the seat's own output — and narrate was the last one left.
 //
-// It reports CapStructuredOutput because it genuinely answers the narration/2 schema, and it stays
+// It reports CapStructuredOutput because it genuinely answers the narration/3 schema, and it stays
 // belt-safe BY CONSTRUCTION rather than by luck:
 //   - the narrator segment carries speaker_id null and no quote (the only always-legal shape);
 //   - the attributed segment is kind=action, so the verbatim belt (speech only) cannot bite, and its
@@ -131,16 +133,20 @@ func (f *fakeNarrateDriver) Generate(_ context.Context, req GenRequest) (string,
 	// and independent of the player's words — the two things the remaining belts check on an action.
 	if m := narratePresentIDRe.FindStringSubmatch(req.Prompt); len(m) > 1 {
 		id := m[1]
+		// The emotion tag rides the attributed segment so keyless dev exercises the narration/3
+		// field end to end — belt, frame, transcript — exactly as a live model would supply it.
+		emotion := "neutral"
 		segs = append(segs, NarrationSegment{
 			SpeakerID: &id,
 			Kind:      "action",
 			Text:      "shifts their weight and watches you, saying nothing.",
+			Emotion:   &emotion,
 		})
 	}
 
 	out, err := json.Marshal(segs)
 	if err != nil {
-		return "", fmt.Errorf("%s: marshalling narration/2: %w", f.name, err)
+		return "", fmt.Errorf("%s: marshalling narration/3: %w", f.name, err)
 	}
 	return string(out), nil
 }
@@ -155,8 +161,10 @@ type fakeResolveDriver struct{ name string }
 
 func NewFakeResolveDriver() Driver { return &fakeResolveDriver{name: "fake-resolve"} }
 
-func (f *fakeResolveDriver) Name() string                { return f.name }
-func (f *fakeResolveDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeResolveDriver) Name() string { return f.name }
+func (f *fakeResolveDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeResolveDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -192,8 +200,10 @@ type fakeCognitionDriver struct{ name string }
 
 func NewFakeCognitionDriver() Driver { return &fakeCognitionDriver{name: "fake-cognition"} }
 
-func (f *fakeCognitionDriver) Name() string                { return f.name }
-func (f *fakeCognitionDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeCognitionDriver) Name() string { return f.name }
+func (f *fakeCognitionDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -220,12 +230,12 @@ func (f *fakeCognitionDriver) Generate(_ context.Context, req GenRequest) (strin
 // same truth the seat's own scope check consults. Two lawful shapes exist (worldactor.go), and this
 // picks whichever the scene admits, preferring the first:
 //
-//   1. THE PRESENCE-BOUNDARY MOVE — an actor who is NOT here walks in (`ActorMoved` whose target is
-//      the scene). Always lawful by construction, and it is the shape that matters for a journey:
-//      the traveller is alone on the road, and the world's answer is that someone arrives. That IS
-//      the interruption the Journey design is built around.
-//   2. Otherwise, if two or more actors are already here, one speaks to another — the old behaviour,
-//      but with ids read from the scene instead of assumed.
+//  1. THE PRESENCE-BOUNDARY MOVE — an actor who is NOT here walks in (`ActorMoved` whose target is
+//     the scene). Always lawful by construction, and it is the shape that matters for a journey:
+//     the traveller is alone on the road, and the world's answer is that someone arrives. That IS
+//     the interruption the Journey design is built around.
+//  2. Otherwise, if two or more actors are already here, one speaks to another — the old behaviour,
+//     but with ids read from the scene instead of assumed.
 //
 // Actors are ordered by id so the choice is deterministic (replay-safe, like every other fake here).
 // Shape 2 picks from the END of that order, which in the seeded world means the two hooded figures
@@ -237,8 +247,10 @@ type fakeWorldActorDriver struct{ name string }
 
 func NewFakeWorldActorDriver() Driver { return &fakeWorldActorDriver{name: "fake-world-actor"} }
 
-func (f *fakeWorldActorDriver) Name() string                { return f.name }
-func (f *fakeWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeWorldActorDriver) Name() string { return f.name }
+func (f *fakeWorldActorDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 // worldSlicePresence is the slice shape this fake reads back: where the intrusion must land, and who
 // is standing where. Mirrors worldSliceScene (worldactorprompt.go) plus the presence roster.
@@ -352,8 +364,10 @@ var (
 
 func NewFakePlaceAuthorDriver() Driver { return &fakePlaceAuthorDriver{name: "fake-place-author"} }
 
-func (f *fakePlaceAuthorDriver) Name() string                { return f.name }
-func (f *fakePlaceAuthorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakePlaceAuthorDriver) Name() string { return f.name }
+func (f *fakePlaceAuthorDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakePlaceAuthorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -406,8 +420,10 @@ type fakeIntentDriver struct{ name string }
 
 func NewFakeIntentDriver() Driver { return &fakeIntentDriver{name: "fake-intent"} }
 
-func (f *fakeIntentDriver) Name() string                { return f.name }
-func (f *fakeIntentDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (f *fakeIntentDriver) Name() string { return f.name }
+func (f *fakeIntentDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 
 func (f *fakeIntentDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
@@ -517,15 +533,16 @@ func devSpokenContent(input string) string {
 // Two accommodations for how people and labels actually read, both needed once labels started
 // carrying disambiguating detail (fn_display_names_distinct):
 //
-//   • A LEADING ARTICLE is ignored on the candidate side. Labels are authored as descriptors —
+//   - A LEADING ARTICLE is ignored on the candidate side. Labels are authored as descriptors —
 //     "a hooded figure" — while players type "ask THE hooded figure". Requiring the article to match
 //     made the most natural sentence in the game bind nothing at all.
-//   • The BASE of a detailed label matches too. "a hooded figure by the bar" is offered so the player
+//   - The BASE of a detailed label matches too. "a hooded figure by the bar" is offered so the player
 //     CAN be specific, but they will usually start vague; "the hooded figure" must still name both
 //     and produce the UNRESOLVED that invites them to be specific. So each label is tried whole
 //     first (the specific answer wins, and wins by being longer), then at its base — the text before
 //     " by ". Without this the detail would make the ask unanswerable in the opposite direction: the
 //     player could pick one, but could no longer ask the vague question that raises the choice.
+//
 // Returns the winning candidates AND the form that matched them, so the caller can recover the
 // player's own words for an UNRESOLVED `reference`.
 func matchDevCandidates(lowerInput string, cands []Candidate, kinds ...string) ([]Candidate, string) {

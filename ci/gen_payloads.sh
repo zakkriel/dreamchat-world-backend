@@ -84,10 +84,10 @@ if [ -n "$DL" ]; then
   done
 fi
 
-# --- transcript (transcript/1): the ONE surface with no seeded rows, because history starts when
+# --- transcript (transcript/2): the ONE surface with no seeded rows, because history starts when
 # the feature ships and old beats are never fabricated. Left alone it would only ever produce the
 # empty envelope and every `entries[*]` field — the whole delivered-narration shape, including the
-# narration/2 speech split — would ship unvalidated: a coverage hole that reads green. So the
+# narration/3 speech split — would ship unvalidated: a coverage hole that reads green. So the
 # generator writes two entries of its own first (a narration+speech beat, and a journey beat with no
 # player input), then pages them: page 1 with limit=1 exercises `next_before`, page 2 exercises the
 # cursor, and the other viewer exercises the empty envelope AND the viewer-scoping.
@@ -95,7 +95,7 @@ PSQL "INSERT INTO transcript_entry (world_id, viewer_id, in_world_tick, stated, 
       VALUES
       ('$WORLD','$PLAYER',10,'I ask her about the note',
        '[{\"speaker_id\":null,\"speaker_label\":\"\",\"kind\":\"narration\",\"text\":\"The common room is low and dim.\",\"quote\":null},
-         {\"speaker_id\":\"$JONAS\",\"speaker_label\":\"the muscle by the bar\",\"kind\":\"speech\",\"text\":\"he looks up from the tap\",\"quote\":\"The tide turns at dusk.\"},
+         {\"speaker_id\":\"$JONAS\",\"speaker_label\":\"the muscle by the bar\",\"kind\":\"speech\",\"text\":\"he looks up from the tap\",\"quote\":\"The tide turns at dusk.\",\"emotion\":\"happy\"},
          {\"speaker_id\":\"$JONAS\",\"speaker_label\":\"the muscle by the bar\",\"kind\":\"action\",\"text\":\"he sets a tankard down.\",\"quote\":null}]'::jsonb,
        'completed', NULL),
       ('$WORLD','$PLAYER',12,NULL,
@@ -116,6 +116,13 @@ save "transcript_J_empty" "SELECT fn_transcript('$WORLD','$JONAS')"
   SCENE_PAYLOAD_DIR="$OUT" \
   DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
   go test -run '^TestGenSceneCurrentPayloads$' -count=1 -v . )
+
+# --- image_regenerate/1: the regenerate button's response envelope, captured through the composed
+# router exactly as a browser receives it (the handler alone could be perfect and unrouted).
+( cd "$(dirname "$0")/../core/api" && \
+  IMAGE_PAYLOAD_DIR="$OUT" \
+  DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
+  go test -run '^TestGenImageRegeneratePayload$' -count=1 -v . )
 
 # --- world_actor/1 + place_author/1: SEAT-CONTRACT schemas (the structured-output LEASH a driver's raw
 # response is validated against), not API response envelopes — their additionalProperties:false shape
