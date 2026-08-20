@@ -104,18 +104,44 @@ func extractLatitude(src string) string {
 	return src[start : end+len(floorLine)]
 }
 
-// The seats that actually reach a player are the ones worth naming: a leak of authorial judgement
-// into narration or an NPC's reasoning is what a reader would see first.
-func TestPlayerFacingSeatsEmbedTheLatitude(t *testing.T) {
-	for name, prompt := range map[string]string{
-		"narrate":      narrateSystemHeader,
-		"cognition":    cognitionSystemHeader,
-		"resolve":      resolveSystemHeader,
-		"world_actor":  worldActorSystemHeader,
-		"decompose":    decomposeSystemHeader,
-		"place_author": placeAuthorSystemHeader,
-		"anthropic":    anthropicSystemHeader,
-	} {
+// EVERY embedded prompt, not a chosen few.
+//
+// The file test above proves the block is on disk; this one proves it is in the BINARY. They are
+// different failures: a prompt can carry the block and never be embedded, or be embedded from a path
+// that no longer matches. An earlier version of this test listed seven seats and silently omitted
+// world_genesis and world_interview — the two that reach a model through an embed.FS rather than a
+// plain string var, and therefore the two most likely to be missed again.
+//
+// If you add a seat, add it here. A name missing from this map is a seat with no coverage at all.
+func TestEveryEmbeddedPromptCarriesTheLatitude(t *testing.T) {
+	embedded := map[string]string{
+		"narrate":         narrateSystemHeader,
+		"cognition":       cognitionSystemHeader,
+		"resolve":         resolveSystemHeader,
+		"world_actor":     worldActorSystemHeader,
+		"decompose":       decomposeSystemHeader,
+		"place_author":    placeAuthorSystemHeader,
+		"anthropic":       anthropicSystemHeader,
+		"world_genesis":   worldGenesisSystemHeader,
+		"world_interview": worldInterviewSystemHeader,
+	}
+
+	// Every prompt FILE must have an entry here, or a seat could ship embedded-but-unchecked.
+	files, err := filepath.Glob(filepath.Join("prompts", "*.txt"))
+	if err != nil {
+		t.Fatalf("glob prompts: %v", err)
+	}
+	for _, f := range files {
+		name := strings.TrimSuffix(filepath.Base(f), ".txt")
+		if name == "system-anthropic" {
+			name = "anthropic"
+		}
+		if _, ok := embedded[name]; !ok {
+			t.Errorf("prompts/%s.txt has no entry in this test — it is embedded but unchecked", name)
+		}
+	}
+
+	for name, prompt := range embedded {
 		if !strings.Contains(prompt, uncensoredHeading) {
 			t.Errorf("the embedded %s prompt does not carry the latitude — the file may have it while the binary does not", name)
 		}
