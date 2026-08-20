@@ -174,7 +174,7 @@ func ResolveArtStyle(choice string) (ArtStyle, error) {
 	if choice == artStyleFallback.Key {
 		return artStyleFallback, nil
 	}
-	return ArtStyle{}, fmt.Errorf("%q is not a style; choose one of %s, or send %qyour description",
+	return ArtStyle{}, fmt.Errorf("%q is not a style; choose one of %s, or send %s followed by your own description",
 		choice, strings.Join(artStyleKeys(), ", "), artStyleCustomPrefix)
 }
 
