@@ -232,3 +232,50 @@ func TestCORSOrigins_UnsetYieldsNothing(t *testing.T) {
 		t.Fatalf("corsOrigins() = (%v, %v), want both empty when %s is unset", allowed, bad, corsOriginsEnv)
 	}
 }
+
+// Wildcard-subdomain entries exist because Lovable's preview origins rotate per build
+// (id-preview-<hash>--<project>.lovable.app): an exact allowlist can never be kept true for them.
+// The wildcard admits every subdomain of the named domain — and nothing else: not the bare domain,
+// not another scheme, not a host that merely CONTAINS the domain.
+func TestCORS_WildcardAdmitsSubdomainsOnly(t *testing.T) {
+	allowed := []string{feOrigin, "https://*.lovable.app"}
+	cases := []struct {
+		origin string
+		want   bool
+	}{
+		{"https://id-preview-a4749334--a775bf30-84c9-465d-9970-ece9121762d9.lovable.app", true},
+		{"https://deep.nested.lovable.app", true},
+		{"https://lovable.app", false},        // the bare domain is not its own subdomain
+		{"http://preview.lovable.app", false}, // scheme is part of the origin
+		{"https://evil-lovable.app", false},   // suffix match is on ".lovable.app", dot included
+		{"https://lovable.app.attacker.example", false},
+		{feOrigin, true}, // exact entries keep working beside a wildcard
+	}
+	for _, tc := range cases {
+		rec, _ := corsRequest(t, allowed, http.MethodGet, tc.origin, false)
+		got := rec.Header().Get("Access-Control-Allow-Origin")
+		if tc.want && got != tc.origin {
+			t.Errorf("origin %q: Allow-Origin = %q, want it echoed", tc.origin, got)
+		}
+		if !tc.want && got != "" {
+			t.Errorf("origin %q: Allow-Origin = %q, want empty", tc.origin, got)
+		}
+	}
+}
+
+// The wildcard grammar is exactly "scheme://*.domain". A star anywhere else is a typo the boot
+// check must surface, not a broader grammar to half-honour.
+func TestCORSOrigins_WildcardShapes(t *testing.T) {
+	t.Setenv(corsOriginsEnv, "https://*.lovable.app,https://*.example.com/,https://a.*.b,https://*,*.lovable.app")
+
+	allowed, bad := corsOrigins()
+
+	wantAllowed := []string{"https://*.lovable.app", "https://*.example.com"}
+	wantBad := []string{"https://a.*.b", "https://*", "*.lovable.app"}
+	if strings.Join(allowed, ",") != strings.Join(wantAllowed, ",") {
+		t.Fatalf("allowed = %v, want %v", allowed, wantAllowed)
+	}
+	if strings.Join(bad, ",") != strings.Join(wantBad, ",") {
+		t.Fatalf("bad = %v, want %v", bad, wantBad)
+	}
+}

@@ -13,14 +13,20 @@ import (
 // without these headers a browser cannot call this API at all: a preflighted POST /worlds/{w}/beats
 // never reaches the router, and every cross-origin GET is discarded by the browser after the fact.
 //
-// The allowlist is EXACT-MATCH and comes from DREAMCHAT_CORS_ORIGINS alone — a comma-separated list
-// of full origins ("http://localhost:5173,https://app.example.com"). There is deliberately no
-// built-in default and no debug-mode default: deployed FE origins are not known here, and a
-// hardcoded origin is exactly the drift this repo's anti-invention rule forbids. Unset ⇒ CORS is
-// OFF, logged at boot, and the API still serves same-origin, curl, and server-to-server callers
-// unchanged. The wildcard "*" is REJECTED at boot rather than honoured: it is never the right answer
-// for an API that will carry per-viewer projections, and silently accepting it would hide the
-// misconfiguration until something leaked.
+// The allowlist comes from DREAMCHAT_CORS_ORIGINS alone — a comma-separated list of full origins
+// ("http://localhost:5173,https://app.example.com"), each matched EXACTLY — plus wildcard-subdomain
+// entries ("https://*.lovable.app"), which match any origin of that scheme whose host is a
+// subdomain of the named domain. The wildcards exist for hosting whose preview origins rotate per
+// build (Lovable mints id-preview-<hash>--<project>.lovable.app), where an exact allowlist can
+// never be kept true; the bare domain itself is NOT matched by its wildcard — list it separately
+// if it serves a frontend. There is deliberately no built-in default and no debug-mode default:
+// deployed FE origins are not known here, and a hardcoded origin is exactly the drift this repo's
+// anti-invention rule forbids. Unset ⇒ CORS is OFF, logged at boot, and the API still serves
+// same-origin, curl, and server-to-server callers unchanged. The bare wildcard "*" is REJECTED at
+// boot rather than honoured: it is never the right answer for an API that will carry per-viewer
+// projections, and silently accepting it would hide the misconfiguration until something leaked.
+// (CORS is not the auth gate — the bearer token is; this only decides which browser origins may
+// even ask.)
 //
 // No Access-Control-Allow-Credentials: the FE sends no cookies (the trace key rides a query param).
 // The origin is echoed rather than "*" anyway, so turning credentials on later is a one-line change
@@ -36,9 +42,9 @@ const (
 	corsMaxAgeSeconds  = "600"
 )
 
-// corsOrigins reads and normalises the allowlist. Returns the exact origins to accept, plus any
-// entry that is structurally unusable so main can refuse to boot on a misconfiguration instead of
-// quietly serving an API the frontend cannot reach.
+// corsOrigins reads and normalises the allowlist. Returns the entries to accept (exact origins and
+// wildcard-subdomain patterns alike), plus any entry that is structurally unusable so main can
+// refuse to boot on a misconfiguration instead of quietly serving an API the frontend cannot reach.
 func corsOrigins() (allowed []string, bad []string) {
 	for _, raw := range strings.Split(os.Getenv(corsOriginsEnv), ",") {
 		o := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(raw), "/"))
@@ -49,11 +55,41 @@ func corsOrigins() (allowed []string, bad []string) {
 			bad = append(bad, o)
 		case !strings.HasPrefix(o, "http://") && !strings.HasPrefix(o, "https://"):
 			bad = append(bad, o)
+		case strings.Contains(o, "*") && !isWildcardOrigin(o):
+			// A star anywhere but the one supported shape ("scheme://*.domain") is a typo, not a
+			// broader grammar this module quietly half-implements.
+			bad = append(bad, o)
 		default:
 			allowed = append(allowed, o)
 		}
 	}
 	return allowed, bad
+}
+
+// isWildcardOrigin reports whether an allowlist entry is a supported wildcard-subdomain pattern:
+// exactly "http://*.domain" or "https://*.domain", with a non-empty domain carrying no further star.
+func isWildcardOrigin(entry string) bool {
+	scheme, rest, ok := strings.Cut(entry, "://")
+	if !ok || (scheme != "http" && scheme != "https") {
+		return false
+	}
+	suffix, found := strings.CutPrefix(rest, "*.")
+	return found && suffix != "" && !strings.Contains(suffix, "*") && !strings.Contains(suffix, "/")
+}
+
+// matchesWildcard reports whether origin is a subdomain match for the pattern
+// "scheme://*.domain": same scheme, and a host that ENDS in ".domain" with at least one label in
+// front. The bare domain does not match its own wildcard, and a port does not sneak past the
+// suffix check because the comparison is against the whole remainder of the origin string.
+func matchesWildcard(pattern, origin string) bool {
+	pScheme, pRest, _ := strings.Cut(pattern, "://")
+	oScheme, oHost, ok := strings.Cut(origin, "://")
+	if !ok || oScheme != pScheme {
+		return false
+	}
+	suffix, _ := strings.CutPrefix(pRest, "*.")
+	label, matched := strings.CutSuffix(oHost, "."+suffix)
+	return matched && label != "" && !strings.Contains(label, "/")
 }
 
 // withCORS wraps the whole mux — NOT the router — because a preflight is an OPTIONS request to a
@@ -77,8 +113,24 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 		return next
 	}
 	index := make(map[string]struct{}, len(allowed))
+	var wildcards []string
 	for _, o := range allowed {
+		if isWildcardOrigin(o) {
+			wildcards = append(wildcards, o)
+			continue
+		}
 		index[o] = struct{}{}
+	}
+	originAllowed := func(origin string) bool {
+		if _, ok := index[origin]; ok {
+			return true
+		}
+		for _, p := range wildcards {
+			if matchesWildcard(p, origin) {
+				return true
+			}
+		}
+		return false
 	}
 	// Scoped to this wrapper, not package-global: one process has one CORS wrapper, and a fresh set
 	// per call keeps each test's log assertions independent of every other test's.
@@ -93,7 +145,7 @@ func withCORS(next http.Handler, allowed []string) http.Handler {
 		w.Header().Add("Vary", "Origin")
 
 		preflight := r.Method == http.MethodOptions && r.Header.Get("Access-Control-Request-Method") != ""
-		if _, ok := index[origin]; !ok {
+		if !originAllowed(origin) {
 			if _, seen := refused.LoadOrStore(origin, struct{}{}); !seen {
 				log.Printf("CORS: refused origin %s (preflight=%v) — it is not in %s; add it there if that is a real frontend",
 					origin, preflight, corsOriginsEnv)
