@@ -24,6 +24,10 @@ const (
 	worldKickstartPlacesMarker  = "WHERE A SCENARIO MAY OPEN (the only legal `place` values — copy one verbatim; every other place is empty when the player walks in):"
 	worldKickstartWhoMarker     = "WHO THE PLAYER IS (the user's choice — it outranks your judgement completely):"
 	worldKickstartOpeningMarker = "THE USER'S OWN OPENING (ground exactly this, as the single scenario):"
+	// worldKickstartOfferMarker closes the offering-mode prompt. The live seat proved it needed
+	// saying (prod, 2026-08-21): a long free-text identity reads like an opening, and the model
+	// slid into single-scenario grounding mode with no OPENING marker anywhere in the prompt.
+	worldKickstartOfferMarker = "OFFER THREE SCENARIOS. The user has NOT written their own opening — the text above is only who they are. Emit exactly three scenarios, exactly one of them recommended."
 )
 
 type kickstartDoc struct {
@@ -70,8 +74,38 @@ func buildWorldKickstartPrompt(doc *genesisDoc, brief, who, customScenario strin
 	b.WriteString("\n\n" + worldKickstartWhoMarker + "\n" + who)
 	if strings.TrimSpace(customScenario) != "" {
 		b.WriteString("\n\n" + worldKickstartOpeningMarker + "\n" + customScenario)
+	} else {
+		b.WriteString("\n\n" + worldKickstartOfferMarker)
 	}
 	return b.String(), nil
+}
+
+// kickstartLeashFor returns the seat schema with the scenario cardinality the MODE requires —
+// exactly three when offering, exactly one when grounding the user's own opening. The published
+// file keeps the permissive 1..3 envelope (both real shapes validate against it); the LEASH is
+// per-call, because a leash that permits the wrong count is a prompt suggestion, not a leash
+// (prod, 2026-08-21: the routed seat emitted one scenario in offering mode three times running).
+func kickstartLeashFor(wantOptions bool) (json.RawMessage, error) {
+	var s map[string]any
+	if err := json.Unmarshal([]byte(worldKickstartSchemaJSON), &s); err != nil {
+		return nil, fmt.Errorf("kickstartLeashFor: parse: %w", err)
+	}
+	props, _ := s["properties"].(map[string]any)
+	scen, _ := props["scenarios"].(map[string]any)
+	if scen == nil {
+		return nil, fmt.Errorf("kickstartLeashFor: schema has no scenarios property")
+	}
+	n := 1
+	if wantOptions {
+		n = 3
+	}
+	scen["minItems"] = n
+	scen["maxItems"] = n
+	out, err := json.Marshal(s)
+	if err != nil {
+		return nil, fmt.Errorf("kickstartLeashFor: marshal: %w", err)
+	}
+	return out, nil
 }
 
 func authorKickstart(ctx context.Context, seat Driver, doc *genesisDoc, brief, who, customScenario string) (*kickstartDoc, error) {
@@ -79,7 +113,11 @@ func authorKickstart(ctx context.Context, seat Driver, doc *genesisDoc, brief, w
 	if err != nil {
 		return nil, err
 	}
-	raw, err := seat.Generate(ctx, GenRequest{Prompt: prompt, Schema: json.RawMessage(worldKickstartSchemaJSON)})
+	leash, err := kickstartLeashFor(strings.TrimSpace(customScenario) == "")
+	if err != nil {
+		return nil, err
+	}
+	raw, err := seat.Generate(ctx, GenRequest{Prompt: prompt, Schema: leash})
 	if err != nil {
 		return nil, err
 	}
