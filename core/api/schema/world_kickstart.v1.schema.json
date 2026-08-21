@@ -3,17 +3,30 @@
   "$id": "world_kickstart/1",
   "title": "world_kickstart/1 — three ways this player's story could start, or the user's own opening grounded. The seat emits fiction only: no id, no coordinate, no tick, no number of any kind, anywhere.",
   "type": "object",
-  "required": ["identity", "scenarios"],
+  "required": [
+    "identity",
+    "scenarios"
+  ],
   "additionalProperties": false,
   "properties": {
     "identity": {
       "type": "object",
-      "required": ["descriptor", "canonical_name"],
+      "required": [
+        "descriptor",
+        "canonical_name"
+      ],
       "additionalProperties": false,
       "description": "The player as chosen or written by the user, echoed as premise. When the user wrote their own words, author descriptor and name FROM those words — their words outrank yours. No traits, no disposition, no interior (B-4).",
       "properties": {
-        "descriptor": { "type": "string", "minLength": 1, "description": "How the room sees this stranger at first sight." },
-        "canonical_name": { "type": "string", "minLength": 1 }
+        "descriptor": {
+          "type": "string",
+          "minLength": 1,
+          "description": "How the room sees this stranger at first sight."
+        },
+        "canonical_name": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
     "scenarios": {
@@ -23,14 +36,134 @@
       "description": "Exactly three when offering; exactly one when grounding the user's own opening. Each names a real, already-populated place from the authored world.",
       "items": {
         "type": "object",
-        "required": ["label", "place", "why", "stated"],
+        "required": [
+          "label",
+          "place",
+          "why",
+          "stated"
+        ],
         "additionalProperties": false,
         "properties": {
-          "label": { "type": "string", "minLength": 1, "description": "The opening in a short line, the way a chapter is named — this renders as the option the user picks." },
-          "place": { "type": "string", "minLength": 1, "description": "canonical_name of the place they walk into. It must be a place the world authored, and at least one member of the cast must already start there — a visitor never enters an empty room." },
-          "why": { "type": "string", "minLength": 1, "description": "Why they are here, as premise — a situation, never a feeling." },
-          "stated": { "type": "string", "minLength": 1, "description": "The arrival in the player's own first person. This becomes their single perception and the only thing they know." },
-          "recommended": { "type": "boolean", "description": "At most one scenario carries this; the surface highlights it as the default. Omit entirely when grounding the user's own opening." }
+          "label": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The opening in a short line, the way a chapter is named — this renders as the option the user picks."
+          },
+          "place": {
+            "type": "string",
+            "minLength": 1,
+            "description": "canonical_name of the place they walk into. It must be a place the world authored, and at least one member of the cast must already start there — a visitor never enters an empty room."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why they are here, as premise — a situation, never a feeling."
+          },
+          "stated": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The arrival in the player's own first person. This becomes their single perception and the only thing they know."
+          },
+          "recommended": {
+            "type": "boolean",
+            "description": "At most one scenario carries this; the surface highlights it as the default. Omit entirely when grounding the user's own opening."
+          }
+        }
+      }
+    },
+    "new_cast": {
+      "type": "array",
+      "maxItems": 3,
+      "description": "People the chosen identity references who do not exist in the cast — 'Joe, son of Dalma and Harry' makes Dalma and Harry real. Same shape as the world's own cast; each starts_in must be a place the world authored. Emit ONLY people the identity itself references; empty or absent is the ordinary case.",
+      "items": {
+        "type": "object",
+        "required": [
+          "descriptor",
+          "canonical_name",
+          "standing",
+          "speech_manner",
+          "traits",
+          "hiding",
+          "starts_in"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How a stranger sees this person before learning anything — 'a hooded figure by the bar'. This is what renders until the player earns the name, so it must stand alone as an introduction."
+          },
+          "canonical_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Their true name, and the join key other parts reference."
+          },
+          "standing": {
+            "type": "string",
+            "minLength": 1,
+            "description": "What they do and where they sit in this world's order, in a phrase."
+          },
+          "speech_manner": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How they talk — clipped, formal, wheedling, flat. The cognition seats read this."
+          },
+          "traits": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "strength",
+                "manner"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "A single genre-agnostic disposition word."
+                },
+                "strength": {
+                  "type": "string",
+                  "enum": [
+                    "faint",
+                    "moderate",
+                    "strong",
+                    "defining"
+                  ],
+                  "description": "A qualitative magnitude. The engine maps it to the number the schema forbids the seat from emitting."
+                },
+                "manner": {
+                  "type": "string",
+                  "minLength": 1,
+                  "description": "How that disposition shows in behaviour."
+                }
+              }
+            }
+          },
+          "hiding": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The one thing this person knows and does not say. It becomes a private perception only they hold — the planted secret the engine's own I-3 test hunts for leaks of."
+          },
+          "malleability": {
+            "type": "string",
+            "enum": [
+              "faint",
+              "moderate",
+              "strong",
+              "defining"
+            ],
+            "description": "A qualitative magnitude. The engine maps it to the number the schema forbids the seat from emitting."
+          },
+          "starts_in": {
+            "type": "string",
+            "minLength": 1,
+            "description": "canonical_name of the place they are in when the player walks in."
+          }
         }
       }
     }

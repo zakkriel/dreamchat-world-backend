@@ -164,14 +164,14 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 		t.Fatalf("the stream produced no `choice` frame, so the build did not pause for the player: %s", rec.Body.String())
 	}
 	for kind, frame := range byKind {
-		writePayload(t, dir, "world_genesis_frame_2_"+kind+".json", frame)
+		writePayload(t, dir, "world_genesis_frame_3_"+kind+".json", frame)
 	}
 
 	// Kickstart turn 1: the character choice. Answers the recommended candidate, exactly as a player
 	// clicking the highlighted option would — the response is the `done:false` branch of the turn
 	// grammar (the next question, with its own options).
-	handle, _ := choice["handle"].(string)
-	turn1Body, err := json.Marshal(kickstartRequest{Handle: handle, Answer: recommendedLabel(t, choice["options"])})
+	choiceWorldID, _ := choice["world_id"].(string)
+	turn1Body, err := json.Marshal(kickstartRequest{WorldID: choiceWorldID, Answer: recommendedLabel(t, choice["options"])})
 	if err != nil {
 		t.Fatalf("marshal kickstart turn 1 request: %v", err)
 	}
@@ -180,7 +180,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	if turn1Rec.Code != http.StatusOK {
 		t.Fatalf("kickstart turn 1 status = %d, want 200 (body %s)", turn1Rec.Code, turn1Rec.Body.String())
 	}
-	writePayload(t, dir, "world_kickstart_turn_1_question.json", bytes.TrimSpace(turn1Rec.Body.Bytes()))
+	writePayload(t, dir, "world_kickstart_turn_2_question.json", bytes.TrimSpace(turn1Rec.Body.Bytes()))
 
 	var turn1 map[string]any
 	if err := json.Unmarshal(turn1Rec.Body.Bytes(), &turn1); err != nil {
@@ -194,7 +194,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 
 	// Kickstart turn 2: the scenario choice — the one transaction that commits (AC-2). The response is
 	// the `done:true` branch, carrying the playable world.
-	turn2Body, err := json.Marshal(kickstartRequest{Handle: handle, Answer: recommendedLabel(t, turn1["options"])})
+	turn2Body, err := json.Marshal(kickstartRequest{WorldID: choiceWorldID, Answer: recommendedLabel(t, turn1["options"])})
 	if err != nil {
 		t.Fatalf("marshal kickstart turn 2 request: %v", err)
 	}
@@ -209,10 +209,10 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	}
 	if turn2["done"] != true {
 		t.Fatalf("kickstart turn 2 done = %v, want true — same schema, both branches: a stalled commit "+
-			"would still validate while world_kickstart_turn_1_world.json silently captured a question "+
+			"would still validate while world_kickstart_turn_2_world.json silently captured a question "+
 			"instead of the world branch it is named for", turn2["done"])
 	}
-	writePayload(t, dir, "world_kickstart_turn_1_world.json", bytes.TrimSpace(turn2Rec.Body.Bytes()))
+	writePayload(t, dir, "world_kickstart_turn_2_world.json", bytes.TrimSpace(turn2Rec.Body.Bytes()))
 
 	// The refusal branch, from a brief the seat cannot answer (the wrong-shaped fake decodes as a JSON
 	// array, which cannot unmarshal into genesisDoc) — captured so the `refused` shape is covered by a
@@ -229,7 +229,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 		var probe struct{ Kind string }
 		_ = json.Unmarshal(frame, &probe)
 		if probe.Kind == "refused" {
-			writePayload(t, dir, "world_genesis_frame_2_refused.json", frame)
+			writePayload(t, dir, "world_genesis_frame_3_refused.json", frame)
 		}
 	}
 
@@ -247,7 +247,7 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 		var probe struct{ Kind string }
 		_ = json.Unmarshal(frame, &probe)
 		if probe.Kind == "error" {
-			writePayload(t, dir, "world_genesis_frame_2_error.json", frame)
+			writePayload(t, dir, "world_genesis_frame_3_error.json", frame)
 		}
 	}
 }

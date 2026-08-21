@@ -6,10 +6,10 @@ package main
 // worldgenesishandler.go — the three routes the create-world journey talks to.
 //
 //	POST /worlds/interview          →  one JSON turn: the next question, or nothing left to ask
-//	POST /worlds/genesis            →  an SSE stream of world_genesis_frame/2, ending in a `choice`
-//	                                    frame the player must answer before anything commits
-//	POST /worlds/genesis/kickstart  →  one JSON turn per answer (world_kickstart_turn/1); the LAST
-//	                                    answer is the one transaction that makes the world playable
+//	POST /worlds/genesis            →  an SSE stream of world_genesis_frame/3, ending in a `choice`
+//	                                    frame carrying the id of the world it already committed
+//	POST /worlds/genesis/kickstart  →  one JSON turn per answer (world_kickstart_turn/2); the LAST
+//	                                    answer is the arrival transaction that makes the world playable
 //
 // None of these hang off /worlds/{id}: there is no world yet, which is the whole point. They sit
 // beside GET/POST /worlds as collection-level acts.
@@ -23,17 +23,17 @@ package main
 // fact (the call is running, and for how long), because a silent minute is indistinguishable from a
 // hang and was reported as one.
 //
-// THREE PHASES, ONE TRANSACTION AT THE END. build() authors the whole world and stops — it narrates what
-// it wrote, then ends the stream in a `choice` frame instead of committing; nothing is written yet.
-// kickstart() takes it from there, one HTTP call per answer: the character turn (who the player is)
-// authors the scenario options and asks again; the scenario turn (how it starts) is the one that
-// commits. All three phases share the same authored genesisDoc, handed between requests as an in-memory
-// draft (genesisdrafts.go) instead of round-tripped over the wire — sending it back to the client would
-// leak every secret and knowledge path the world holds (AC-7). Only the LAST turn opens a transaction,
-// and it is the SAME commitWorldGenesis the old single-shot build used: authored first, committed once
-// (AC-2). A failure anywhere in the whole journey — a refused character, a refused opening, a commit
-// that fails — leaves no directory row; a player who answered two questions and then hit a fault has no
-// half-world waiting for them, which is what `playable` exists to promise.
+// THREE PHASES, TWO TRANSACTIONS (durable-worlds spec, 2026-08-21). build() authors the whole world,
+// narrates what it wrote, then COMMITS everything the world IS — entities, naming, history, minds,
+// opening state, and the authored document itself — before ending the stream in a `choice` frame
+// carrying the real world id. player_entity_id stays NULL, so the directory lists a real world that
+// is not yet enterable. kickstart() takes it from there, one HTTP call per answer, keyed by the
+// world id and resumable forever: the character turn (who the player is) authors the scenario
+// options — and any people the identity references into existence — and asks again; the scenario
+// turn (how it starts) runs the arrival transaction that makes the world playable. An empty answer
+// is the resume path: it re-serves the pending question, so a process restart or an abandoned tab
+// costs at most one re-asked question, never the world. A refused turn is a 422 with the stated
+// reason and the world untouched — the expensive part can no longer be destroyed by the cheap part.
 
 import (
 	"encoding/json"
@@ -53,10 +53,10 @@ import (
 // worldGenesisFrameSchemaVersion stamps every frame of the build stream. The frontend pins it exactly and
 // fails the load on a mismatch, so reshaping a frame means moving this string — the version moving IS the
 // notification.
-const worldGenesisFrameSchemaVersion = "world_genesis_frame/2"
+const worldGenesisFrameSchemaVersion = "world_genesis_frame/3"
 
 // worldKickstartTurnSchemaVersion stamps the kickstart response. Same contract discipline.
-const worldKickstartTurnSchemaVersion = "world_kickstart_turn/1"
+const worldKickstartTurnSchemaVersion = "world_kickstart_turn/2"
 
 // worldInterviewTurnSchemaVersion stamps the interview response. Same contract discipline.
 const worldInterviewTurnSchemaVersion = "world_interview_turn/1"
@@ -85,13 +85,10 @@ type worldGenesisHandler struct {
 	// images commissions the new world's art once it exists. Nil is an ordinary state — the world
 	// is built and playable either way; it simply has no pictures yet.
 	images *imageClient
-	// drafts holds an authored-but-uncommitted world between the choice frame that ends build() and
-	// the kickstart route that turns the user's answer into a commit (genesisdrafts.go).
-	drafts *draftStore
 }
 
 func NewWorldGenesisHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClient) http.Handler {
-	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge, images: images, drafts: newDraftStore(genesisDraftTTL)}
+	return &worldGenesisHandler{pool: pool, dbg: debug, bridge: bridge, images: images}
 }
 
 func (h *worldGenesisHandler) Match(r *http.Request) bool {
@@ -227,7 +224,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// spend a build to report a typo. The module's own message is what the user reads — it names the
 	// styles that do exist.
 	if _, err := ResolveArtStyle(req.ArtStyle); err != nil {
-		h.fail(frames, refuse("%s", err.Error()))
+		h.fail(frames, refuse("%s", err.Error()), "")
 		return
 	}
 
@@ -240,7 +237,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	doc, err := authorWorld(ctx, h.bridge.Driver(SeatWorldGenesis.Name), req.Brief, req.Answers)
 	stopHeartbeat()
 	if err != nil {
-		h.fail(frames, err)
+		h.fail(frames, err, "")
 		return
 	}
 
@@ -258,9 +255,31 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	draft := &genesisDraft{doc: doc, brief: req.Brief, artStyle: req.ArtStyle}
+	// The commit that makes the world durable: everything it IS, before anyone is anyone in it.
+	// From here on, no failure in this stream or any later turn can cost the user the world.
+	tx, err := h.pool.Begin(ctx)
+	if err != nil {
+		h.fail(frames, fmt.Errorf("genesis: begin: %w", err), "")
+		return
+	}
+	worldID, err = func() (string, error) {
+		defer func() { _ = tx.Rollback(ctx) }()
+		id, err := commitWorldContent(ctx, tx, doc, req.Brief, req.ArtStyle)
+		if err != nil {
+			return "", err
+		}
+		return id, tx.Commit(ctx)
+	}()
+	if err != nil {
+		worldID = "(none)"
+		h.fail(frames, err, "")
+		return
+	}
+	_ = frames.emit("working", map[string]any{"stated": "The world is written down — it keeps, even if you stop here.", "world_id": worldID})
+
+	state := &kickstartState{}
 	usd, in, out, cached, calls := costs.snapshot()
-	draft.tally.add(usd, in, out, cached, calls)
+	state.Tally.add(usd, in, out, cached, calls)
 
 	var question string
 	var options []map[string]any
@@ -272,21 +291,25 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		// ends in the scenario question with no extra round-trip (spec, phase 1).
 		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), doc, req.Brief, doc.Arrival.CanonicalName, "")
 		if err != nil {
-			h.fail(frames, err)
+			// The world is already committed and resumable; only this question failed. The frame
+			// carries the world id so the surface can offer to continue rather than to rebuild.
+			h.fail(frames, err, worldID)
 			return
 		}
-		draft.identity = &k.Identity
-		draft.scenarios = k.Scenarios
+		state.Identity = &k.Identity
+		state.Scenarios = k.Scenarios
+		state.NewCast = k.NewCast
 		usd, in, out, cached, calls = costs.snapshot()
-		draft.tally = draftTally{}
-		draft.tally.add(usd, in, out, cached, calls) // snapshot is cumulative per sink; reset-then-add keeps the tally honest
+		state.Tally = kickstartTally{}
+		state.Tally.add(usd, in, out, cached, calls) // snapshot is cumulative per sink; reset-then-add keeps the tally honest
 		question = "How does it start?"
 		options = scenarioTurnOptions(k.Scenarios)
 	}
-
-	handle := h.drafts.mint()
-	h.drafts.put(handle, draft)
-	_ = frames.emit("choice", map[string]any{"handle": handle, "question": question, "options": options})
+	if err := saveKickstartState(ctx, h.pool, worldID, state); err != nil {
+		h.fail(frames, err, worldID)
+		return
+	}
+	_ = frames.emit("choice", map[string]any{"world_id": worldID, "question": question, "options": options})
 }
 
 // genesisHeartbeatEvery is how often the build stream says the author is still writing. A var rather
@@ -323,32 +346,41 @@ func stillWriting(frames *frameWriter, start time.Time) (stop func()) {
 // fail ends the stream honestly. A refusal carries the seat's own stated reason, because the user asked for
 // something that could not become a world and deserves to know what; a fault carries a generic line,
 // because "connection reset by peer" is not a sentence a player can act on. Both reach the log in full.
-func (h *worldGenesisHandler) fail(frames *frameWriter, err error) {
+// worldID is non-empty once the content commit landed: the frame then names the world that survives
+// the failure, so the surface can offer to continue it instead of rebuilding.
+func (h *worldGenesisHandler) fail(frames *frameWriter, err error, worldID string) {
+	payload := func(stated string) map[string]any {
+		p := map[string]any{"stated": stated}
+		if worldID != "" {
+			p["world_id"] = worldID
+		}
+		return p
+	}
 	var refusal *genesisRefusal
 	if errors.As(err, &refusal) {
 		log.Printf("world genesis refused: %v", err)
-		_ = frames.emit("refused", map[string]any{"stated": refusal.why})
+		_ = frames.emit("refused", payload(refusal.why))
 		return
 	}
 	log.Printf("world genesis failed: %v", err)
-	_ = frames.emit("error", map[string]any{"stated": "the world could not be built"})
+	_ = frames.emit("error", payload("the world could not be built"))
 }
 
-// kickstartRequest is the input to every kickstart turn: the handle a prior turn minted, and the
-// player's answer — a chosen option's label, or their own words entirely.
+// kickstartRequest is the input to every kickstart turn: the world a build committed, and the
+// player's answer — a chosen option's label, their own words entirely, or EMPTY, which means "show
+// me the pending question" (the resume path).
 type kickstartRequest struct {
-	Handle string `json:"handle"`
-	Answer string `json:"answer"`
+	WorldID string `json:"world_id"`
+	Answer  string `json:"answer"`
 }
 
-// kickstart turns one answer into the next question, or — on the scenario answer — into the one
-// transaction that makes the world playable (AC-2). draft.identity == nil is the whole state machine:
-// nil means the character question is still open, set means only the opening remains.
+// kickstart turns one answer into the next question, or — on the scenario answer — into the arrival
+// transaction that makes the world playable. state.Identity == nil is the whole state machine: nil
+// means the character question is still open, set means only the opening remains.
 //
-// Every early return below a successful claim that is NOT the terminal commit re-puts the draft under
-// the SAME handle first: claim removes on read, so a refusal, a seat fault or a commit failure that
-// forgot to re-put would silently delete an otherwise-retryable build out from under a player about to
-// hit retry.
+// Nothing here can lose the world. State saves only after a turn succeeds; a refusal or a fault
+// leaves the row exactly as it was, and the same request can simply be sent again. The final commit
+// guards the player stamp with IS NULL, so a duplicate final answer answers 409 instead of racing.
 func (h *worldGenesisHandler) kickstart(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, briefMaxBytes)
 	var req kickstartRequest
@@ -357,20 +389,28 @@ func (h *worldGenesisHandler) kickstart(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	draft, ok := h.drafts.claim(req.Handle)
-	if !ok {
-		// Expired, unknown, or already spent — the commit below removes the draft too, so a repeat
-		// answer against a finished build lands here as well. Either way nothing was ever half-written:
-		// an absent draft never touched the database (AC-2 holds by construction, not by cleanup).
-		writeJSONError(w, http.StatusGone, errDraftExpired.Error())
+	ctx, costs := withCostSink(r.Context())
+	start := time.Now()
+
+	c, err := loadCreation(ctx, h.pool, req.WorldID)
+	switch {
+	case errors.Is(err, errNoSuchWorld):
+		writeJSONError(w, http.StatusNotFound, "no such world")
+		return
+	case errors.Is(err, errWorldAlreadyPlayable):
+		writeJSONError(w, http.StatusConflict, errWorldAlreadyPlayable.Error())
+		return
+	case errors.Is(err, errNotResumable):
+		writeJSONError(w, http.StatusConflict, errNotResumable.Error())
+		return
+	case err != nil:
+		log.Printf("world kickstart: load: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "the world could not be read")
 		return
 	}
 
-	ctx, costs := withCostSink(r.Context())
-	start := time.Now()
 	answer := strings.TrimSpace(req.Answer)
 	bail := func(err error) {
-		h.drafts.put(req.Handle, draft)
 		var refusal *genesisRefusal
 		if errors.As(err, &refusal) {
 			log.Printf("world kickstart refused: %v", err)
@@ -380,81 +420,138 @@ func (h *worldGenesisHandler) kickstart(w http.ResponseWriter, r *http.Request) 
 		log.Printf("world kickstart failed: %v", err)
 		writeJSONError(w, http.StatusBadGateway, "the opening could not be authored")
 	}
-
-	if draft.identity == nil {
-		// Character turn: a match against the offered candidates names who the player picked; no
-		// match means the answer is their own words, and authorKickstart takes it exactly as who they
-		// are — free text is a first-class answer here, not a rejection.
-		who := answer
-		if c, ok := matchCandidateAnswer(draft.doc.ArrivalCandidates, answer); ok {
-			who = c.CanonicalName
-		}
-		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), draft.doc, draft.brief, who, "")
-		if err != nil {
-			bail(err)
-			return
-		}
-		usd, in, out, cached, calls := costs.snapshot()
-		draft.tally.add(usd, in, out, cached, calls)
-		draft.identity = &k.Identity
-		draft.scenarios = k.Scenarios
-		h.drafts.put(req.Handle, draft)
-
+	turn := func(question string, options []map[string]any) {
 		body := map[string]any{
 			"schema_version": worldKickstartTurnSchemaVersion,
 			"done":           false,
-			"question":       "How does it start?",
-			"options":        scenarioTurnOptions(k.Scenarios),
+			"question":       question,
+			"options":        options,
 		}
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(body)
-		return
 	}
 
-	// Scenario turn — the last one. A match against the authored options names the scenario chosen; no
-	// match grounds the player's own opening as the single scenario (authorKickstart's second mode).
-	chosen, matched := matchScenarioAnswer(draft.scenarios, answer)
-	if !matched {
-		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), draft.doc, draft.brief,
-			draft.identity.CanonicalName, answer)
+	// The identity the arrival will wear: chosen at the character turn, or stated in the brief and
+	// carried by the authored document itself (that is what an absent candidates list means).
+	identity := c.state.Identity
+	if identity == nil && len(c.doc.ArrivalCandidates) == 0 {
+		identity = &kickstartIdentity{
+			Descriptor:    c.doc.Arrival.Descriptor,
+			CanonicalName: c.doc.Arrival.CanonicalName,
+		}
+	}
+
+	// mergedDoc is the world as the scenario turn must see it: the committed cast plus every person
+	// the identity referenced into existence. The kickstart seat grounds custom openings against it,
+	// the populated-places list grows with it, and validate() belts the whole of it.
+	mergedDoc := func() *genesisDoc {
+		if len(c.state.NewCast) == 0 {
+			return c.doc
+		}
+		d := *c.doc
+		d.Cast = append(append([]genesisActor{}, c.doc.Cast...), c.state.NewCast...)
+		return &d
+	}
+
+	// Character turn — pending whenever no identity is settled yet.
+	if identity == nil {
+		if answer == "" {
+			// Resume: re-serve the question exactly as the build stream first asked it.
+			turn("Who are you here?", characterTurnOptions(c.doc))
+			return
+		}
+		// A match against the offered candidates names who the player picked; no match means the
+		// answer is their own words, and authorKickstart takes it exactly as who they are — free
+		// text is a first-class answer here, not a rejection.
+		who := answer
+		if cand, ok := matchCandidateAnswer(c.doc.ArrivalCandidates, answer); ok {
+			who = cand.CanonicalName
+		}
+		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), c.doc, c.brief, who, "")
 		if err != nil {
 			bail(err)
 			return
 		}
 		usd, in, out, cached, calls := costs.snapshot()
-		draft.tally.add(usd, in, out, cached, calls)
+		c.state.Tally.add(usd, in, out, cached, calls)
+		c.state.Identity = &k.Identity
+		c.state.Scenarios = k.Scenarios
+		c.state.NewCast = mergeNewCast(c.state.NewCast, k.NewCast)
+		if err := saveKickstartState(ctx, h.pool, c.worldID, &c.state); err != nil {
+			bail(err)
+			return
+		}
+		turn("How does it start?", scenarioTurnOptions(k.Scenarios))
+		return
+	}
+
+	// Scenario turn. A resume with no authored options yet (identity was stated in the brief and the
+	// process restarted before the scenario call, or that call refused) authors them now.
+	if answer == "" {
+		if len(c.state.Scenarios) == 0 {
+			k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), mergedDoc(), c.brief, identity.CanonicalName, "")
+			if err != nil {
+				bail(err)
+				return
+			}
+			usd, in, out, cached, calls := costs.snapshot()
+			c.state.Tally.add(usd, in, out, cached, calls)
+			c.state.Identity = identity
+			c.state.Scenarios = k.Scenarios
+			c.state.NewCast = mergeNewCast(c.state.NewCast, k.NewCast)
+			if err := saveKickstartState(ctx, h.pool, c.worldID, &c.state); err != nil {
+				bail(err)
+				return
+			}
+		}
+		turn("How does it start?", scenarioTurnOptions(c.state.Scenarios))
+		return
+	}
+
+	// The last answer. A match names the scenario chosen; no match grounds the player's own opening
+	// as the single scenario (authorKickstart's second mode), against the merged world.
+	chosen, matched := matchScenarioAnswer(c.state.Scenarios, answer)
+	if !matched {
+		k, err := authorKickstart(ctx, h.bridge.Driver(SeatWorldKickstart.Name), mergedDoc(), c.brief,
+			identity.CanonicalName, answer)
+		if err != nil {
+			bail(err)
+			return
+		}
+		// No tally add here: the sink is cumulative per request, and the aggregate below snapshots
+		// it once — adding now double-counted the custom-opening call before (fix 7191477 relearned).
+		c.state.NewCast = mergeNewCast(c.state.NewCast, k.NewCast)
 		chosen = k.Scenarios[0]
 	}
 
-	doc := draft.doc
-	doc.Arrival = genesisArrival{
-		Descriptor:    draft.identity.Descriptor,
-		CanonicalName: draft.identity.CanonicalName,
+	fdoc := *mergedDoc()
+	fdoc.Arrival = genesisArrival{
+		Descriptor:    identity.Descriptor,
+		CanonicalName: identity.CanonicalName,
 		Place:         chosen.Place,
 		Stated:        chosen.Stated,
 		Why:           chosen.Why,
 	}
-	doc.ArrivalCandidates = nil
-	if err := doc.validate(); err != nil {
-		// Belt: the new arrival must still hit a populated place with an exit. The candidates were
-		// already vetted at build time, so this is not expected to fire — but when it does, it is a
-		// refusal like any other, and the draft is retryable exactly the same way.
+	fdoc.ArrivalCandidates = nil
+	if err := fdoc.validate(); err != nil {
+		// Belt: the chosen arrival must still hit a populated place with an exit, and every person
+		// the identity referenced must stand as a whole cast entry. A refusal here costs one answer.
 		bail(err)
 		return
 	}
 
-	// One transaction for the whole world (AC-2): commit or nothing, and every failure from here re-puts
-	// the draft too — a rolled-back commit is a retryable draft, not a lost one.
 	tx, err := h.pool.Begin(ctx)
 	if err != nil {
 		bail(fmt.Errorf("kickstart: begin: %w", err))
 		return
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-
-	newID, err := commitWorldGenesis(ctx, tx, doc, draft.brief, draft.artStyle)
-	if err != nil {
+	if err := commitArrival(ctx, tx, c.worldID, &fdoc, c.state.NewCast); err != nil {
+		if errors.Is(err, errWorldAlreadyPlayable) {
+			writeJSONError(w, http.StatusConflict, errWorldAlreadyPlayable.Error())
+			return
+		}
 		bail(err)
 		return
 	}
@@ -462,34 +559,31 @@ func (h *worldGenesisHandler) kickstart(w http.ResponseWriter, r *http.Request) 
 		bail(fmt.Errorf("kickstart: commit: %w", err))
 		return
 	}
-	// Committed. The claim at the top of kickstart() already removed the draft, and nothing puts it
-	// back from here on: the handle is spent. A repeat answer lands on the expired-handle 410 above,
-	// which is the truth — there is nothing left to retry.
 
-	// The aggregate line: draft.tally is the WHOLE build's spend — every seat call across every turn,
-	// genesis authoring through both kickstart answers — not just this request's. Mirrors build()'s own
-	// "world genesis timing" line exactly, but logged once, here, because this is the only moment a
-	// build-wide total exists to report.
+	// The aggregate line: the WHOLE build's spend — every seat call across authoring and every turn —
+	// logged once, here, because this is the only moment a build-wide total exists to report.
+	usd, in, out, cached, calls := costs.snapshot()
+	c.state.Tally.add(usd, in, out, cached, calls)
 	log.Printf("world genesis timing: total_ms=%d world=%s calls=%d tok_in=%d cached=%d tok_out=%d "+
 		"cost_usd=%.6f session_usd=%.4f",
-		time.Since(start).Milliseconds(), newID, draft.tally.calls, draft.tally.tokIn, draft.tally.cached,
-		draft.tally.tokOut, draft.tally.usd, sessionTotalUSD())
-	if ceiling := genesisCostCeilingUSD(); ceiling > 0 && draft.tally.usd > ceiling {
+		time.Since(start).Milliseconds(), c.worldID, c.state.Tally.Calls, c.state.Tally.TokIn,
+		c.state.Tally.Cached, c.state.Tally.TokOut, c.state.Tally.USD, sessionTotalUSD())
+	if ceiling := genesisCostCeilingUSD(); ceiling > 0 && c.state.Tally.USD > ceiling {
 		log.Printf("COST WARNING: building a world spent $%.4f (>$%.4f) across %d call(s) — "+
-			"check the seat map for world_genesis", draft.tally.usd, ceiling, draft.tally.calls)
+			"check the seat map for world_genesis", c.state.Tally.USD, ceiling, c.state.Tally.Calls)
 	}
 
-	// The world is committed; its pictures are commissioned after that, not before (build()'s own note
+	// The world is playable; its pictures are commissioned after that, not before (build()'s own note
 	// on this ordering applies unchanged — kickArt is detached and outlives this request).
-	kickArt(h.pool, h.images, newID)
+	kickArt(h.pool, h.images, c.worldID)
 
 	body := map[string]any{
 		"schema_version": worldKickstartTurnSchemaVersion,
 		"done":           true,
 		"world": map[string]any{
-			"id":           newID,
-			"display_name": strings.TrimSpace(doc.World.DisplayName),
-			"tagline":      strings.TrimSpace(doc.World.Tagline),
+			"id":           c.worldID,
+			"display_name": strings.TrimSpace(fdoc.World.DisplayName),
+			"tagline":      strings.TrimSpace(fdoc.World.Tagline),
 			"playable":     true,
 		},
 	}

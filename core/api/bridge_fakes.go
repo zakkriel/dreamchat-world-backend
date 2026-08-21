@@ -921,16 +921,34 @@ func (f *fakeWorldKickstartDriver) Generate(_ context.Context, req GenRequest) (
 		name = "The One Who Wrote In"
 	}
 	ident := fmt.Sprintf(`{"descriptor":"a stranger the room was not expecting","canonical_name":%q}`, name)
+	// Referenced people: "… of Dalma and Harry" makes Dalma and Harry real, deterministically —
+	// the same grounding-in-the-prompt discipline as the scenarios, so the belt checks pass against
+	// whatever world is actually in front of it (they start in the arrival place, which is populated).
+	newCast := ""
+	if m := fakeKinPattern.FindStringSubmatch(who); m != nil {
+		kin := func(kinName string) string {
+			return fmt.Sprintf(`{"descriptor":"someone the newcomer's premise walked in with","canonical_name":%q,`+
+				`"standing":"named by the newcomer's own story","speech_manner":"guarded",`+
+				`"traits":[{"key":"wary","strength":"strong","manner":"answers questions with questions"}],`+
+				`"hiding":"what they never told the newcomer","starts_in":%q}`, kinName, place)
+		}
+		newCast = fmt.Sprintf(`,"new_cast":[%s,%s]`, kin(m[1]), kin(m[2]))
+	}
 	if opening != "" {
-		return fmt.Sprintf(`{"identity":%s,"scenarios":[{"label":"as you wrote it","place":%q,"why":"exactly what the user asked for","stated":%q}]}`,
-			ident, place, "I arrived the way I said I would."), nil
+		return fmt.Sprintf(`{"identity":%s,"scenarios":[{"label":"as you wrote it","place":%q,"why":"exactly what the user asked for","stated":%q}]%s}`,
+			ident, place, "I arrived the way I said I would.", newCast), nil
 	}
 	return fmt.Sprintf(`{"identity":%s,"scenarios":[`+
 		`{"label":"through the front door","place":%q,"why":"expected by nobody","stated":"I stepped in off the street.","recommended":true},`+
 		`{"label":"in the middle of it","place":%q,"why":"summoned by a note","stated":"I walked into an argument already going."},`+
-		`{"label":"the wrong address","place":%q,"why":"looking for somewhere else","stated":"I came in out of the rain."}]}`,
-		ident, place, place, place), nil
+		`{"label":"the wrong address","place":%q,"why":"looking for somewhere else","stated":"I came in out of the rain."}]%s}`,
+		ident, place, place, place, newCast), nil
 }
+
+// fakeKinPattern is the deterministic trigger for referenced people: a relationship phrase naming
+// two capitalised names — "Joe, son of Dalma and Harry". Matches the real seat's expected behaviour
+// for exactly the canonical example the product decision was made over.
+var fakeKinPattern = regexp.MustCompile(`(?:son|daughter|child|sibling|friend) of ([A-Z][\p{L}]+) and ([A-Z][\p{L}]+)`)
 
 // sectionAfter returns the substring of s after the first occurrence of from, up to (but not
 // including) the first occurrence of until at or after that point — or to the end of s when until

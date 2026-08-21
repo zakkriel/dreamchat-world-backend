@@ -2921,21 +2921,69 @@ COMMENT ON FUNCTION public.fn_transcript(p_world_id uuid, p_viewer_id uuid, p_be
 CREATE FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) RETURNS TABLE(canonical_name text, label text)
     LANGUAGE sql STABLE
     AS $$
-  SELECT er.canonical_name, fn_display_name(p_world_id, p_viewer, er.entity_id)
-  FROM entity_registry er
-  WHERE er.world_id = p_world_id
-    AND er.canonical_name IS NOT NULL
-    AND er.canonical_name <> ''
-    -- A holder always knows who HE is: rewriting a man's own name to the descriptor strangers use
-    -- for him is not perception, it is amnesia.
-    AND er.entity_id IS DISTINCT FROM p_viewer
-    -- No knowledge path: fn_display_name fell through to something other than the registry name.
-    -- When they AGREE the name is either earned or the only label the world has, and inventing a
-    -- placeholder for the latter would fabricate a perception.
-    AND fn_display_name(p_world_id, p_viewer, er.entity_id) IS DISTINCT FROM er.canonical_name
-    -- ...and the label does not already contain the name (the Ballast Crate case).
-    AND position(lower(er.canonical_name) IN lower(coalesce(fn_display_name(p_world_id, p_viewer, er.entity_id), ''))) = 0
-  ORDER BY length(er.canonical_name) DESC  -- longest first: "Hooded Companion" before "Hooded"
+  WITH unearned AS (
+    SELECT er.entity_id, er.entity_kind, er.canonical_name,
+           fn_display_name(p_world_id, p_viewer, er.entity_id) AS label
+    FROM entity_registry er
+    WHERE er.world_id = p_world_id
+      AND er.canonical_name IS NOT NULL
+      AND er.canonical_name <> ''
+      -- A holder always knows who HE is: rewriting a man's own name to the descriptor strangers use
+      -- for him is not perception, it is amnesia.
+      AND er.entity_id IS DISTINCT FROM p_viewer
+      -- No knowledge path: fn_display_name fell through to something other than the registry name.
+      -- When they AGREE the name is either earned or the only label the world has, and inventing a
+      -- placeholder for the latter would fabricate a perception.
+      AND fn_display_name(p_world_id, p_viewer, er.entity_id) IS DISTINCT FROM er.canonical_name
+      -- ...and the label does not already contain the name (the Ballast Crate case).
+      AND position(lower(er.canonical_name) IN lower(coalesce(fn_display_name(p_world_id, p_viewer, er.entity_id), ''))) = 0
+  ),
+  -- What the viewer calls HIMSELF: his registry name and his own display label. No token of these
+  -- is ever guarded, whoever else's name it appears in.
+  self_names AS (
+    SELECT coalesce(er.canonical_name, '') AS nm,
+           coalesce(fn_display_name(p_world_id, p_viewer, p_viewer), '') AS lbl
+    FROM entity_registry er
+    WHERE er.world_id = p_world_id AND er.entity_id = p_viewer
+  ),
+  -- Every piece of prose this world has ever written down, for the lowercase test above.
+  corpus AS (
+    SELECT ce.summary AS t FROM canon_event ce WHERE ce.world_id = p_world_id AND ce.summary IS NOT NULL
+    UNION ALL SELECT ce.payload->>'spoken' FROM canon_event ce WHERE ce.world_id = p_world_id AND ce.payload ? 'spoken'
+    UNION ALL SELECT er.descriptor FROM entity_registry er WHERE er.world_id = p_world_id AND er.descriptor IS NOT NULL
+    UNION ALL SELECT a.attrs->>'descriptor' FROM actor_state a WHERE a.world_id = p_world_id AND a.attrs ? 'descriptor'
+    UNION ALL SELECT f.attrs->>'descriptor' FROM artifact_state f WHERE f.world_id = p_world_id AND f.attrs ? 'descriptor'
+    UNION ALL SELECT l.attrs->>'descriptor' FROM location_state l WHERE l.world_id = p_world_id AND l.attrs ? 'descriptor'
+    UNION ALL SELECT l.attrs->>'description' FROM location_state l WHERE l.world_id = p_world_id AND l.attrs ? 'description'
+  ),
+  tokens AS (
+    SELECT DISTINCT ON (lower(tok)) tok, u.label
+    FROM unearned u
+    CROSS JOIN LATERAL regexp_split_to_table(u.canonical_name, '[^[:alnum:]]+') AS tok
+    WHERE u.entity_kind = 'actor'
+      AND length(tok) >= 3
+      AND lower(tok) NOT IN ('the','and','von','van','der','den','del','della','delle','dos','das',
+                             'bin','ibn','abu','mac','mck','saint','sant','santa')
+      AND lower(tok) <> lower(u.canonical_name)
+      AND coalesce(u.label, '') !~* ('\m' || fn_regexp_quote(tok) || '\M')
+      AND NOT EXISTS (
+        SELECT 1 FROM self_names s
+        WHERE s.nm  ~* ('\m' || fn_regexp_quote(tok) || '\M')
+           OR s.lbl ~* ('\m' || fn_regexp_quote(tok) || '\M'))
+      -- The lowercase test: case-SENSITIVE match of the lowercased token against world prose.
+      AND NOT EXISTS (
+        SELECT 1 FROM corpus c
+        WHERE c.t ~ ('\m' || fn_regexp_quote(lower(tok)) || '\M'))
+    ORDER BY lower(tok), u.label
+  )
+  SELECT canonical_name, label FROM (
+    SELECT u.canonical_name, u.label FROM unearned u
+    UNION ALL
+    SELECT t.tok, t.label FROM tokens t
+  ) guarded
+  -- Longest first: "Silas Holton" is rewritten as ONE label before "Silas" or "Holton" can bite
+  -- into it — the ORDER BY is part of the shared definition, not an incidental detail.
+  ORDER BY length(canonical_name) DESC
 $$;
 
 
@@ -2943,7 +2991,7 @@ $$;
 -- Name: FUNCTION fn_unearned_names(p_world_id uuid, p_viewer uuid); Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) IS 'The canonical names a viewer has NOT earned, with the label he holds instead. The single definition behind both the perception seam (fn_viewer_text) and the API-boundary belt (NamingWall in core/api) — naming reach, RULINGS-2026-07-23 §3.';
+COMMENT ON FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) IS 'The canonical names a viewer has NOT earned — and, for people, every distinctive word of each — with the label he holds instead. The single definition behind both the perception seam (fn_viewer_text) and the API-boundary belt (NamingWall in core/api) — naming reach, RULINGS-2026-07-23 §3; token guarding is the Ironmoor fix, 2026-08-20.';
 
 
 --
@@ -3984,6 +4032,8 @@ CREATE TABLE public.world (
     archived_at timestamp with time zone,
     brief text,
     art_style text,
+    genesis_doc jsonb,
+    kickstart_state jsonb,
     CONSTRAINT world_art_style_check CHECK (((art_style IS NULL) OR (length(btrim(art_style)) > 0))),
     CONSTRAINT world_brief_check CHECK (((brief IS NULL) OR (length(btrim(brief)) > 0))),
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
@@ -4046,6 +4096,22 @@ CREATE TABLE public.world_actor_setting (
     enabled boolean DEFAULT true NOT NULL,
     intensity numeric DEFAULT 1.0 NOT NULL,
     CONSTRAINT world_actor_setting_intensity_check CHECK ((intensity >= (0)::numeric))
+);
+
+
+--
+-- Name: world_character; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.world_character (
+    character_id uuid DEFAULT gen_random_uuid() NOT NULL,
+    world_id uuid NOT NULL,
+    entity_id uuid NOT NULL,
+    descriptor text NOT NULL,
+    canonical_name text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT world_character_canonical_name_check CHECK ((length(btrim(canonical_name)) > 0)),
+    CONSTRAINT world_character_descriptor_check CHECK ((length(btrim(descriptor)) > 0))
 );
 
 
@@ -4325,6 +4391,14 @@ ALTER TABLE ONLY public.world_actor_setting
 
 
 --
+-- Name: world_character world_character_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_character
+    ADD CONSTRAINT world_character_pkey PRIMARY KEY (character_id);
+
+
+--
 -- Name: world_eruption world_eruption_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4521,6 +4595,13 @@ CREATE INDEX idx_world_eruption_lookup ON public.world_eruption USING btree (wor
 --
 
 CREATE UNIQUE INDEX uq_ce_accepted_order ON public.canon_event USING btree (world_id, in_world_tick, beat_seq) WHERE (status = 'accepted'::text);
+
+
+--
+-- Name: world_character_world_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX world_character_world_idx ON public.world_character USING btree (world_id);
 
 
 --
@@ -4733,6 +4814,14 @@ ALTER TABLE ONLY public.trait_provenance
 
 
 --
+-- Name: world_character world_character_world_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.world_character
+    ADD CONSTRAINT world_character_world_id_fkey FOREIGN KEY (world_id) REFERENCES public.world(world_id) ON DELETE CASCADE;
+
+
+--
 -- Name: world_eruption world_eruption_event_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4811,4 +4900,6 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260814170000'),
     ('20260815150000'),
     ('20260815150001'),
-    ('20260820200000');
+    ('20260820200000'),
+    ('20260821090000'),
+    ('20260821120000');

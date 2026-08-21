@@ -23,8 +23,8 @@ import (
 
 const testBrief = "A cargo yard where the paperwork is the weapon. Somebody is skimming crates and the person keeping the book knows."
 
-// genesisFixture authors a world with the deterministic fake and commits it inside a rolled-back tx.
-// Returns the tx so assertions can read the world the engine actually wrote.
+// genesisFixture authors a world with the deterministic fake and commits it inside a rolled-back tx —
+// both halves of the split ladder (content, then arrival), so assertions read a whole playable world.
 func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	t.Helper()
 	ctx := context.Background()
@@ -42,9 +42,12 @@ func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-	worldID, err := commitWorldGenesis(ctx, tx, doc, testBrief, "")
+	worldID, err := commitWorldContent(ctx, tx, doc, testBrief, "")
 	if err != nil {
-		t.Fatalf("commitWorldGenesis: %v", err)
+		t.Fatalf("commitWorldContent: %v", err)
+	}
+	if err := commitArrival(ctx, tx, worldID, doc, nil); err != nil {
+		t.Fatalf("commitArrival: %v", err)
 	}
 	return tx, worldID, doc
 }
@@ -386,6 +389,13 @@ func TestWorldGenesis_RefusesDocumentsTheWorldCannotSurvive(t *testing.T) {
 		{"a name used twice", func(d *genesisDoc) { d.Cast[0].CanonicalName = d.Places[0].CanonicalName }, "both a person and a place"},
 		{"the player in their own cast", func(d *genesisDoc) { d.Arrival.CanonicalName = d.Cast[0].CanonicalName }, "also in the cast"},
 		{"a place with no description", func(d *genesisDoc) { d.Places[0].Description = "" }, "nothing to work from"},
+		// The Ironmoor breach (2026-08-20): genesis emitted slug join-keys as people's canonical
+		// names ("silas_holton"), the registry stored them, and the naming wall guarded strings no
+		// model ever writes while the narrator handed the player "Silas". A person's name must be
+		// speakable — the wall can only guard what the world will actually say.
+		{"a snake_case person", func(d *genesisDoc) { d.Cast[0].CanonicalName = "silas_holton" }, "join key"},
+		{"an uncapitalised person", func(d *genesisDoc) { d.Cast[0].CanonicalName = "silas holton" }, "join key"},
+		{"a snake_case player", func(d *genesisDoc) { d.Arrival.CanonicalName = "wren_marsh" }, "join key"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -557,6 +567,12 @@ func TestValidateArrivalCandidates(t *testing.T) {
 		t.Fatalf("valid candidates refused: %v", err)
 	}
 
+	// A candidate is a person too: the Ironmoor name-shape rule applies before the offer ships.
+	doc.ArrivalCandidates = []genesisCandidate{cand(doc.Arrival.CanonicalName), cand("petra_stone"), cand("Third Name")}
+	if err := doc.validate(); err == nil || !strings.Contains(err.Error(), "join key") {
+		t.Fatalf("a slug candidate name must be refused as a join key, got: %v", err)
+	}
+
 	// refusals must be genesisRefusal, not faults
 	doc.ArrivalCandidates = doc.ArrivalCandidates[:2]
 	if err := doc.validate(); !IsGenesisRefusal(err) {
@@ -656,11 +672,11 @@ func postGenesisAndCollectFrames(t *testing.T, body string) []map[string]any {
 }
 
 // postKickstartRaw posts one kickstart turn and returns the raw response — for tests asserting on
-// status alone (an expired or already-spent handle).
-func postKickstartRaw(t *testing.T, handle, answer string) *http.Response {
+// status alone (an unknown world, a finished world).
+func postKickstartRaw(t *testing.T, worldID, answer string) *http.Response {
 	t.Helper()
 	srv := kickstartHarnessFor(t).srv
-	body, err := json.Marshal(kickstartRequest{Handle: handle, Answer: answer})
+	body, err := json.Marshal(kickstartRequest{WorldID: worldID, Answer: answer})
 	if err != nil {
 		t.Fatalf("marshal kickstart request: %v", err)
 	}
@@ -673,9 +689,9 @@ func postKickstartRaw(t *testing.T, handle, answer string) *http.Response {
 
 // postKickstart posts one kickstart turn and decodes the JSON response, failing the test on anything
 // but 200.
-func postKickstart(t *testing.T, handle, answer string) map[string]any {
+func postKickstart(t *testing.T, worldID, answer string) map[string]any {
 	t.Helper()
-	resp := postKickstartRaw(t, handle, answer)
+	resp := postKickstartRaw(t, worldID, answer)
 	defer resp.Body.Close()
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
@@ -713,15 +729,15 @@ func recommendedLabel(t *testing.T, options any) string {
 	return ""
 }
 
-// The stream now pauses for the player's own choice rather than committing straight through: the
-// terminal frame is a `choice`, never a `world` (spec, phase 1 — commit moves to the kickstart route).
+// The stream now pauses for the player's own choice rather than committing the player: the terminal
+// frame is a `choice` carrying the id of the world the stream already committed (durable-worlds).
 func TestBuildEndsInCharacterChoice(t *testing.T) {
 	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
 	last := frames[len(frames)-1]
 	if last["kind"] != "choice" {
 		t.Fatalf("terminal frame kind = %v, want choice", last["kind"])
 	}
-	if last["schema_version"] != "world_genesis_frame/2" {
+	if last["schema_version"] != "world_genesis_frame/3" {
 		t.Fatalf("schema_version = %v", last["schema_version"])
 	}
 	if last["question"] != "Who are you here?" {
@@ -740,8 +756,8 @@ func TestBuildEndsInCharacterChoice(t *testing.T) {
 	if rec != 1 {
 		t.Fatalf("recommended = %d, want 1", rec)
 	}
-	if h, _ := last["handle"].(string); len(h) != 36 {
-		t.Fatalf("handle = %q", h)
+	if id, _ := last["world_id"].(string); len(id) != 36 {
+		t.Fatalf("world_id = %q", id)
 	}
 	// AC-7: the doc never crosses the wire — no frame carries cast, history or hiding.
 	for _, f := range frames {
@@ -766,18 +782,18 @@ func TestBuildSkipsToScenarioWhenIdentityStated(t *testing.T) {
 	}
 }
 
-// The whole point: two answers turn an authored-but-uncommitted world into a playable one, in one
-// transaction landed on the final answer — and a third answer against the now-spent handle finds
-// nothing there to retry, because nothing was ever half-written.
+// The whole point: two answers turn a committed-but-unentered world into a playable one, the arrival
+// landing in one transaction on the final answer — and a third answer against the now-finished world
+// answers 409, because there is nothing left to resume.
 func TestKickstartFullJourney(t *testing.T) {
 	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
 	choice := frames[len(frames)-1]
-	handle, _ := choice["handle"].(string)
+	worldIDFromChoice, _ := choice["world_id"].(string)
 
 	// Turn 1: pick the recommended character.
 	recLabel := recommendedLabel(t, choice["options"])
-	turn := postKickstart(t, handle, recLabel)
-	if turn["schema_version"] != "world_kickstart_turn/1" || turn["done"] != false {
+	turn := postKickstart(t, worldIDFromChoice, recLabel)
+	if turn["schema_version"] != "world_kickstart_turn/2" || turn["done"] != false {
 		t.Fatalf("turn 1 = %v", turn)
 	}
 	if turn["question"] != "How does it start?" {
@@ -785,7 +801,7 @@ func TestKickstartFullJourney(t *testing.T) {
 	}
 
 	// Turn 2: pick the recommended scenario — this commits.
-	turn2 := postKickstart(t, handle, recommendedLabel(t, turn["options"]))
+	turn2 := postKickstart(t, worldIDFromChoice, recommendedLabel(t, turn["options"]))
 	if turn2["done"] != true {
 		t.Fatalf("turn 2 = %v", turn2)
 	}
@@ -798,11 +814,11 @@ func TestKickstartFullJourney(t *testing.T) {
 		t.Fatalf("world = %v", world)
 	}
 
-	// The handle is spent: a third answer finds no draft, no debris.
-	res := postKickstartRaw(t, handle, "anything")
+	// The world is finished: a third answer finds nothing left to resume.
+	res := postKickstartRaw(t, worldIDFromChoice, "anything")
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusGone {
-		t.Fatalf("spent handle status = %d, want 410", res.StatusCode)
+	if res.StatusCode != http.StatusConflict {
+		t.Fatalf("finished world status = %d, want 409", res.StatusCode)
 	}
 
 	// DB floor (AC-4/AC-9): the player is stamped on the committed world and holds exactly one
@@ -834,25 +850,141 @@ func TestKickstartFullJourney(t *testing.T) {
 // build still commits.
 func TestKickstartCustomAnswersFlowIn(t *testing.T) {
 	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
-	handle, _ := frames[len(frames)-1]["handle"].(string)
+	worldID, _ := frames[len(frames)-1]["world_id"].(string)
 
-	turn := postKickstart(t, handle, "the harbour master's estranged child, back unannounced")
+	turn := postKickstart(t, worldID, "the harbour master's estranged child, back unannounced")
 	if turn["done"] != false {
 		t.Fatalf("custom character rejected: %v", turn)
 	}
 
-	turn2 := postKickstart(t, handle, "I slip in through the kitchen while an argument is going on")
+	turn2 := postKickstart(t, worldID, "I slip in through the kitchen while an argument is going on")
 	if turn2["done"] != true {
 		t.Fatalf("custom scenario did not commit: %v", turn2)
 	}
 }
 
-// An unknown handle — never minted by this or any build — is the same 410 an expired one gets: nothing
-// was ever half-written, so there is nothing to distinguish.
-func TestKickstartExpiredHandle(t *testing.T) {
+// An unknown world id — never committed by any build — answers 404: there is nothing there at all,
+// which is a different truth from a finished world's 409.
+func TestKickstartUnknownWorld(t *testing.T) {
 	res := postKickstartRaw(t, "00000000-0000-0000-0000-000000000000", "anything")
 	defer res.Body.Close()
-	if res.StatusCode != http.StatusGone {
-		t.Fatalf("status = %d, want 410", res.StatusCode)
+	if res.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", res.StatusCode)
+	}
+}
+
+// The durable-worlds headline: the world exists, listed and not yet enterable, the moment the build
+// stream ends — BEFORE any kickstart answer. Losing every server memory after that costs at most one
+// re-asked question: an empty answer re-serves the pending question against the world id alone.
+func TestBuildCommitsWorldBeforeChoice(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
+	choice := frames[len(frames)-1]
+	worldID, _ := choice["world_id"].(string)
+	if worldID == "" {
+		t.Fatalf("choice frame carries no world_id: %v", choice)
+	}
+
+	ctx := context.Background()
+	pool := kickstartPool(t)
+	var playerID *string
+	var hasDoc, hasState bool
+	if err := pool.QueryRow(ctx,
+		`SELECT player_entity_id::text, genesis_doc IS NOT NULL, kickstart_state IS NOT NULL
+		 FROM world WHERE world_id=$1::uuid`, worldID).Scan(&playerID, &hasDoc, &hasState); err != nil {
+		t.Fatalf("read world: %v", err)
+	}
+	if playerID != nil {
+		t.Fatal("player_entity_id set before any kickstart answer — the choice was never offered")
+	}
+	if !hasDoc || !hasState {
+		t.Fatalf("genesis_doc present=%v kickstart_state present=%v — the creation is not resumable", hasDoc, hasState)
+	}
+
+	// Resume with an empty answer: the pending question comes back. Nothing about this request relies
+	// on process memory — the harness could have restarted between these two calls.
+	turn := postKickstart(t, worldID, "")
+	if turn["done"] != false || turn["question"] != "Who are you here?" {
+		t.Fatalf("resume turn = %v", turn)
+	}
+
+	// And the journey still finishes from there.
+	turn1 := postKickstart(t, worldID, recommendedLabel(t, turn["options"]))
+	turn2 := postKickstart(t, worldID, recommendedLabel(t, turn1["options"]))
+	if turn2["done"] != true {
+		t.Fatalf("resumed journey did not commit: %v", turn2)
+	}
+}
+
+// Referenced people become real (durable-worlds AC-5): a free-text identity naming kin produces
+// cast entries for exactly those people, with minds, placement, and mutual name knowledge with the
+// player at the arrival tick.
+func TestKickstartKinMaterialized(t *testing.T) {
+	frames := postGenesisAndCollectFrames(t, `{"brief":"a harbour town at closing time"}`)
+	choice := frames[len(frames)-1]
+	worldID, _ := choice["world_id"].(string)
+
+	turn := postKickstart(t, worldID, "Joe, son of Dalma and Harry")
+	if turn["done"] != false {
+		t.Fatalf("character turn = %v", turn)
+	}
+	turn2 := postKickstart(t, worldID, recommendedLabel(t, turn["options"]))
+	if turn2["done"] != true {
+		t.Fatalf("scenario turn did not commit: %v", turn2)
+	}
+
+	ctx := context.Background()
+	pool := kickstartPool(t)
+	var playerID string
+	if err := pool.QueryRow(ctx,
+		`SELECT player_entity_id::text FROM world WHERE world_id=$1::uuid`, worldID).Scan(&playerID); err != nil {
+		t.Fatalf("player: %v", err)
+	}
+	for _, kin := range []string{"Dalma", "Harry"} {
+		var kinID string
+		if err := pool.QueryRow(ctx,
+			`SELECT entity_id::text FROM entity_registry
+			 WHERE world_id=$1::uuid AND canonical_name=$2 AND entity_kind='actor'`,
+			worldID, kin).Scan(&kinID); err != nil {
+			t.Fatalf("%s was referenced but never registered: %v", kin, err)
+		}
+		var cores int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM personality_core WHERE world_id=$1::uuid AND actor_id=$2::uuid`,
+			worldID, kinID).Scan(&cores); err != nil {
+			t.Fatalf("%s core: %v", kin, err)
+		}
+		if cores != 1 {
+			t.Fatalf("%s has %d personality cores, want 1 — a referenced person is a whole person", kin, cores)
+		}
+		var placed bool
+		if err := pool.QueryRow(ctx,
+			`SELECT attrs->>'location_id' IS NOT NULL FROM actor_state
+			 WHERE world_id=$1::uuid AND entity_id=$2::uuid`, worldID, kinID).Scan(&placed); err != nil {
+			t.Fatalf("%s state: %v", kin, err)
+		}
+		if !placed {
+			t.Fatalf("%s stands nowhere", kin)
+		}
+		// Mutual name knowledge at the arrival tick (I-9: earned exactly when the premise landed).
+		var playerKnows, kinKnows int
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM perception_record pr
+			 JOIN perception_subject ps ON ps.perception_id = pr.perception_id
+			 WHERE pr.world_id=$1::uuid AND pr.holder_id=$2::uuid AND ps.entity_id=$3::uuid
+			   AND pr.content=$4 AND pr.acquired_tick=50`,
+			worldID, playerID, kinID, kin).Scan(&playerKnows); err != nil {
+			t.Fatalf("player knows %s: %v", kin, err)
+		}
+		if err := pool.QueryRow(ctx,
+			`SELECT count(*) FROM perception_record pr
+			 JOIN perception_subject ps ON ps.perception_id = pr.perception_id
+			 WHERE pr.world_id=$1::uuid AND pr.holder_id=$2::uuid AND ps.entity_id=$3::uuid
+			   AND pr.acquired_tick=50`,
+			worldID, kinID, playerID).Scan(&kinKnows); err != nil {
+			t.Fatalf("%s knows player: %v", kin, err)
+		}
+		if playerKnows != 1 || kinKnows != 1 {
+			t.Fatalf("name knowledge player→%s=%d, %s→player=%d, want 1 and 1", kin, playerKnows, kin, kinKnows)
+		}
 	}
 }
