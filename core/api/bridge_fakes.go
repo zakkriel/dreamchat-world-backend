@@ -914,6 +914,9 @@ func (f *fakeWorldKickstartDriver) Generate(_ context.Context, req GenRequest) (
 		return "", fmt.Errorf("fake world kickstart could not parse the world block: %w", err)
 	}
 	who := strings.TrimSpace(sectionAfter(req.Prompt, worldKickstartWhoMarker, worldKickstartOpeningMarker))
+	// Offering mode ends in the offer marker rather than an opening; it is not part of who anyone is.
+	who, _, _ = strings.Cut(who, worldKickstartOfferMarker)
+	who = strings.TrimSpace(who)
 	opening := strings.TrimSpace(sectionAfter(req.Prompt, worldKickstartOpeningMarker, ""))
 	place := strings.TrimSpace(doc.Arrival.Place) // populated by construction (worldgenesis.go:374-383)
 	name := who
