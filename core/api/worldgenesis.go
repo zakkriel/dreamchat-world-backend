@@ -23,6 +23,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 //go:embed prompts/world_genesis.txt schema/world_genesis.v1.schema.json
@@ -302,6 +303,8 @@ func (d *genesisDoc) validate() error {
 			return refuse("two people are both called %q — names are join keys and must be unique", name)
 		case places[name]:
 			return refuse("%q is both a person and a place", name)
+		case identifierShapedName(name):
+			return refuse("%q reads like a join key, not a person's name — name people as a voice would say them, never snake_case or all-lowercase", name)
 		case strings.TrimSpace(a.Descriptor) == "":
 			return refuse("%q has no descriptor, and a descriptor is all a stranger sees", name)
 		case strings.TrimSpace(a.Standing) == "":
@@ -341,6 +344,8 @@ func (d *genesisDoc) validate() error {
 		return refuse("the player %q is also in the cast — the player is not one of the world's own people", player)
 	case places[player]:
 		return refuse("the player %q is also a place", player)
+	case identifierShapedName(player):
+		return refuse("the player's name %q reads like a join key, not a person's name — name people as a voice would say them, never snake_case or all-lowercase", player)
 	case strings.TrimSpace(d.Arrival.Descriptor) == "":
 		return refuse("the player has no descriptor, so the room cannot see them walk in")
 	case strings.TrimSpace(d.Arrival.Stated) == "":
@@ -401,6 +406,9 @@ func (d *genesisDoc) validate() error {
 			name := strings.TrimSpace(c.CanonicalName)
 			if name == "" || strings.TrimSpace(c.Descriptor) == "" || strings.TrimSpace(c.Why) == "" {
 				return refuse("an arrival candidate is missing its name, descriptor or why")
+			}
+			if identifierShapedName(name) {
+				return refuse("the arrival candidate %q reads like a join key, not a person's name — name people as a voice would say them, never snake_case or all-lowercase", name)
 			}
 			if seen[name] {
 				return refuse("two arrival candidates share the name %q", name)
@@ -528,4 +536,30 @@ func wayFlags(state string) (open bool, locked bool) {
 	default: // "shut"
 		return false, false
 	}
+}
+
+// identifierShapedName reports a person's "name" that is machine-shaped rather than speakable:
+// snake_case ("silas_holton") or cased script with no capital anywhere ("silas holton").
+//
+// Why it matters (the Ironmoor breach, live play 2026-08-20): genesis emitted slug join-keys as
+// people's canonical names, the registry stored them, and the naming wall guarded strings no model
+// ever writes — the seats humanised the slugs to "Silas" and "Emmett" and the player read both.
+// The wall now also guards name tokens (migration 20260821120000), but a person's registry name is
+// what lenses, labels and naming events will one day SAY, so an unspeakable one is refused at the
+// source. Scripts with no case of their own (CJK and the like) carry no capitals and pass untouched;
+// places and objects are exempt — their names are made of ordinary English and were never the leak.
+func identifierShapedName(name string) bool {
+	if strings.Contains(name, "_") {
+		return true
+	}
+	cased, upper := false, false
+	for _, r := range name {
+		if unicode.IsUpper(r) || unicode.IsTitle(r) {
+			upper = true
+		}
+		if unicode.IsLower(r) || unicode.IsUpper(r) || unicode.IsTitle(r) {
+			cased = true
+		}
+	}
+	return cased && !upper
 }
