@@ -168,9 +168,9 @@ func TestGenesisPersistsTheChosenStyle(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-			worldID, err := commitWorldGenesis(ctx, tx, doc, testBrief, tc.choice)
+			worldID, err := commitWorldContent(ctx, tx, doc, testBrief, tc.choice)
 			if err != nil {
-				t.Fatalf("commitWorldGenesis: %v", err)
+				t.Fatalf("commitWorldContent: %v", err)
 			}
 
 			var got *string

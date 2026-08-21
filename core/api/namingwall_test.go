@@ -230,3 +230,68 @@ func TestNamingWall_AnAccountThatNamesHimTeachesNobody(t *testing.T) {
 		t.Fatal("speaker_label would render the canonical name — this is the founder's reported breach")
 	}
 }
+
+// THE IRONMOOR BREACH (live play, 2026-08-20). Genesis stored slug join-keys as canonical names —
+// "silas_holton", "emmett_vale" — so the wall guarded strings no model ever writes. The cognition
+// seats humanised the slugs in their own prose, that prose became the player's perception content
+// verbatim, and narration reading "toward Emmett" and "Silas's voice" reached the player on Railway
+// while fn_unearned_names still listed both names, verbatim and useless.
+//
+// The fix is in fn_unearned_names (migration 20260821120000): for PEOPLE, every distinctive word of
+// an unearned name is guarded like the name. This test drives it through the Go belt — the exact
+// surface the founder's transcript breached.
+func TestNamingWall_GuardsTheHumanTokensOfAName(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	// Hermetic world: fresh random ids, never seed-dependent. The viewer holds no name-knowledge, so
+	// both strangers are unearned; one carries the Ironmoor slug verbatim, one a two-word human name.
+	var wID, viewer, slugNPC, namedNPC string
+	if err := pool.QueryRow(ctx,
+		`SELECT gen_random_uuid(),gen_random_uuid(),gen_random_uuid(),gen_random_uuid()`,
+	).Scan(&wID, &viewer, &slugNPC, &namedNPC); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+	mustExecP := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExecP(`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+		($1,$4,'actor','Ada Vernon'), ($2,$4,'actor','emmett_vale'), ($3,$4,'actor','Silas Holton')`,
+		viewer, slugNPC, namedNPC, wID)
+	mustExecP(`INSERT INTO actor_state (entity_id, world_id, attrs) VALUES
+		($1,$4,'{"descriptor":"a woman in a long coat"}'),
+		($2,$4,'{"descriptor":"a younger man by the curtain"}'),
+		($3,$4,'{"descriptor":"a man in a grey suit"}')`,
+		viewer, slugNPC, namedNPC, wID)
+
+	wall, err := loadNamingWall(ctx, pool, wID, viewer)
+	if err != nil {
+		t.Fatalf("loadNamingWall: %v", err)
+	}
+
+	// The two sentences the founder actually read, near-verbatim.
+	for _, leak := range []string{
+		"The man in the grey suit turns his head an inch toward Emmett.",
+		"Silas's voice still hangs in the beeswax air.",
+	} {
+		if v := wall.Violations(leak); len(v) == 0 {
+			t.Errorf("the wall passed the founder's leaked sentence: %q", leak)
+		}
+		if got := wall.Scrub(leak); strings.Contains(got, "Silas") || strings.Contains(got, "Emmett") {
+			t.Errorf("scrub left a human token standing: %q", got)
+		}
+	}
+
+	// The viewer's own name is never censored, even though a stranger's registry row also reads "Ada…".
+	if got := wall.Scrub("Ada keeps her back to the door."); got != "Ada keeps her back to the door." {
+		t.Errorf("the viewer's own name was censored: %q", got)
+	}
+	// And a token never bites into a longer word.
+	if got := wall.Scrub("The silastic tube sat by the emmettite ore."); got != "The silastic tube sat by the emmettite ore." {
+		t.Errorf("a token matched inside a longer word: %q", got)
+	}
+}

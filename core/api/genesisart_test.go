@@ -26,13 +26,13 @@ func TestGenesisBuild_CommissionsTheWorldsArt(t *testing.T) {
 	// creation was a created world with no pictures, from exactly this kind of unobserved call).
 	frames := postGenesisAndCollectFrames(t, `{"brief":"`+testBrief+`"}`)
 	choice := frames[len(frames)-1]
-	handle, _ := choice["handle"].(string)
+	worldID, _ := choice["world_id"].(string)
 
-	turn := postKickstart(t, handle, recommendedLabel(t, choice["options"]))
+	turn := postKickstart(t, worldID, recommendedLabel(t, choice["options"]))
 	if turn["done"] != false {
 		t.Fatalf("turn 1 = %v", turn)
 	}
-	turn2 := postKickstart(t, handle, recommendedLabel(t, turn["options"]))
+	turn2 := postKickstart(t, worldID, recommendedLabel(t, turn["options"]))
 	if turn2["done"] != true {
 		t.Fatalf("turn 2 = %v", turn2)
 	}

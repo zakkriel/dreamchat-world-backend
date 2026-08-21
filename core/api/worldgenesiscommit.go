@@ -10,9 +10,13 @@ package main
 // ladder, same triggers — trg_validate_tension, sm_project and the append-only guards all fire on these
 // inserts exactly as they fire on the template's, which is what makes AC-12 true rather than claimed.
 //
-// ONE TRANSACTION, always. The caller opens it and commits it; nothing here commits. A build that fails
-// at the last mutation leaves no world row, no entity and no directory entry — never the half-world that
-// `playable:true` would otherwise promise and `scene/current` would then 500 on.
+// TWO TRANSACTIONS since the durable-worlds spec (2026-08-21). commitWorldContent writes everything
+// the world IS — entities, naming, history, minds, opening state — the moment authoring succeeds;
+// player_entity_id stays NULL, so the directory lists a real world that is not yet enterable.
+// commitArrival is the later, retryable transaction that makes it playable: the player, the arrival,
+// any people the chosen identity referenced into existence, and the stamp. A failure in EITHER leaves
+// no half-world: content commits whole or not at all, and `playable:true` still means every rung
+// exists, because only the arrival transaction may set it.
 //
 // WHY THE WRITES ARE DIRECT rather than through apply_event: genesis is the one moment when the actors
 // an event would reference do not exist yet. apply_event validates against a populated world and cannot
@@ -22,12 +26,17 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
 )
+
+// errWorldAlreadyPlayable answers a final kickstart turn that lost the race (or repeated itself):
+// the guarded player stamp found player_entity_id already set. The handler renders it as 409.
+var errWorldAlreadyPlayable = errors.New("this world already has its player — walk in")
 
 // The tick ladder, in the shape the hand-authored world already proves plays correctly:
 //
@@ -63,11 +72,15 @@ type genesisIDs struct {
 	things map[string]string // objects and ways alike: both are artifacts
 }
 
-// commitWorldGenesis writes the whole world inside the caller's transaction and returns the new world id.
-// Order is load-bearing and follows the template: the directory row and operating defaults first (every
-// later call fails without them), then identity, then the events that justify knowledge, then knowledge,
-// then state, then the arrival that makes the world playable.
-func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, artStyleChoice string) (string, error) {
+// commitWorldContent writes everything the world IS inside the caller's transaction and returns the
+// new world id. Order is load-bearing and follows the template: the directory row and operating
+// defaults first (every later call fails without them), then identity, then the events that justify
+// knowledge, then knowledge, then state. The player and the arrival are deliberately absent —
+// player_entity_id stays NULL until commitArrival — and the authored document itself lands on the
+// row, because the kickstart turns author against it and the arrival commit recomputes deterministic
+// geometry from it. It is server-side truth: no projection selects genesis_doc and no route serves
+// it, so the AC-7 secrecy boundary the in-memory draft store used to hold now holds in the database.
+func commitWorldContent(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, artStyleChoice string) (string, error) {
 	theme, err := json.Marshal(map[string]string{
 		"schema_version": "world_theme/1",
 		"accent":         genesisAccent(doc.World.DisplayName),
@@ -75,12 +88,12 @@ func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, 
 		"ornament":       strings.TrimSpace(doc.World.Ornament),
 	})
 	if err != nil {
-		return "", fmt.Errorf("commitWorldGenesis: theme: %w", err)
+		return "", fmt.Errorf("commitWorldContent: theme: %w", err)
 	}
 
 	worldID, err := createWorldTx(ctx, tx, strings.TrimSpace(doc.World.DisplayName), theme)
 	if err != nil {
-		return "", fmt.Errorf("commitWorldGenesis: create world: %w", err)
+		return "", fmt.Errorf("commitWorldContent: create world: %w", err)
 	}
 
 	ids, err := registerEntities(ctx, tx, worldID, doc)
@@ -103,20 +116,156 @@ func commitWorldGenesis(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, 
 	if err := writeOpeningState(ctx, tx, worldID, doc, ids); err != nil {
 		return "", err
 	}
-	if err := writeArrival(ctx, tx, worldID, doc, ids); err != nil {
-		return "", err
-	}
 
-	// The line that makes the world playable (fn_world_directory reads exactly this), plus the tagline
-	// and the brief that produced it. Last on purpose: until every entity and event is in place, a
-	// non-null player_entity_id would advertise a world that cannot be entered.
+	docJSON, err := json.Marshal(doc)
+	if err != nil {
+		return "", fmt.Errorf("commitWorldContent: marshal doc: %w", err)
+	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE world SET player_entity_id = $2::uuid, tagline = $3, brief = $4, art_style = $5 WHERE world_id = $1::uuid`,
-		worldID, ids.player, strings.TrimSpace(doc.World.Tagline), strings.TrimSpace(brief),
-		nullableArtStyleChoice(artStyleChoice)); err != nil {
-		return "", fmt.Errorf("commitWorldGenesis: stamp player: %w", err)
+		`UPDATE world SET tagline = $2, brief = $3, art_style = $4, genesis_doc = $5::jsonb
+		 WHERE world_id = $1::uuid`,
+		worldID, strings.TrimSpace(doc.World.Tagline), strings.TrimSpace(brief),
+		nullableArtStyleChoice(artStyleChoice), string(docJSON)); err != nil {
+		return "", fmt.Errorf("commitWorldContent: store doc: %w", err)
 	}
 	return worldID, nil
+}
+
+// commitArrival is the transaction that makes a committed world playable: the player entity, any
+// people the chosen identity referenced into existence (newCast), the arrival event with the
+// player's state and their one direct perception, the world_character row, and — last, guarded —
+// the player_entity_id stamp that IS the mechanical definition of playable.
+//
+// doc is the world's stored genesis document with Arrival already set to the chosen identity and
+// scenario, and it must have passed validate() over the MERGED cast (existing plus newCast) before
+// this is called. newCast entries are registered and given minds here because they did not exist at
+// content-commit time; their traits and secrets ground in the arrival event — the moment that made
+// them real — never in the world_genesis event (see writeMinds on what fn_perceived_name does with
+// anything sourced there). Their names and the player's are premise knowledge, mutual, acquired at
+// the arrival tick: you know your own kin, and they know you (I-9 holds — nothing is learned before
+// it happened, only exactly when).
+func commitArrival(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc, newCast []genesisActor) error {
+	ids, err := loadGenesisIDs(ctx, tx, worldID)
+	if err != nil {
+		return err
+	}
+	for _, a := range newCast {
+		name := strings.TrimSpace(a.CanonicalName)
+		id, err := registerActor(ctx, tx, worldID, name, strings.TrimSpace(a.Descriptor))
+		if err != nil {
+			return err
+		}
+		ids.cast[name] = id
+	}
+	if ids.player, err = registerActor(ctx, tx, worldID,
+		strings.TrimSpace(doc.Arrival.CanonicalName), strings.TrimSpace(doc.Arrival.Descriptor)); err != nil {
+		return err
+	}
+
+	arrivalEventID, err := writeArrival(ctx, tx, worldID, doc, ids, newCast)
+	if err != nil {
+		return err
+	}
+	for _, a := range newCast {
+		if err := insertMind(ctx, tx, worldID, ids.cast[strings.TrimSpace(a.CanonicalName)], a,
+			arrivalEventID, genesisArrivalTick); err != nil {
+			return err
+		}
+	}
+	if len(newCast) > 0 {
+		// Mutual name knowledge between the player and each referenced person. Sourced from the one
+		// world_genesis event because fn_perceived_name reads ONLY perceptions sourced there as names;
+		// acquired at the arrival tick because that is when the premise made it true here.
+		var namingEventID string
+		if err := tx.QueryRow(ctx,
+			`SELECT event_id::text FROM canon_event WHERE world_id = $1::uuid AND event_type = 'world_genesis'`,
+			worldID).Scan(&namingEventID); err != nil {
+			return fmt.Errorf("commitArrival: naming event: %w", err)
+		}
+		playerName := strings.TrimSpace(doc.Arrival.CanonicalName)
+		for _, a := range newCast {
+			name := strings.TrimSpace(a.CanonicalName)
+			kinID := ids.cast[name]
+			if err := writePerception(ctx, tx, worldID, ids.player, namingEventID, name, "told",
+				genesisArrivalTick, []string{kinID}); err != nil {
+				return fmt.Errorf("commitArrival: player knows %q: %w", name, err)
+			}
+			if err := writePerception(ctx, tx, worldID, kinID, namingEventID, playerName, "told",
+				genesisArrivalTick, []string{ids.player}); err != nil {
+				return fmt.Errorf("commitArrival: %q knows the player: %w", name, err)
+			}
+		}
+	}
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO world_character (world_id, entity_id, descriptor, canonical_name)
+		 VALUES ($1::uuid, $2::uuid, $3, $4)`,
+		worldID, ids.player, strings.TrimSpace(doc.Arrival.Descriptor),
+		strings.TrimSpace(doc.Arrival.CanonicalName)); err != nil {
+		return fmt.Errorf("commitArrival: character row: %w", err)
+	}
+
+	// The stamp, last and guarded: until every entity and event is in place, a non-null
+	// player_entity_id would advertise a world that cannot be entered — and IS NULL means two
+	// concurrent final answers cannot both land.
+	res, err := tx.Exec(ctx,
+		`UPDATE world SET player_entity_id = $2::uuid, kickstart_state = NULL
+		 WHERE world_id = $1::uuid AND player_entity_id IS NULL`,
+		worldID, ids.player)
+	if err != nil {
+		return fmt.Errorf("commitArrival: stamp player: %w", err)
+	}
+	if res.RowsAffected() == 0 {
+		return errWorldAlreadyPlayable
+	}
+	return nil
+}
+
+// loadGenesisIDs rebuilds the canonical-name → entity-id map from entity_registry, for the arrival
+// transaction that runs against a world committed earlier (possibly by another process entirely).
+// The region lands in the places map under its descriptor name; nothing at arrival time needs it
+// split out, and a place lookup by canonical name cannot collide with it in a validated document.
+func loadGenesisIDs(ctx context.Context, tx pgx.Tx, worldID string) (*genesisIDs, error) {
+	ids := &genesisIDs{
+		places: map[string]string{},
+		cast:   map[string]string{},
+		things: map[string]string{},
+	}
+	rows, err := tx.Query(ctx,
+		`SELECT entity_kind, canonical_name, entity_id::text FROM entity_registry
+		 WHERE world_id = $1::uuid AND status = 'active'`, worldID)
+	if err != nil {
+		return nil, fmt.Errorf("loadGenesisIDs: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var kind, name, id string
+		if err := rows.Scan(&kind, &name, &id); err != nil {
+			return nil, fmt.Errorf("loadGenesisIDs: scan: %w", err)
+		}
+		switch kind {
+		case "location":
+			ids.places[name] = id
+		case "actor":
+			ids.cast[name] = id
+		default:
+			ids.things[name] = id
+		}
+	}
+	return ids, rows.Err()
+}
+
+// registerActor mints one actor id at arrival time — the player, or a person the identity
+// referenced into existence. Same insert registerEntities uses, shared shape by construction.
+func registerActor(ctx context.Context, tx pgx.Tx, worldID, canonicalName, descriptor string) (string, error) {
+	var id string
+	if err := tx.QueryRow(ctx,
+		`INSERT INTO entity_registry (world_id, entity_kind, canonical_name, descriptor, status)
+		 VALUES ($1::uuid, 'actor', $2, $3, 'active') RETURNING entity_id::text`,
+		worldID, canonicalName, descriptor).Scan(&id); err != nil {
+		return "", fmt.Errorf("registerActor: %q: %w", canonicalName, err)
+	}
+	return id, nil
 }
 
 // nullableArtStyleChoice keeps "no choice" as SQL NULL rather than an empty string. The column's
@@ -186,9 +335,6 @@ func registerEntities(ctx context.Context, tx pgx.Tx, worldID string, doc *genes
 			return nil, err
 		}
 		ids.things[key] = id
-	}
-	if ids.player, err = insert("actor", strings.TrimSpace(doc.Arrival.CanonicalName), strings.TrimSpace(doc.Arrival.Descriptor)); err != nil {
-		return nil, err
 	}
 	return ids, nil
 }
@@ -346,61 +492,69 @@ func writeMinds(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc,
 
 	for _, a := range doc.Cast {
 		name := strings.TrimSpace(a.CanonicalName)
-		actorID := ids.cast[name]
-
-		// traits/1: real traits are objects {value, manner}; schema_version and speech_manner are
-		// strings at the top level. Shape copied from the template because the cognition seats read it.
-		traits := map[string]any{
-			"schema_version": "traits/1",
-			"speech_manner":  strings.TrimSpace(a.SpeechManner),
-		}
-		for _, t := range a.Traits {
-			traits[traitKey(t.Key)] = map[string]any{
-				"value":  strengthValue(t.Strength),
-				"manner": strings.TrimSpace(t.Manner),
-			}
-		}
-		traitsJSON, err := json.Marshal(traits)
-		if err != nil {
-			return fmt.Errorf("writeMinds: %q traits: %w", name, err)
-		}
-		if _, err := tx.Exec(ctx,
-			`INSERT INTO personality_core (world_id, actor_id, traits, malleability)
-			 VALUES ($1::uuid, $2::uuid, $3::jsonb, $4)`,
-			worldID, actorID, string(traitsJSON), malleabilityValue(a.Malleability)); err != nil {
-			return fmt.Errorf("writeMinds: %q core: %w", name, err)
-		}
-
 		// The moment a trait or a secret traces back to (D-11).
 		ground, ok := groundedIn[name]
 		if !ok {
 			ground = opening
 		}
-		for _, t := range a.Traits {
-			if _, err := tx.Exec(ctx,
-				`INSERT INTO trait_provenance (world_id, actor_id, trait_key, event_id)
-				 VALUES ($1::uuid, $2::uuid, $3, $4::uuid) ON CONFLICT DO NOTHING`,
-				worldID, actorID, traitKey(t.Key), ground.eventID); err != nil {
-				return fmt.Errorf("writeMinds: %q trait %q provenance: %w", name, t.Key, err)
-			}
-		}
-
-		// The secret. One private perception, held by one person, about themselves — which is what makes
-		// it invisible to everyone else through fn_visible_perceptions, and what the engine's own
-		// planted-secret test (I-3) goes looking for leaks of.
-		//
-		// IT MUST NOT HANG OFF THE world_genesis EVENT, and this cost a live build to learn. In this
-		// engine `world_genesis` is not a general-purpose "before play" event: `fn_perceived_name` treats
-		// EVERY perception sourced from one and subject-linked to an entity as that entity's NAME. A
-		// secret parked there is read straight back as the holder's name — the archivist's compendium
-		// entry rendered her forgery scheme where her name belonged. Grounding it in the moment that
-		// caused it is both the fix and the more honest provenance (B-2: knowledge arrives by a path).
-		if err := writePerception(ctx, tx, worldID, actorID, ground.eventID,
-			strings.TrimSpace(a.Hiding), "direct", ground.tick, []string{actorID}); err != nil {
-			return fmt.Errorf("writeMinds: %q secret: %w", name, err)
+		if err := insertMind(ctx, tx, worldID, ids.cast[name], a, ground.eventID, ground.tick); err != nil {
+			return err
 		}
 	}
 	return nil
+}
+
+// insertMind writes one actor's personality_core, trait provenance and secret. Shared between the
+// content commit (cast, grounded in their first authored moment) and the arrival commit (people the
+// identity referenced into existence, grounded in the arrival event — the moment that made them real).
+func insertMind(ctx context.Context, tx pgx.Tx, worldID, actorID string, a genesisActor,
+	groundEventID string, groundTick int64) error {
+
+	name := strings.TrimSpace(a.CanonicalName)
+	// traits/1: real traits are objects {value, manner}; schema_version and speech_manner are
+	// strings at the top level. Shape copied from the template because the cognition seats read it.
+	traits := map[string]any{
+		"schema_version": "traits/1",
+		"speech_manner":  strings.TrimSpace(a.SpeechManner),
+	}
+	for _, t := range a.Traits {
+		traits[traitKey(t.Key)] = map[string]any{
+			"value":  strengthValue(t.Strength),
+			"manner": strings.TrimSpace(t.Manner),
+		}
+	}
+	traitsJSON, err := json.Marshal(traits)
+	if err != nil {
+		return fmt.Errorf("insertMind: %q traits: %w", name, err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO personality_core (world_id, actor_id, traits, malleability)
+		 VALUES ($1::uuid, $2::uuid, $3::jsonb, $4)`,
+		worldID, actorID, string(traitsJSON), malleabilityValue(a.Malleability)); err != nil {
+		return fmt.Errorf("insertMind: %q core: %w", name, err)
+	}
+
+	for _, t := range a.Traits {
+		if _, err := tx.Exec(ctx,
+			`INSERT INTO trait_provenance (world_id, actor_id, trait_key, event_id)
+			 VALUES ($1::uuid, $2::uuid, $3, $4::uuid) ON CONFLICT DO NOTHING`,
+			worldID, actorID, traitKey(t.Key), groundEventID); err != nil {
+			return fmt.Errorf("insertMind: %q trait %q provenance: %w", name, t.Key, err)
+		}
+	}
+
+	// The secret. One private perception, held by one person, about themselves — which is what makes
+	// it invisible to everyone else through fn_visible_perceptions, and what the engine's own
+	// planted-secret test (I-3) goes looking for leaks of.
+	//
+	// IT MUST NOT HANG OFF THE world_genesis EVENT, and this cost a live build to learn. In this
+	// engine `world_genesis` is not a general-purpose "before play" event: `fn_perceived_name` treats
+	// EVERY perception sourced from one and subject-linked to an entity as that entity's NAME. A
+	// secret parked there is read straight back as the holder's name — the archivist's compendium
+	// entry rendered her forgery scheme where her name belonged. Grounding it in the moment that
+	// caused it is both the fix and the more honest provenance (B-2: knowledge arrives by a path).
+	return writePerception(ctx, tx, worldID, actorID, groundEventID,
+		strings.TrimSpace(a.Hiding), "direct", groundTick, []string{actorID})
 }
 
 // traitKey normalises an authored disposition word into the key shape the template uses: lowercase,
@@ -568,12 +722,17 @@ func writeOpeningState(ctx context.Context, tx pgx.Tx, worldID string, doc *gene
 	return nil
 }
 
-// writeArrival is the last thing that happens, and the smallest. The player's whole epistemic state is
-// one perception of their own arrival — no roster of who is in the room, because that would fake a
-// fan-out they never received. Everyone present is visible to them situationally, through co-location;
-// nobody is KNOWN to them, so every compendium page 404s and every name renders as a descriptor. That is
-// the correct state for someone who has just walked in, and it costs one row.
-func writeArrival(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc, ids *genesisIDs) error {
+// writeArrival makes the world's opening moment real: one ActorMoved event, the player's state, and
+// the player's whole epistemic state — one perception of their own arrival. No roster of who is in
+// the room, because that would fake a fan-out they never received. Everyone present is visible to
+// them situationally, through co-location; nobody is KNOWN to them (kin excepted, written by the
+// caller), so every compendium page 404s and every name renders as a descriptor.
+//
+// newCast are placed here too, under the same event and tick: they enter the world's record at the
+// moment the premise that references them does. Returns the arrival event id so the caller can
+// ground their minds in it.
+func writeArrival(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc, ids *genesisIDs,
+	newCast []genesisActor) (string, error) {
 	placeID := ids.places[strings.TrimSpace(doc.Arrival.Place)]
 
 	var eventID string
@@ -583,23 +742,24 @@ func writeArrival(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDo
 		 VALUES ($1::uuid, $2::uuid, 'ActorMoved', $3, $4, 'Arrival', 'accepted', now(), 'fast_path')
 		 RETURNING event_id::text`,
 		worldID, placeID, strings.TrimSpace(doc.Arrival.Stated), genesisArrivalTick).Scan(&eventID); err != nil {
-		return fmt.Errorf("writeArrival: event: %w", err)
+		return "", fmt.Errorf("writeArrival: event: %w", err)
 	}
 	if err := addParticipant(ctx, tx, eventID, ids.player, "actor", "instigator"); err != nil {
-		return fmt.Errorf("writeArrival: instigator: %w", err)
+		return "", fmt.Errorf("writeArrival: instigator: %w", err)
 	}
 	if err := addParticipant(ctx, tx, eventID, placeID, "location", "setting"); err != nil {
-		return fmt.Errorf("writeArrival: setting: %w", err)
+		return "", fmt.Errorf("writeArrival: setting: %w", err)
 	}
 
 	radius, err := genesisExtentRadius(ctx, tx, worldID, doc.Region.ExtentClass)
 	if err != nil {
-		return err
+		return "", err
 	}
-	coord := genesisPlaceCoords(doc.Places, radius)[strings.TrimSpace(doc.Arrival.Place)]
+	placeCoords := genesisPlaceCoords(doc.Places, radius)
+	coord := placeCoords[strings.TrimSpace(doc.Arrival.Place)]
 
 	seq := 0
-	set := func(path string, value any) error {
+	set := func(entityID, path string, value any) error {
 		raw, err := json.Marshal(value)
 		if err != nil {
 			return fmt.Errorf("writeArrival: marshal %s: %w", path, err)
@@ -608,28 +768,50 @@ func writeArrival(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDo
 			`INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribute_path,
 			                             new_value, valid_from_tick, valid_from_seq)
 			 VALUES ($1::uuid, $2::uuid, $3::uuid, 'actor', $4, $5::jsonb, $6, $7)`,
-			worldID, eventID, ids.player, path, string(raw), genesisArrivalTick, seq); err != nil {
+			worldID, eventID, entityID, path, string(raw), genesisArrivalTick, seq); err != nil {
 			return fmt.Errorf("writeArrival: %s: %w", path, err)
 		}
 		seq++
 		return nil
 	}
-	if err := set("attrs.location_id", placeID); err != nil {
-		return err
+	if err := set(ids.player, "attrs.location_id", placeID); err != nil {
+		return "", err
 	}
-	if err := set("attrs.descriptor", strings.TrimSpace(doc.Arrival.Descriptor)); err != nil {
-		return err
+	if err := set(ids.player, "attrs.descriptor", strings.TrimSpace(doc.Arrival.Descriptor)); err != nil {
+		return "", err
 	}
-	if err := set("attrs.coordinates", coord); err != nil {
-		return err
+	if err := set(ids.player, "attrs.coordinates", coord); err != nil {
+		return "", err
 	}
-	if err := set("attrs.max_load", genesisPlayerMaxLoad); err != nil {
-		return err
+	if err := set(ids.player, "attrs.max_load", genesisPlayerMaxLoad); err != nil {
+		return "", err
 	}
 
-	return writePerception(ctx, tx, worldID, ids.player, eventID,
+	// The referenced people, placed exactly as the opening state placed the cast — same paths, same
+	// shape — just at the arrival tick, under the arrival event.
+	for _, a := range newCast {
+		id := ids.cast[strings.TrimSpace(a.CanonicalName)]
+		where := strings.TrimSpace(a.StartsIn)
+		if err := set(id, "attrs.location_id", ids.places[where]); err != nil {
+			return "", err
+		}
+		if err := set(id, "attrs.coordinates", placeCoords[where]); err != nil {
+			return "", err
+		}
+		if err := set(id, "attrs.descriptor", strings.TrimSpace(a.Descriptor)); err != nil {
+			return "", err
+		}
+		if err := set(id, "attrs.max_load", genesisPlayerMaxLoad); err != nil {
+			return "", err
+		}
+	}
+
+	if err := writePerception(ctx, tx, worldID, ids.player, eventID,
 		strings.TrimSpace(doc.Arrival.Stated), "direct", genesisArrivalTick,
-		[]string{ids.player, placeID})
+		[]string{ids.player, placeID}); err != nil {
+		return "", err
+	}
+	return eventID, nil
 }
 
 // writePerception writes one perception_record and its subject links. acquired_tick = valid_tick = the
