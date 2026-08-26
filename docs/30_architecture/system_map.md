@@ -200,6 +200,19 @@ gate, move the row.
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
+**A round now records what the harness cost it.** `ci/check_closeout.sh` requires a `Friction:` line
+in the PR body ending **`EARNED`**, **`WASTE`** or **`UNCLEAR`**, and refuses a description with no
+verdict — a complaint is not a verdict, and no rule can die from a complaint. Detail goes in
+`../docs/00_workspace/friction-log.md`; `../harness/check.sh friction` enforces row verdicts and a
+reviewer ruling from the workspace side, where both trees are visible. This exists because every rule
+in this harness traces to a `failure-log.md` row and that log only grows — nothing measured the cost,
+so nothing could ever justify a deletion.
+
+**Format trap, found by this gate refusing its own commit message:** the block reader treats any
+lower-cased `word:` at line start as the next header and stops there, so a verdict written as
+`UNCLEAR: because…` on its own line is truncated away before the verdict check runs. Keep the verdict
+**inline** — `… — UNCLEAR, because …`.
+
 **A green mutation table covers one class of two, and the second one shipped a bug.** A `sed` script
 mutates *source*, so it structurally can only ask "what if the code is wrong". It cannot ask "what if
 the **input** is wrong". SPEC-035 was mutation-tested — 4 mutants, 4 caught — and shipped with

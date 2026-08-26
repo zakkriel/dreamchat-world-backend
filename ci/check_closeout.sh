@@ -127,6 +127,45 @@ check_closeout() { # check_closeout <body> <path…>
       fi
     done <<<"$named"
   fi
+
+  # ---- 3. friction -> the only way a rule ever dies
+  # `Learned:` records what the round taught. This records what the harness COST. Without it the
+  # rule set can only grow, because nothing measures the other direction — and a harness that only
+  # accretes becomes ceremony, which is the state AGENTS.md was in before this one was built.
+  #
+  # The load-bearing part is not the description, it is the VERDICT. `EARNED` means the friction
+  # caught something, or would have. `WASTE` means it cost time and caught nothing, and names the
+  # rule to delete or fix. `UNCLEAR` means the cost was real and the catch is unproven.
+  #
+  # `Friction: none` is legitimate and must be REASONED, exactly like `Learned: nothing`. A round
+  # that genuinely met no friction is possible; a round that could not be bothered to look is not
+  # distinguishable from it unless you make the author write a sentence a reviewer can disagree with.
+  local friction
+  friction="$(printf '%s\n' "$body" | awk '
+      { l = tolower($0) }
+      on == 0 && l ~ /^[[:space:]]*friction[[:space:]]*:/ { on=1; sub(/^[^:]*:[[:space:]]*/,""); print; next }
+      on && l ~ /^[[:space:]]*$/ { exit }
+      on && l ~ /^[[:space:]]*[a-z][a-z-]*[[:space:]]*:/ { exit }
+      on { print }' | tr '\n' ' ' | sed -E 's/[[:space:]]+/ /g; s/^ | $//g')"
+  if [ -z "$friction" ]; then
+    echo "FAIL  no 'Friction:' line. What did this harness cost you? A rule set that is never"
+    echo "        measured against its own cost can only grow — see docs/00_workspace/friction-log.md."
+    bad=1
+  elif printf '%s' "$friction" | grep -qiE '^(none|nothing)\b'; then
+    if printf '%s' "$friction" | grep -qiE '^(none|nothing)[^-—]*[-—][[:space:]]*\S' && [ "${#friction}" -ge 30 ]; then
+      echo "OK    no friction, reasoned: $friction"
+    else
+      echo "FAIL  'Friction: none' needs a reason after a dash — a sentence a reviewer can disagree with"
+      bad=1
+    fi
+  elif ! printf '%s' "$friction" | grep -qE '\b(EARNED|WASTE|UNCLEAR)\b'; then
+    echo "FAIL  'Friction:' has no verdict. Every entry ends EARNED, WASTE or UNCLEAR —"
+    echo "        a description with no verdict is a complaint, and no rule can die from a complaint."
+    bad=1
+  else
+    echo "OK    friction recorded with a verdict: $friction"
+  fi
+
   return "$bad"
 }
 
@@ -139,7 +178,12 @@ if [ "${1:-}" = "--selftest" ]; then
     else printf '  FAIL %-52s wanted %s got %s\n' "$label" "$want" "$got"; fails=$((fails+1)); fi; }
 
   SM=docs/30_architecture/system_map.md
-  L="Learned: portals are still not drawn → docs/areas/art-and-assets.md"
+  # Every probe body carries a valid Friction: line, so the 16 pre-existing probes keep testing what
+  # they were written to test rather than all going red on the newest requirement. The friction logic
+  # gets its own probes below, with their own bodies.
+  FR="Friction: AREAS.map indentation is significant with no schema check — WASTE, fix check.sh areas"
+  L="Learned: portals are still not drawn → docs/areas/art-and-assets.md
+$FR"
   probe fail "art change, map untouched"       "$L" core/api/artstyle.go
   probe pass "art change, map touched"         "$L" core/api/artstyle.go "$SM"
   probe fail "prompt change, map untouched"    "$L" core/api/prompts/narrate.txt
@@ -148,26 +192,56 @@ if [ "${1:-}" = "--selftest" ]; then
   probe pass "new workflow, ledger touched"    "$L" .github/workflows/x.yml "$SM"
   probe fail "new ci gate, ledger untouched"   "$L" ci/check_x.sh
   probe pass "unrelated file, no trigger"      "$L" core/api/journey.go
-  probe fail "no Learned line at all"          "Fixes a thing." core/api/journey.go
-  probe fail "Learned with no file named"      "Learned: portals are not drawn" core/api/journey.go
+  probe fail "no Learned line at all"          "Fixes a thing.
+$FR" core/api/journey.go
+  probe fail "Learned with no file named"      "Learned: portals are not drawn
+$FR" core/api/journey.go
   probe fail "Learned names a backend file not in the diff" \
-       "Learned: x → docs/open-spec-items.md" core/api/journey.go
+       "Learned: x → docs/open-spec-items.md
+$FR" core/api/journey.go
   probe pass "Learned names a backend file in the diff" \
-       "Learned: x → docs/open-spec-items.md" core/api/journey.go docs/open-spec-items.md
+       "Learned: x → docs/open-spec-items.md
+$FR" core/api/journey.go docs/open-spec-items.md
   probe pass "Learned names a workspace file"  "$L" core/api/journey.go
-  probe fail "bare 'nothing'"                  "Learned: nothing" core/api/journey.go
-  probe fail "'nothing' with a one-word reason" "Learned: nothing — typo" core/api/journey.go
+  probe fail "bare 'nothing'"                  "Learned: nothing
+$FR" core/api/journey.go
+  probe fail "'nothing' with a one-word reason" "Learned: nothing — typo
+$FR" core/api/journey.go
   probe pass "'nothing' properly reasoned" \
-       "Learned: nothing — a comment typo; no behaviour, no shape, no new trap" core/api/journey.go
+       "Learned: nothing — a comment typo; no behaviour, no shape, no new trap
+$FR" core/api/journey.go
   probe pass "wrapped Learned, file on line 2" \
        "Learned: a working-tree gate across repos with different cadences
-is structurally doomed → docs/open-spec-items.md" core/api/journey.go docs/open-spec-items.md
+is structurally doomed → docs/open-spec-items.md
+$FR" core/api/journey.go docs/open-spec-items.md
   probe fail "wrapped Learned, named file not in diff" \
        "Learned: something long enough to wrap onto
-a second line → docs/open-spec-items.md" core/api/journey.go
+a second line → docs/open-spec-items.md
+$FR" core/api/journey.go
   probe pass "wrapped 'nothing' reason" \
-       "Learned: nothing — this only reflows a comment
-and changes no behaviour at all" core/api/journey.go
+       "Learned: nothing — this only reflows a comment and changes no behaviour at all
+$FR" core/api/journey.go
+
+  # ---- friction: the newest requirement, so the probes that matter most
+  LN="Learned: nothing — a one-line comment fix, no shape and no new trap"
+  probe fail "no Friction line at all"            "$LN" core/api/journey.go
+  probe fail "Friction present but no verdict"    "$LN
+Friction: the areas gate was annoying" core/api/journey.go
+  probe pass "Friction EARNED"                    "$LN
+Friction: gate order cost 25 min — EARNED, it caught a real sequencing bug" core/api/journey.go
+  probe pass "Friction WASTE naming a rule"       "$LN
+Friction: AREAS.map whitespace — WASTE, fix check.sh areas to reject a path in area position" core/api/journey.go
+  probe pass "Friction UNCLEAR"                   "$LN
+Friction: pg_get_functiondef emits no semicolon — UNCLEAR, the convention earns its keep elsewhere" core/api/journey.go
+  probe fail "bare 'Friction: none'"              "$LN
+Friction: none" core/api/journey.go
+  probe fail "'Friction: none' with no dash"      "$LN
+Friction: none at all this round really" core/api/journey.go
+  probe pass "'Friction: none' reasoned"          "$LN
+Friction: none — a two-line docs typo fix that touched no gate and ran no new command" core/api/journey.go
+  probe pass "verdict on a wrapped second line"   "$LN
+Friction: the areas gate is blind to untracked files, which cost two wrong turns
+and about ten minutes — EARNED, git add -N is the answer but the error never said so" core/api/journey.go
 
   echo
   [ "$fails" -eq 0 ] && { echo "SELFTEST OK — every assertion can fail, and the happy paths pass."; exit 0; }
