@@ -16,6 +16,26 @@
 # A SURVIVING MUTANT IS A FAILING BUILD. If a test suite passes with the behaviour deleted, that suite
 # does not defend that behaviour. That is not a style opinion; it is the definition.
 #
+# TWO CLASSES OF MUTANT, AND EVERYONE FORGETS THE SECOND
+#
+#   CODE-PATH mutants  — break the implementation. Delete a branch, defang a guard, invert a
+#                        condition. These are the obvious ones and they are what people run.
+#
+#   INPUT-SHAPE mutants — feed the implementation something it did not expect. Absent, null, the
+#                        wrong JSON type, an empty array, a duplicate, an id that does not exist.
+#                        You cannot express these as a sed script on the source, so run them as
+#                        assertions in the suite instead — but reason about them at the SAME moment,
+#                        because they are the ones that get skipped.
+#
+# Measured, on this repo: seven code-path mutants across the SPEC-034 and SPEC-035 rounds were all
+# CAUGHT, and the suite still shipped with a silent drop on malformed input — `witnesses: "<uuid>"`
+# as a bare string committed with zero witnesses and no halt_reason. Every mutant asked "what if the
+# code is wrong". None asked "what if the INPUT is wrong". A 100%-caught mutation report is not
+# coverage of the second class; it is silence about it.
+#
+# So: for every field a change READS, name what happens when it is absent, null, the wrong type, and
+# empty. Four questions, asked out loud, per field.
+#
 # USAGE
 #
 #   ci/mutate.sh --file <path> --test '<command>' \

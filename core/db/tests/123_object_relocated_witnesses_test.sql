@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(10);
+SELECT plan(14);
 
 -- SPEC-035 — an ObjectRelocated event must RECORD who saw it, and those witnesses must perceive it.
 --
@@ -153,6 +153,47 @@ SELECT is( (SELECT COUNT(*)::int FROM event_participant
                                 WHERE world_id = :'W'::uuid AND in_world_tick = 6400)
                AND role_qualifier = 'witness'), 0,
   'SPEC-035: a handover naming no witnesses records none — co-presence alone perceives nothing' );
+
+-- ── 8. PRESENT-BUT-MALFORMED IS A REFUSAL, NOT A SHRUG ─────────────────────────────────────────
+-- Found by reviewing SPEC-035 one commit after it shipped, asking the question none of its four
+-- mutants asked: not "what if the code is wrong" but "what if the INPUT is wrong". The first cut
+-- keyed every branch on `jsonb_typeof(...) = 'array'`, so a bare string fell through all of them and
+-- committed silently with zero witnesses and no halt_reason — the exact defect SPEC-035 was filed to
+-- remove, reintroduced by its own fix.
+--
+-- This is not an exotic shape. `Communicated`'s recipient field is `listener_id`, a BARE STRING in
+-- the same payload, so a caller reasoning from the nearest sibling writes exactly this.
+--
+-- absent and null are legitimate ("nobody was named"). Anything else present is a caller bug.
+SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
+             jsonb_build_object('type','ObjectRelocated','stated','bare string',
+               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
+               'witnesses', :'A3'),
+             6500, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
+  'SPEC-035: witnesses as a BARE STRING is refused, not silently dropped' );
+
+SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
+             jsonb_build_object('type','ObjectRelocated','stated','a number',
+               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
+               'witnesses', 42),
+             6501, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
+  'SPEC-035: witnesses as a number is refused' );
+
+SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
+             jsonb_build_object('type','ObjectRelocated','stated','an object',
+               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
+               'witnesses', jsonb_build_object('who', :'A3')),
+             6502, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
+  'SPEC-035: witnesses as an object is refused' );
+
+-- and the two legitimate absences still commit — a refusal that also refuses valid input is worse
+-- than the silence it replaced.
+SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
+             jsonb_build_object('type','ObjectRelocated','stated','explicit null',
+               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
+               'witnesses', NULL),
+             6503, 0, 'fast_path')->>'halt_reason'), 'committed',
+  'SPEC-035: an explicit null witnesses field still commits — that is "nobody was named"' );
 
 SELECT * FROM finish();
 ROLLBACK;

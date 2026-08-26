@@ -200,6 +200,15 @@ gate, move the row.
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
+**A green mutation table covers one class of two, and the second one shipped a bug.** A `sed` script
+mutates *source*, so it structurally can only ask "what if the code is wrong". It cannot ask "what if
+the **input** is wrong". SPEC-035 was mutation-tested — 4 mutants, 4 caught — and shipped with
+`witnesses: "<uuid>"` as a bare string committing zero witnesses and no `halt_reason`: the precise
+defect that SPEC was filed to remove, reintroduced inside its own fix. Repaired by
+`20260825140000_witnesses_malformed_is_refusal.sql`, gated by 4 assertions, mutation-tested in both
+directions. `ci/mutate.sh` documents both classes; all seven area briefs carry the four questions to
+ask per field a change reads — **absent · null · wrong type · empty**. See `failure-log.md` #45.
+
 **The mutation experiment now has a runner, and is still honour-system.** `ci/mutate.sh` (7 selftest
 probes) applies named mutants, runs a test command, restores on any exit, and fails when a mutant
 survives, when a sed script matches nothing, or when the baseline is already red. What it does **not**

@@ -195,6 +195,21 @@ BEGIN
     -- of the 'Communicated' listener gate above (fn_actors_at against the instigator's location), and
     -- it is deliberate: the engine BLOCKS impossibilities, it never awards perception
     -- (FINAL-action-contracts.md - "deterministic machinery blocks impossibilities").
+    -- SPEC-035 amendment: PRESENT-BUT-MALFORMED IS A REFUSAL, NOT A SHRUG.
+    -- The first cut of this gate keyed on `= 'array'`, so `witnesses: "<uuid>"` — a bare string —
+    -- fell through every branch: committed, zero witness rows, zero perceptions, no halt_reason.
+    -- That is the EXACT defect class this SPEC was filed to remove, reintroduced by its own fix.
+    -- It is not a hypothetical shape either: the sibling field on 'Communicated' is `listener_id`,
+    -- a bare string, so a caller following the nearest precedent writes precisely this and is met
+    -- with silence. Absent is fine and means "nobody named"; present and not an array is a caller
+    -- bug, and the engine's job is to block it loudly rather than guess what was meant. Coercing a
+    -- string into a one-element array was rejected: coercion hides the caller's bug, which is how
+    -- the silence got here in the first place.
+    IF p_attempt ? 'witnesses'
+       AND jsonb_typeof(p_attempt->'witnesses') NOT IN ('array', 'null') THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
     IF jsonb_typeof(p_attempt->'witnesses') = 'array' THEN
       SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
         WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
@@ -5060,4 +5075,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260821090000'),
     ('20260821120000'),
     ('20260825120000'),
-    ('20260825130000');
+    ('20260825130000'),
+    ('20260825140000');
