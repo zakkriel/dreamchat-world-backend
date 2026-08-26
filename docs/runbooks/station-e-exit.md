@@ -1,5 +1,11 @@
 # Station E exit runbook — the founder plays the beat in a browser
 
+> **Historical.** This document references the `dreamchat-frontend-play` worktree, which **no
+> longer exists**, and `:5173`, which is retired with the archived `dreamchat-frontend` repo
+> (`workspace:ADR-W003`). The live frontend is `dream-weaver-visuals` on **5273**; the current
+> bring-up is `../stack.sh start` at the workspace root. The steps below are kept as the record of
+> what was executed at the time — do not follow them verbatim.
+
 The Station E gate is not green until the founder walks the loop himself, in a real browser, against
 real drivers. This runbook is that exit: walk in as Kade, lean on a **Mara who has her secret** about
 the harbormaster, and watch **Jonas react** — the telegraph → reaction beat, played end to end.

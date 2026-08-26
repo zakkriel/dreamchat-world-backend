@@ -1,5 +1,11 @@
 # HANDOVER — The Journey + a proper BE↔FE contract (2026-08-07)
 
+> **Historical.** This document references the `dreamchat-frontend-play` worktree, which **no
+> longer exists**, and `:5173`, which is retired with the archived `dreamchat-frontend` repo
+> (`workspace:ADR-W003`). The live frontend is `dream-weaver-visuals` on **5273**; the current
+> bring-up is `../stack.sh start` at the workspace root. The steps below are kept as the record of
+> what was executed at the time — do not follow them verbatim.
+
 **For the agent resuming this.** This picks up a brainstorming session (superpowers:brainstorming) that
 paused mid-scope-framing because the driving agent's context got heavy. You are designing **the Journey**
 backend subsystem AND the **BE↔FE contract** it needs, per the founder's PRDs — not the throwaway test FE.

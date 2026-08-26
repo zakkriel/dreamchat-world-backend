@@ -1,5 +1,10 @@
 # 03 Platform Architecture
 
+> **Directional, and predates the frozen engine set** (see `docs/MASTER_INDEX.md`, Layer 3).
+> Treat as directional until re-validated. Note also that the frontend repo named below is
+> `dreamchat-frontend`, now ARCHIVED and superseded by `dream-weaver-visuals`
+> (`workspace:ADR-W003`).
+
 > Status: Draft for review  
 > Scope: Full platform shape for DreamChat persistent AI RPG worlds  
 > Principle: The world is the product; chat, media, and modules are interfaces into the world.

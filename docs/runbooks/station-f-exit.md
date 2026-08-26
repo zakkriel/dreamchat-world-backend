@@ -1,5 +1,11 @@
 # Station F exit runbook — the founder walks the room
 
+> **Historical.** This document references the `dreamchat-frontend-play` worktree, which **no
+> longer exists**, and `:5173`, which is retired with the archived `dreamchat-frontend` repo
+> (`workspace:ADR-W003`). The live frontend is `dream-weaver-visuals` on **5273**; the current
+> bring-up is `../stack.sh start` at the workspace root. The steps below are kept as the record of
+> what was executed at the time — do not follow them verbatim.
+
 The Station F gate is not green until the founder walks the Drowned Lantern himself, in a real browser,
 against real drivers. Station F gave the room **space and consequence**: movement now costs real
 beat-time (§2), the locked cellar hatch actually blocks (§5.3 Portal), the front door lets him out, and

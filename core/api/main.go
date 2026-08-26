@@ -154,7 +154,7 @@ func main() {
 	// definition, so they must be answered ungated, while every real request is checked.
 	corsAllowed, corsBad := corsOrigins()
 	if len(corsBad) > 0 {
-		log.Fatalf("%s: %v is not a usable origin — list exact origins like http://localhost:5173 (no wildcard, no path)",
+		log.Fatalf("%s: %v is not a usable origin — list exact origins like http://localhost:5273 (no wildcard, no path)",
 			corsOriginsEnv, corsBad)
 	}
 	handler := withCORS(withAuth(mux), corsAllowed)

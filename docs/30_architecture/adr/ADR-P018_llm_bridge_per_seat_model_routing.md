@@ -6,8 +6,17 @@
 (action-driven clock) remains the only *engine* ADR for Chunk 5; this is a bridge-layer ADR.
 **Owner of decision:** Chunk 5 Leg 2 (first LLM in the loop)
 **Governing rule:** D-13 (model-agnostic per-seat LLM routing — added to the register by the founder).
-**Evidence (D-9):** the running bridge (`core/api/bridge.go`, `bridge_fakes.go`, `anthropic.go`,
-`beathandler.go`) + `bridge_test.go` green in this PR. Filed *with* code, not ahead of it.
+**Evidence (D-9):** the running bridge — `core/api/bridge.go` (seat→driver resolution and the
+capability floor), `core/api/anthropic.go` (the production driver, provider shaping confined to the
+bridge layer), `core/api/bridge_fakes.go` (the deterministic `Driver` stand-ins and the
+`Capabilities()` they report — a fake laxer than the real driver is how three bugs shipped green),
+`core/api/beathandler.go` (seat semantics at the call site: D-13 keeps provider shaping in the driver)
+— plus `bridge_test.go` green in this PR. Filed *with* code, not ahead of it.
+
+> **Evidence paths must carry the `core/api/` prefix.** `core/api/governance_test.go` extracts
+> evidence with a regex requiring it, so a bare `foo.go` is silently skipped. This list once named
+> `bridge_fakes.go`, `anthropic.go` and `beathandler.go` without the prefix and the gate checked
+> exactly one of its four files while appearing to check all four.
 
 ## Context
 

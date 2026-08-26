@@ -19,7 +19,7 @@ func (h *okHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	_, _ = w.Write([]byte(`{"ok":true}`))
 }
 
-const feOrigin = "http://localhost:5173"
+const feOrigin = "http://localhost:5273"
 
 func corsRequest(t *testing.T, allowed []string, method, origin string, preflight bool) (*httptest.ResponseRecorder, *okHandler) {
 	t.Helper()
@@ -199,11 +199,11 @@ func TestCORS_EmptyAllowlistAddsNothing(t *testing.T) {
 // people actually paste an origin), blanks vanish, and anything that cannot work as an exact origin
 // is reported so main can refuse to boot instead of serving an unreachable API.
 func TestCORSOrigins_ParsesListAndFlagsUnusableEntries(t *testing.T) {
-	t.Setenv(corsOriginsEnv, " http://localhost:5173/ , ,https://app.example.com,*,app.example.com")
+	t.Setenv(corsOriginsEnv, " http://localhost:5273/ , ,https://app.example.com,*,app.example.com")
 
 	allowed, bad := corsOrigins()
 
-	want := []string{"http://localhost:5173", "https://app.example.com"}
+	want := []string{"http://localhost:5273", "https://app.example.com"}
 	if len(allowed) != len(want) {
 		t.Fatalf("allowed = %v, want %v", allowed, want)
 	}
