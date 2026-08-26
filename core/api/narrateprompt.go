@@ -81,6 +81,16 @@ const narrateQueryRuleMarker = "ANSWER THE PLAYER'S QUESTIONS"
 // tests grep for it to prove a QUERY's answer reaches the narrator.
 const narrateQueryBlockMarker = "QUESTIONS THE PLAYER ASKED"
 
+// narrateWorldBlockMarker is the load-bearing substring of the rendered THE WORLD block — the world's
+// GLOBAL statement (WorldStatement), the one thing no narrate prompt has ever carried. It is rendered
+// by narrateSceneBody, NOT appended to narrate.txt, and that placement is the finding it comes from:
+// narrateBaseRules slices the header at narrateSegmentContractMarker (:71, :93-98), so a block added to
+// the end of narrate.txt is silently dropped by buildNarratePlainPrompt (:143-151) — the fallback taken
+// only after two structured attempts have already failed, which is precisely when invention risk is
+// highest. The scene body is shared verbatim by all three builders, so rendering it here is what makes
+// "present in all three" structural instead of a thing a later edit can undo. A test greps all three.
+const narrateWorldBlockMarker = "THE WORLD:"
+
 // Text lives in prompts/narrate.txt (core/api/prompts/README.md) — every fixed prompt rulebook
 // readable in one place, config-style, mirroring the schema/*.json + go:embed pattern. The founder
 // envelope added the segmenting contract ON TOP of the existing rules (all of them apply per segment).
@@ -97,8 +107,9 @@ func narrateBaseRules() string {
 	return narrateSystemHeader
 }
 
-// buildNarratePrompt assembles the narrate prompt: the bounding header, then PLACE (the location
-// candidate — with its scene description when the payload carries one), then the PRESENT roster (actor
+// buildNarratePrompt assembles the narrate prompt: the bounding header, then THE WORLD (this world's
+// global statement — what world this is at all, which no narrate prompt carried before), then PLACE
+// (the location candidate — with its scene description when the payload carries one), then the PRESENT roster (actor
 // names only, the VIEWER excluded), then the delta-first body: WHAT JUST HAPPENED (the perceptions new
 // this beat, oldest first) followed by RECENT BACKGROUND (the rest of the window, labelled as context
 // the narrator must not re-narrate). Layout is cache-native like the cognition prompts (stable header
@@ -150,12 +161,53 @@ func buildNarratePlainPrompt(payload PerceptionPayload, viewerID string, preIDs 
 		narrateSceneBody(payload, viewerID, preIDs, haltReason, queryAnswers...)
 }
 
-// narrateSceneBody assembles everything after the header: PLACE, the PRESENT roster (each entry
-// "label [id]" so a segment can attribute speech/actions by id), YOU ARE, the NOTHING RESOLVED context,
-// and the delta-first WHAT JUST HAPPENED / RECENT BACKGROUND blocks. Shared verbatim by the structured,
-// repair, and plain-fallback prompts so the scene the model renders never changes between attempts.
+// narrateSceneBody assembles everything after the header: THE WORLD (the world's global statement),
+// then PLACE, the PRESENT roster (each entry "label [id]" so a segment can attribute speech/actions by
+// id), YOU ARE, the NOTHING RESOLVED context, and the delta-first WHAT JUST HAPPENED / RECENT
+// BACKGROUND blocks. Shared verbatim by the structured, repair, and plain-fallback prompts so the
+// scene the model renders never changes between attempts.
 func narrateSceneBody(payload PerceptionPayload, viewerID string, preIDs map[string]bool, haltReason string, queryAnswers ...QueryAnswer) string {
 	var sb strings.Builder
+
+	// THE WORLD — the global statement, rendered FIRST and identically every beat of a given world, so
+	// it extends the stable cache prefix the header establishes rather than riding the growing tail.
+	//
+	// It is context, never content: narrate.txt's THE WORLD IS CONTEXT, NEVER CONTENT rule (which sits
+	// BEFORE the segment-contract marker, so the plain fallback carries it too) binds it to diction and
+	// register and forbids it adding an object, an exit, a person or an event. The facts of the scene
+	// still come only from PLACE, PRESENT, YOU ARE and the perception lines.
+	//
+	// Every field is the committed document's own content, never world.brief — see WorldStatement.
+	// An empty statement renders NOTHING, the same discipline YOU ARE follows: an unauthored world must
+	// not hand the model a bare header to reason about.
+	if !payload.World.Empty() {
+		sb.WriteString("\n\n")
+		sb.WriteString(narrateWorldBlockMarker)
+		sb.WriteString(" ")
+		sb.WriteString(strings.TrimSpace(payload.World.Name))
+		if premise := strings.TrimSpace(payload.World.Premise); premise != "" {
+			sb.WriteString(" — ")
+			sb.WriteString(premise)
+		}
+		if region := strings.TrimSpace(payload.World.Region); region != "" {
+			sb.WriteString("\nTHE REGION: ")
+			sb.WriteString(region)
+		}
+		// The register words are this world's OWN minted vocabulary (world_genesis.v1 specifies mood and
+		// ornament as free vocabulary the author coins, not an enum), which is why they are handed over
+		// verbatim rather than translated into house adjectives.
+		register := make([]string, 0, 2)
+		if mood := strings.TrimSpace(payload.World.Mood); mood != "" {
+			register = append(register, mood)
+		}
+		if ornament := strings.TrimSpace(payload.World.Ornament); ornament != "" {
+			register = append(register, ornament)
+		}
+		if len(register) > 0 {
+			sb.WriteString("\nITS REGISTER: ")
+			sb.WriteString(strings.Join(register, ", "))
+		}
+	}
 
 	// PLACE — where the scene is set, rendered from the location candidate (kind 'location'), with its
 	// Tier-2 description when present. PRESENT — "label [id]" per actor, the VIEWER dropped (Defect A);

@@ -6,6 +6,9 @@
 > one-line pointers here; agent-specific tooling (user-level skills, etc.) is personal
 > convenience, never a repo dependency (proposed register rule D-10).
 
+> **Workspace harness:** `../AGENTS.md` + `../docs/00_workspace/` govern anything crossing a repo
+> boundary. Read it before cross-repo work; this file governs everything inside this repo.
+
 **Mandate — before any work:** read `docs/00_strategy/06_rules_register.md` (**the law**)
 and cite the rule IDs you rely on in your plans and PRs. No code, doc, or config change
 ships without first checking it against the register.
@@ -48,8 +51,13 @@ mistake was made more than once.
 - **Every seat prompt carries the same byte-identical latitude block** (ADR-P022). Adding a seat means
   adding the block; there is no prompt too small.
 - **A style's look lives in `artstyle.go` and nowhere else** (ADR-P023). Clients pick by key.
-- **The live frontend is `dream-weaver-visuals`.** `dreamchat-frontend` is the older repo.
-  `dc-fix/` is a stale git WORKTREE of this repo, not a separate project, and is not deployed.
+- **The live frontend is `dream-weaver-visuals`** (port 5273). It vendors this repo's published
+  schemas byte-identically; `../harness/check.sh contract-drift` is the only gate that sees both
+  sides. **`dreamchat-frontend` is ARCHIVED** (`workspace:ADR-W003`) — the superseded predecessor
+  frontend; no work happens there and port 5173 is retired with it. **`dc-fix/` was removed**
+  2026-08-25: it was a stale detached worktree of this repo, 78 commits behind and 0 ahead. Need an
+  isolated tree? `git worktree add` a fresh one from current `main` — a long-lived worktree is a second
+  copy of the law, and the copy is the one that goes stale.
 - **Canon is written through `apply_event` / `apply_ruled_event`, never directly** (D-1, ADR-009).
   Genesis' `origin='fast_path'` is the one documented exception and it exists because the actors an
   event would reference do not exist yet. Bypassing the gate corrupts replay (I-1) and provenance (I-2).

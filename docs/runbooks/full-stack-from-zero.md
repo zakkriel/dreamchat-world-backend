@@ -11,7 +11,7 @@ The stack:
 | Postgres (world) | `dreamchat-world-backend` | **5432** |
 | World backend API | `dreamchat-world-backend` | **8080** |
 | Image Platform (+ its own Postgres, Redis, MinIO) | `dreamchat-Image-Platform` | **8081** (its Postgres on **5433**) |
-| Frontend | `dreamchat-frontend` | **5173** |
+| Frontend | `dream-weaver-visuals` | **5273** |
 
 The two Postgres instances deliberately differ: the image platform remaps its own
 to 5433 so both stacks run side by side. **The world backend owns 5432.**
@@ -90,7 +90,7 @@ cd core/api
 DATABASE_URL='postgres://postgres:postgres@localhost:5432/dreamchat?sslmode=disable' \
 DREAMCHAT_MODE=debug \
 DREAMCHAT_BRIDGE=fake \
-DREAMCHAT_CORS_ORIGINS=http://localhost:5173 \
+DREAMCHAT_CORS_ORIGINS=http://localhost:5273 \
 go run .
 # → dreamchat world backend (read-only compendium API) on :8080 (debug=true)
 ```
@@ -121,10 +121,14 @@ No `?viewer=` is needed: each world names its own player (Kade here).
 ## 4. Frontend
 
 ```bash
-cd ../dreamchat-frontend
-npm install
-npm run dev          # → http://localhost:5173
+cd ../dream-weaver-visuals
+bun install
+bun run dev --port 5273 --strictPort   # → http://localhost:5273
 ```
+
+`--strictPort` on purpose: a silent fallback port fails every request against the backend's
+exact-match CORS allowlist with no useful message. The predecessor repo `dreamchat-frontend` and its
+`:5173` are archived and retired (`workspace:ADR-W003`).
 
 It reads the API base from its own config (SPEC-020) and must point at
 `http://localhost:8080`. Local dev is same-origin through the Vite proxy, but
@@ -189,7 +193,7 @@ B=http://localhost:8080
 
 curl -s $B/worlds | jq -c '[.worlds[]|{display_name,playable}]'
 curl -s -o /dev/null -w '%{http_code}\n' -X OPTIONS \
-  -H 'Origin: http://localhost:5173' -H 'Access-Control-Request-Method: POST' \
+  -H 'Origin: http://localhost:5273' -H 'Access-Control-Request-Method: POST' \
   $B/worlds/$W/beats                                    # 204
 curl -s "$B/worlds/$W/scene/current" | jq -c '.schema_version'   # "scene_current/2"
 curl -s -N -X POST "$B/worlds/$W/beats" \

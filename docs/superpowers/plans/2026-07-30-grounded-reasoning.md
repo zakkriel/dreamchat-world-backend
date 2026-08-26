@@ -1,5 +1,11 @@
 # Grounded Reasoning Implementation Plan
 
+> **Historical.** This document references the `dreamchat-frontend-play` worktree, which **no
+> longer exists**, and `:5173`, which is retired with the archived `dreamchat-frontend` repo
+> (`workspace:ADR-W003`). The live frontend is `dream-weaver-visuals` on **5273**; the current
+> bring-up is `../stack.sh start` at the workspace root. The steps below are kept as the record of
+> what was executed at the time — do not follow them verbatim.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make the engine compute the facts and feed them to every LLM seat, add a read-only question path, and surface a behind-the-curtain reasoning trace — so no seat reasons ungrounded, the player can ask "how long to the bar?" and get the real answer, and the math is visible while playing.

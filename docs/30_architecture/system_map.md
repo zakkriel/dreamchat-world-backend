@@ -32,16 +32,21 @@ graph LR
 
 - **`dreamchat-world-backend`** — canon, perception, the play loop, world creation, and every
   decision about what is true. The only writer of world state.
-- **`dream-weaver-visuals`** — the surface. Generates its types from the backend's published schemas
-  and vendors them under `contracts/`; `bun run verify:contract` fails when they drift from backend
-  `main`. **This is the live frontend.** `dreamchat-frontend` is the older one and is not the
-  deployment target.
+- **`dream-weaver-visuals`** — the surface, on port **5273**. Generates its types from the backend's
+  published schemas and vendors them under `contracts/`; `bun run verify:contract` fails when they
+  drift from backend `main`, and `../harness/check.sh contract-drift` compares both working trees.
+  **This is the live frontend.** `dreamchat-frontend` is its **ARCHIVED** predecessor
+  (`workspace:ADR-W003`) — it carries an `ARCHIVED.md`, its CI is manual-only, and port 5173 is
+  retired with it.
 - **`dreamchat-Image-Platform`** — generation, storage, delivery, cost, and provider routing. It
   never learns what a world IS; it is handed a subject description and a style.
 
-`dc-fix/` in the workspace is a **git worktree of this repo** (`.git` is a gitdir file, not a
-directory — a `-d` test on it lies), currently detached and not deployed. Do not edit it and do not
-read it as a source of truth; it is stale scratch space.
+`dc-fix/` in the workspace was a **git worktree of this repo** and was **removed on 2026-08-25**
+(`workspace:ADR-W003`) — detached at `ef7f9da`, 78 commits behind `main` and 0 ahead, so nothing was
+stranded. It is worth knowing why it was a hazard: its `.git` was a gitdir *file*, not a directory, so
+a `-d` test on it lied; and its own `AGENTS.md` named the wrong frontend repo and a schema file that
+exists in neither tree. A long-lived worktree is a second copy of the law, and the copy is always the
+one that goes stale. `../harness/check.sh repos` refuses if it comes back.
 
 ---
 
@@ -112,15 +117,18 @@ There are exactly two kinds, and both are enumerated.
 
 | Surface | Where | Count |
 |---|---|---|
-| Seat rulebooks | `core/api/prompts/*.txt`, `//go:embed` into each builder | 8 seats + `system-anthropic.txt` |
+| Seat rulebooks | `core/api/prompts/*.txt`, `//go:embed` into each builder | 9 seats + `system-anthropic.txt` |
 | The image style | `core/api/artstyle.go` — look + latitude + negatives | 1 module |
 
 `system-anthropic.txt` is a driver-level system injection, not a D-13 seat (see `prompts/README.md`).
 It carries the same block because it rides alongside whatever seat assembled the prompt.
 
-Nothing else in THIS repo instructs a model: the 25 published JSON Schemas carry no behavioural
-language, the image platform ships no prompt templates of its own, governance treats `content_class`
-as opaque and never parses it, and neither frontend contains model-facing copy.
+Nothing else in THIS repo instructs a model: the published JSON Schemas under `core/api/schema/`
+carry no behavioural language, the image platform ships no prompt templates of its own, governance
+treats `content_class` as opaque and never parses it, and neither frontend contains model-facing
+copy. (This sentence used to name a count. It said 25 when there were 28, and the seat row above said
+8 when there were 9 — a bare count in a living document is a rot generator, so both now name the
+directory instead.)
 
 The one edge worth knowing: a user's `custom:<prose>` style IS text that becomes prompt material
 (ADR-P023). It is bounded and hashed, never free-form injection into a seat.
@@ -184,8 +192,66 @@ gate, move the row.
 | The style catalogue is served, in order, without leaking prompt prose | `worldartstyleshandler_test.go` |
 | Portals are not drawn | `artcommission_test.go` |
 | A PR branch contains `origin/main` | `.github/workflows/branch-currency.yml` |
+| A PR cites rule IDs, and every id it cites EXISTS | `.github/workflows/citations.yml` → `ci/check_citations.sh`. An invented id is an invented constraint and fails the build. 17 probes in `--selftest` run in CI before the check, so a register reformat goes red rather than silently passing everything. |
+| A PR touching a shape this map describes also amends it | `.github/workflows/pr-contract.yml` job `closes-out` → `ci/check_closeout.sh`. Triggers on `art*.go`, `worldgenesis*`, `worldkickstart*`, `image*`, `prompts/*`, `schemaversion*`, `seatconfig.go`, `schema/*`, `.github/workflows/*` and `ci/check_*`. **This is the gate this row asked for.** |
+| A PR declares the areas its own diff touches | `pr-contract.yml` job `declares-its-areas` → `ci/check_round.sh`, computed from the diff and matched as a set |
+| A round states what it taught, and the file it names actually changed | same job. `Learned:` is required; a claim naming an unchanged file fails |
 | A built world commissions its own art | `genesisart_test.go` |
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
+| Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
+
+**Friction is logged live, by a command, and the gate measures time not prose.**
+`../harness/friction.sh gap|conflict|surprise|decision "…"` appends a timestamped line to the round's
+journal under `../docs/00_workspace/friction/`. The bar is anything unexpected, because an unexpected
+situation is evidence the **input** was incomplete — the spec, the dossier, the error message, the map.
+`../harness/check.sh journal` enforces **timestamp spread**: three entries in one second is a batch,
+and a journal that can be filled in afterwards is the retrospective it replaced. That check failed on
+its own author within a minute of existing.
+
+**A round now records what the harness cost it.** `ci/check_closeout.sh` requires a `Friction:` line
+in the PR body ending **`EARNED`**, **`WASTE`** or **`UNCLEAR`**, and refuses a description with no
+verdict — a complaint is not a verdict, and no rule can die from a complaint. Detail goes in
+`../docs/00_workspace/friction-log.md`; `../harness/check.sh friction` enforces row verdicts and a
+reviewer ruling from the workspace side, where both trees are visible. This exists because every rule
+in this harness traces to a `failure-log.md` row and that log only grows — nothing measured the cost,
+so nothing could ever justify a deletion.
+
+**Format trap, found by this gate refusing its own commit message:** the block reader treats any
+lower-cased `word:` at line start as the next header and stops there, so a verdict written as
+`UNCLEAR: because…` on its own line is truncated away before the verdict check runs. Keep the verdict
+**inline** — `… — UNCLEAR, because …`.
+
+**A green mutation table covers one class of two, and the second one shipped a bug.** A `sed` script
+mutates *source*, so it structurally can only ask "what if the code is wrong". It cannot ask "what if
+the **input** is wrong". SPEC-035 was mutation-tested — 4 mutants, 4 caught — and shipped with
+`witnesses: "<uuid>"` as a bare string committing zero witnesses and no `halt_reason`: the precise
+defect that SPEC was filed to remove, reintroduced inside its own fix. Repaired by
+`20260825140000_witnesses_malformed_is_refusal.sql`, gated by 4 assertions, mutation-tested in both
+directions. `ci/mutate.sh` documents both classes; all seven area briefs carry the four questions to
+ask per field a change reads — **absent · null · wrong type · empty**. See `failure-log.md` #45.
+
+**The mutation experiment now has a runner, and is still honour-system.** `ci/mutate.sh` (7 selftest
+probes) applies named mutants, runs a test command, restores on any exit, and fails when a mutant
+survives, when a sed script matches nothing, or when the baseline is already red. What it does **not**
+have is a CI job: nothing forces a round to run it, because the mutants worth trying depend on the
+change and cannot be enumerated in advance. So it stays in the not-enforced table below — but the
+excuse "there was no runner" is gone, and `round-protocol.md` §7 plus all seven area briefs now name
+the command.
+
+**Gate ORDER is load-bearing, and it is not obvious.** Learned in the SPEC-034 round, where both
+of these were nearly reported as regressions the author had caused:
+
+- `make schema-check` leaves the database **migrated but unseeded**. Running `make schema-contract`
+  straight after it fails with `invalid input syntax for type uuid: ""` — a seed lookup returning
+  empty, not a contract breach.
+- `make schema-contract` **mutates the world** (`ci/gen_payloads.sh` writes transcript rows to capture
+  payloads). Running `make test` straight after it reddens seed-dependent suites — the shared
+  stateful-singleton hazard, from the one direction the docs did not warn about.
+
+**So: `make reset` between them, or run them in separate sittings.** The safe order is
+`make reset && make test`, then `make reset && make schema-check`, then `make reset && make
+schema-contract`. A red gate right after another gate is a sequencing artefact until proven otherwise —
+check by re-running it on a fresh `make reset` **before** believing it.
 
 ### Not enforced — nothing stops you breaking these
 
@@ -193,10 +259,9 @@ gate, move the row.
 |---|---|
 | A seat's production config can serve its contract (ADR-P024) | boot check on resolved seat params, or `make doctor` against a committed required-env manifest |
 | Mutation-test the guard you wrote | nothing forces the revert; the discipline is in the pre-flight only |
-| Amend this map in the PR that changes its shape | a CI check that a PR touching `art*.go`, `worldgenesis*`, `image*`, `prompts/`, `schemaversion*` also touches `system_map.md` |
 | The frontend must not hardcode the style catalogue | a contract test in `dream-weaver-visuals` |
 | New creation paths must not call the manual image triggers | a grep gate limiting who may call `fillScenes`/`fillPortraits` (the KICK is now tested; the ban on hand-calling is not) |
-| Cite register rule IDs in plans and PRs | a PR-body check |
+| A schema change in this repo moves its consumer in the same round | Nothing in THIS repo's CI. The workspace harness closes it from outside — `../harness/check.sh contract-drift` byte-compares `core/api/schema/` against `dream-weaver-visuals/contracts/`, and `pin-vendored` fails on a frontend pin with no vendored schema behind it. But that gate runs on a developer's two working trees, **not on a backend PR**, so a schema change merged here alone is still green here. Closing it needs a consumer-registry check in this repo's CI, or a repository-dispatch to the frontend. Decision: `workspace:ADR-W004`. |
 
 Adding any row from the second table to the first is always in scope and never needs permission.
 

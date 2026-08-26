@@ -1,0 +1,90 @@
+name: pr-contract
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+# AGENTS.md has opened with the same mandate since it was written: read the rules register and CITE
+# the rule IDs you rely on. system_map.md §7 has listed the missing gate as "a PR-body check" for
+# just as long. Prose loses to green CI, so it is a gate.
+#
+# The teeth are not "cite something" — that is a keyword tax anyone can pay in a second. The teeth are
+# that EVERY cited id must RESOLVE against the register, the ADR directories, or the spec ledger. The
+# register's own standing rule is "Do not invent constraints. If you cannot cite a rule ID, an ADR, or
+# a line of code, you do not have a constraint — you have a preference." An invented id is an invented
+# constraint, and it now fails the build.
+#
+# `types: [edited]` on purpose: the body is editable after the fact, so without it the check would be
+# a one-time toll rather than a standing condition.
+#
+# Deliberately NOT asserted: that the citation is APPOSITE. No script can tell whether D-7 is the
+# right rule for your change. That judgement belongs to a reviewer — this gate exists so the reviewer
+# has something to judge.
+permissions:
+  contents: read
+jobs:
+  cites-the-law:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Prove the check can fail
+        # A gate you have not tried to fool is not a gate. The first version of branch-currency.yml
+        # reported SUCCESS on a branch cut twelve commits behind main, because it checked out the
+        # merge ref. So the selftest runs first, in CI, every time: 17 probes asserting each failure
+        # mode fires and each happy path passes. If the register's format ever changes underneath the
+        # resolvers, this step goes red BEFORE the check starts silently passing everything.
+        run: ci/check_citations.sh --selftest
+      - name: The PR body must cite the law it relied on
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+        run: printf '%s' "$BODY" | ci/check_citations.sh -
+
+  declares-its-areas:
+    # THE REGULATION. `harness/check.sh areas` proves every path has an owner; this proves the AUTHOR
+    # knew who it was. Areas are computed from the diff and must match the body as a set, so an area
+    # cannot be touched quietly — the diff names it whether the author does or not.
+    #
+    # `Reviewed-by` cannot be verified; no script knows whether a review happened. It makes the claim
+    # explicit and attributable, which is strictly better than the previous state where skipping the
+    # reviewer left no trace at all. Same reasoning as the `Rules: none` waiver.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          # The PR head, not the merge ref — same reason branch-currency.yml does it. The merge ref's
+          # diff against base is not the diff the author wrote.
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Prove the check can fail
+        run: ci/check_round.sh --selftest
+      - name: The PR body must declare the areas its diff touches
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          printf '%s' "$BODY" > /tmp/pr-body
+          ci/check_round.sh /tmp/pr-body "$BASE"
+
+  closes-out:
+    # system_map.md §7 has listed this gate as missing since the map was written:
+    #   "Amend this map in the PR that changes its shape | a CI check that a PR touching art*.go,
+    #    worldgenesis*, image*, prompts/, schemaversion* also touches system_map.md"
+    # and round-protocol.md §6 said "it is on you, and it is listed as an open gate." This is it.
+    #
+    # Plus the half nothing anywhere gated: a round must state what it TAUGHT, and any file it claims
+    # the lesson landed in must actually be in the diff. A round that finds a trap and does not write
+    # it down leaves the next reviewer exactly as ignorant as this one was.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          ref: ${{ github.event.pull_request.head.sha }}
+      - name: Prove the check can fail
+        run: ci/check_closeout.sh --selftest
+      - name: Docs the round invalidated must move with it, and the round must say what it taught
+        env:
+          BODY: ${{ github.event.pull_request.body }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          printf '%s' "$BODY" > /tmp/pr-body
+          ci/check_closeout.sh /tmp/pr-body "$BASE"

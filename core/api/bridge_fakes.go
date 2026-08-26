@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P018 — the deterministic Driver stand-ins; a fake must report a CapabilitySet at least as strict as the real driver's (D-13).
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"context"
 	"encoding/json"

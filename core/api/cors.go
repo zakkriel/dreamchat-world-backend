@@ -8,13 +8,13 @@ import (
 	"sync"
 )
 
-// SPEC-021 — CORS for the frontend origin. The FE (dreamchat-frontend) and this API are separate
-// services on separate origins (Vite dev on :5173 locally, separate Railway services deployed), so
+// SPEC-021 — CORS for the frontend origin. The FE (`dream-weaver-visuals`) and this API are separate
+// services on separate origins (Vite dev on :5273 locally, separate Railway services deployed), so
 // without these headers a browser cannot call this API at all: a preflighted POST /worlds/{w}/beats
 // never reaches the router, and every cross-origin GET is discarded by the browser after the fact.
 //
 // The allowlist comes from DREAMCHAT_CORS_ORIGINS alone — a comma-separated list of full origins
-// ("http://localhost:5173,https://app.example.com"), each matched EXACTLY — plus wildcard-subdomain
+// ("http://localhost:5273,https://app.example.com"), each matched EXACTLY — plus wildcard-subdomain
 // entries ("https://*.lovable.app"), which match any origin of that scheme whose host is a
 // subdomain of the named domain. The wildcards exist for hosting whose preview origins rotate per
 // build (Lovable mints id-preview-<hash>--<project>.lovable.app), where an exact allowlist can

@@ -335,7 +335,7 @@ hand-set coordinates + a flat default speed and needs none of the deferred machi
 ## FE architecture seams (A3, 2026-06-19 — chunk-6 pre-brainstorm)
 SPEC-019…024 are the small, concrete seams owed by the FE rendering + theme architecture
 (D-14 / D-15 / ADR-P019). Most fold into **Chunk 6** (cheap seams + shell); none touches the frozen
-engine canon, an invariant, or the Master DDL. Cross-repo items (FE = `dreamchat-frontend`, plus a
+engine canon, an invariant, or the Master DDL. Cross-repo items (FE = `dream-weaver-visuals`, plus a
 small BE config) are flagged.
 
 ## SPEC-019 — World theme-token field
@@ -355,7 +355,7 @@ evolves as module/world JSONB-style data, so it carries `schema_version` + runti
 The FE must reach the backend through a **single configurable base** (config/env var) at the existing
 request chokepoint — required because FE and BE are separate Railway services (cross-origin). This is
 also the only seam that keeps the Electron door open (SPEC-024).
-- **Owner:** Chunk 6. **Cross-repo:** FE (`dreamchat-frontend`).
+- **Owner:** Chunk 6. **Cross-repo:** FE (`dream-weaver-visuals`).
 - **Expected outcome:** one config seam through the FE request chokepoint; no hardcoded backend URL.
 
 ## SPEC-021 — BE CORS allowing the FE origin
@@ -370,7 +370,7 @@ Small backend config; pairs with SPEC-020.
   all. Allowlist is exact-match from **`DREAMCHAT_CORS_ORIGINS`** (comma-separated full origins);
   unset ⇒ CORS off and logged, `*` and scheme-less entries refuse to boot.
 - **Contract, confirmed with the FE (2026-08-07):** local dev is **same-origin through the Vite
-  proxy**, so no localhost origin is baked in anywhere — `http://localhost:5173` belongs in dev/staging
+  proxy**, so no localhost origin is baked in anywhere — `http://localhost:5273` belongs in dev/staging
   config only, never in prod. Methods `GET, POST, OPTIONS`; allowed request header `Content-Type`
   only; no `Expose-Headers`. **No credentials** — the FE sends no cookies and no `Authorization` (the
   trace key is a query param), so `Access-Control-Allow-Credentials` is absent. The origin is echoed
@@ -381,14 +381,14 @@ Small backend config; pairs with SPEC-020.
 ## SPEC-022 — Dynamic multi-world id
 No hardcoded world constant — **world id is runtime state** (multi-world from the start). Pairs with
 the viewer-identity seam (`?viewer=` today; real session later — B1/auth).
-- **Owner:** Chunk 6. **Cross-repo:** FE (`dreamchat-frontend`).
+- **Owner:** Chunk 6. **Cross-repo:** FE (`dream-weaver-visuals`).
 - **Expected outcome:** world id flows as runtime state through the FE; no hardcoded world constant.
 
 ## SPEC-023 — App shell with named slots (+ Aux docked ↔ full-screen)
 An **app shell of named slots** (left rail, top bar, scene, right Aux, bottom input) — the neutral
 skeleton D-15 names and the slot model modules compose into (D-2). The **Aux slot supports docked ↔
 full-screen** via **one responsive component** (bleed-out), not two implementations.
-- **Owner:** Chunk 6.  **Cross-repo:** FE (`dreamchat-frontend`).
+- **Owner:** Chunk 6.  **Cross-repo:** FE (`dream-weaver-visuals`).
 - **Expected outcome:** named-slot shell + one responsive Aux component covering docked and
   full-screen; chunk-6 Aux gate = **Current + Known** only (Inspect/Intent land chunk 7).
 
@@ -469,7 +469,8 @@ payload — an unreachable world is **absent, not redacted** (B-1, I-3) — plus
 stub, `MASTER_INDEX.md:124`); and a **ruling** on whether `POST /worlds` exists or world creation is
 declared seed/tooling-only for now (`MASTER_INDEX.md:125` lists B2 — World creation — as a planned
 stub). A world list is a directory, not canon: no world *state* on this surface.
-- **Source:** frontend review pass, `dreamchat-frontend` @ `main`; full context in
+- **Source:** frontend review pass against `dreamchat-frontend` @ `main` — the predecessor repo,
+  since archived and superseded by `dream-weaver-visuals` (`workspace:ADR-W003`); full context in
   `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §1.
 - **Owner:** Chunk 6 (pairs with SPEC-019/020/021/022). **Cross-repo:** BE (this repo) + FE.
 - **Expected outcome:** a `GET /worlds` directory payload + a world-scoped viewer seam + a recorded
@@ -764,7 +765,7 @@ gate reliably refuses it.
 
 ---
 
-## SPEC-034 — `ObjectRelocated` generates no perception, so a handled object is invisible to everyone
+## SPEC-034 — `ObjectRelocated` generates no perception, so a handled object is invisible to everyone (LANDED 2026-08-25, PARTIAL)
 **Raised by:** frontend carrying work, 2026-08-09 — "a carried artifact links to an Artifact page
 that 404s". The report is real and reproducible on the seed. The cause it assumed is not.
 
@@ -825,6 +826,94 @@ around.
 
 **Firing trigger:** fired — the FE's carrying overlay reaches it today, and the first in-play
 handover makes it permanent.
+
+**LANDED 2026-08-25 — migration `20260825120000_object_relocated_perceptions.sql`, suite
+`122_object_relocated_perceptions_test.sql`.** Holders only: the instigator and an actor destination,
+both `direct`, with the OBJECT named as a perception subject — which was the actual defect, since
+`fn_entity_visible` reads subjects and `ObjectRelocated` records only an `instigator` participant.
+
+Three things measured while building it, all of which changed the implementation:
+
+1. **`canon_event.payload` is EMPTY for a committed `ObjectRelocated`** (`{}`). The object and
+   destination are not in the event; they are in the `state_mutation` the commit writes —
+   `entity_id = <object>`, `attribute_path = 'attrs.contained_by'`, `new_value = <destination>`. The
+   first draft read `ev.payload` and silently produced **zero** perceptions: a fix that applied
+   cleanly, passed `make migrate`, and changed nothing. Found only by running it.
+2. **`dest_kind` is unenforced.** `beat_chain.v2` marks it required but the gate only verifies the ids
+   exist, and `113_object_relocated_test.sql` commits relocations without it. The arm reads
+   `entity_registry.entity_kind` instead.
+3. **Zero `ObjectRelocated` events exist in the play world**, so this arm cannot repair the seeded
+   Kade/Sealed-Note row — it prevents every FUTURE handover. Converting seeded carry state into events
+   remains out of scope and unfiled.
+
+**Still open — the witness half.** The founder ruled 2026-08-25: *"holders and co-present as long as
+they can see it — just because they were there doesn't mean they saw it."* The second half is
+unimplementable today and the reason is recorded rather than worked around → **SPEC-035**.
+
+## SPEC-035 — `ObjectRelocated` records no witnesses, so "who saw it" cannot be answered (LANDED 2026-08-25)
+
+**Raised by:** the SPEC-034 implementation, 2026-08-25, against an explicit founder ruling that
+co-presence is not perception.
+
+**Measured.** Three independent facts, none of which is a gap in the perception rule:
+- **No concealment or visibility signal exists.** `ObjectRelocated`'s two founder-locked dimensions are
+  **volume** (blocks) and **weight** (consequences). Neither is epistemic.
+- **Actors are AT a place, not positioned within it** (`actor_state.attrs.location_id`), so co-presence
+  is place-level and binary. There is no sub-place geometry with which to answer "could they see it".
+- **This world's pattern for who perceived something is that the EVENT SAYS SO.** `Communicated`
+  carries a required, singular `listener_id`. `ObjectRelocated` carries no witness field at all.
+
+**Why this is the urgent half, not the optional one.** A perception rule can be widened whenever the
+ruling changes. An event payload cannot be back-filled: `replay_0A()` reproduces domain-equivalent
+**projection** state (`90_replay_test.sql:5`), not perceptions, and no rule can recover who was
+watching if the event never recorded it. Every handover committed before a witness field exists is
+permanently unwitnessable. **The contract change is time-sensitive in a way the rule was not.**
+
+**Precedent for the shape.** SPEC-033's correction was exactly this: stop inferring perception from the
+referee's account, read what the payload actually states (`spoken`). A witness field is the same move.
+
+**What it will touch, and why it is its own round:** the event contract (`beat_chain.v2`'s closed
+vocabulary), the seats that emit relocations, `apply_event`/`apply_ruled_event`, and the SPEC-034 arm.
+That crosses play-loop, canon-recording, perception and contracts-and-platform — at or past the point
+where the workspace's own guidance says a change is really two or three changes.
+
+**No mechanism is proposed here** (anti-drift, `implementation_playbook_superpowers.md:90`): whether
+witnessing is a payload list, a derived co-presence set with an opt-out, or an attribute-perceivability
+question owned by **SPEC-016**, is undecided. The gap is measured, not invented around.
+
+**Firing trigger:** fired the moment SPEC-034 landed — `122_object_relocated_perceptions_test.sql`
+asserts that a third actor perceives nothing, and that assertion is the thing SPEC-035 must change
+deliberately rather than by drift.
+
+**LANDED 2026-08-25** — `20260825130000_object_relocated_witnesses.sql`, suite
+`core/db/tests/123_object_relocated_witnesses_test.sql` (10 assertions).
+
+Reproduced before implementation, on the seeded world: Kade hands the note to Mara with Jonas
+co-present and `witnesses: [jonas]` passed in. The event recorded `instigator` only, Jonas held zero
+perceptions, and **the `witnesses` array was silently discarded** — `payload` came back `{}` with no
+`halt_reason`. The caller could already name witnesses; the engine dropped them without a word.
+
+Shape, per the founder ruling of 2026-08-25 ("holders and co-present as long as they can see it — just
+because they were there doesn't mean they saw it"): the event **names** its witnesses as
+`event_participant.role_qualifier = 'witness'`, exactly as `Communicated` names its `listener`s (B-2),
+and `generate_perceptions` reads them back. Co-presence is enforced as **necessary but not
+sufficient** — the caller supplies sufficiency by naming, `apply_event` refuses anyone who was not
+there (`gate_reject`), byte-for-byte the listener gate's shape. No new column and no payload field:
+the payload is where SPEC-034 proved data goes to die.
+
+Deliberately unchanged: SPEC-034's suite asserts "a third actor the event does not name perceives
+nothing," and SPEC-035 did **not** have to weaken it — because witnesses are named, not inferred from
+co-presence. That is the ruling, mechanised. Test 123's tenth assertion pins it from the other side.
+
+Mutation-verified with `ci/mutate.sh` — 4 mutants, 4 caught: witnesses never perceive, co-presence
+gate defanged, holders recordable as their own witness, witnesses never recorded.
+
+**Still open, and named rather than implied:** concealment. There is no visibility or concealment
+signal anywhere in the schema (`ObjectRelocated`'s two founder-locked dimensions are volume and
+weight; the 18 `secret` hits in `schema.sql` are Mara's *perception* secret, not a mechanism). The
+PRDs' flagship perception example — "You saw Seren pass a sealed note to a cloaked figure" — is a
+*witnessed handover*, so it is now expressible. A *concealed* one still is not: it would shorten the
+list the caller passes, which needs no engine change, but nothing yet computes that list.
 
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in

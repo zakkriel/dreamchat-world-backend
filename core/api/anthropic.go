@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P018 — the production driver; provider shaping stays in the bridge layer and never reaches core/db (D-13).
+// Change what this file decides, and that ADR changes with it (D-9).
+
 // anthropicDriver — Claude via the Anthropic Messages API, the production default driver. STRUCTURED
 // requests use a single tool whose input_schema is the caller's schema, FORCED via tool_choice — the
 // model's tool_use input is schema-constrained BY CONSTRUCTION (the decompose leash, generation-time;

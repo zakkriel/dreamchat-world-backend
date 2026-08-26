@@ -1,0 +1,222 @@
+# The area map — machine-readable. THE source; there is no second copy.
+#
+# WHY IT LIVES IN THE BACKEND. It partitions the backend, and this repo's CI must read it: ci/
+# check_round.sh computes which areas a PR touches from its diff and requires the PR body to declare
+# them. A map in the workspace repo could not be read by a runner that only checks out this one, so
+# the round declaration could never be a gate — and prose loses to green CI.
+#
+# The prose that explains it — why areas are not seams, area != module, concepts that cross areas,
+# and who reviews the surfaces that have no areas — is the workspace registry,
+# ../../../docs/00_workspace/areas.md. That file owns the reasoning; this file owns the data.
+# `harness/check.sh areas` parses THIS file, so the two cannot drift.
+#
+# Format: an unindented line opens an area; indented lines are globs relative to this repo's root.
+# `!unowned` lists paths that genuinely belong to no area, each with a reason, so an exclusion is a
+# visible statement rather than a hole. A path matching no glob FAILS the gate, on purpose: the
+# routing map this replaces covered 231 of 322 files and failed by being quiet.
+
+world-genesis
+  core/api/kickstartstate*
+  core/api/placeauthor*
+  core/api/prompts/place_author.txt
+  core/api/prompts/world_actor.txt
+  core/api/prompts/world_genesis.txt
+  core/api/prompts/world_interview.txt
+  core/api/prompts/world_kickstart.txt
+  core/api/schema/place_author*
+  core/api/schema/world_actor*
+  core/api/schema/world_created*
+  core/api/schema/world_directory*
+  core/api/schema/world_genesis*
+  core/api/schema/world_interview*
+  core/api/schema/world_kickstart*
+  core/api/schema/world_refreshed*
+  core/api/worldactor*
+  core/api/worldgenesis*
+  core/api/worldinterview*
+  core/api/worldkickstart*
+  core/api/worldrefresh*
+  core/api/worldshandler*
+  core/api/worldturn*
+  core/db/seeds/*
+  core/db/tests/100_spine_seeds*
+  core/db/tests/101_personality_world*
+  core/db/tests/109_drowned_lantern_seed*
+  core/db/tests/120_world_template*
+  core/db/tests/27_world_directory*
+  core/db/tests/28_world_taglines*
+canon-recording
+  core/api/ledger*
+  core/db/migrations/*
+  core/db/schema.sql
+  core/db/tests/00_smoke*
+  core/db/tests/102_apply_event*
+  core/db/tests/104_apply_ruled_event*
+  core/db/tests/10_schema*
+  core/db/tests/118_entity_created*
+  core/db/tests/20_append_only*
+  core/db/tests/23_chunk4_invariants*
+  core/db/tests/25_delete_guard*
+  core/db/tests/30_apply_mutation*
+  core/db/tests/50_provenance*
+  core/db/tests/60_permissions*
+  core/db/tests/70_determinism_guards*
+  core/db/tests/80_golden_projection*
+  core/db/tests/85_causal_acyclicity*
+  core/db/tests/90_replay*
+  core/db/tests/checks_0A.sql
+  core/db/tests/demo_cycle_0B.sql
+  core/db/tests/expected_projections_0A.csv
+  core/db/tests/helpers.sql
+  core/db/tests/replay_0A.sql
+perception
+  core/api/actorpage*
+  core/api/carryinghandler*
+  core/api/compendium*
+  core/api/indexhandler*
+  core/api/namingwall*
+  core/api/pagehandler*
+  core/api/schema/actor_page*
+  core/api/schema/artifact_page*
+  core/api/schema/carrying*
+  core/api/schema/compendium_index*
+  core/api/schema/location_page*
+  core/api/schema/timeline*
+  core/api/schema/transcript*
+  core/api/timelinehandler*
+  core/api/transcript*
+  core/api/wall_test.go
+  core/db/tests/106_perception_subject*
+  core/db/tests/119_fact_sheet*
+  core/db/tests/121_name_token_wall*
+  core/db/tests/122_object_relocated_perceptions*
+  core/db/tests/123_object_relocated_witnesses*
+  core/db/tests/16_chunk4_seed*
+  core/db/tests/17_entity_visible*
+  core/db/tests/18_compendium_index*
+  core/db/tests/19_actor_page*
+  core/db/tests/1[24]_perception_subject*
+  core/db/tests/20_location_page*
+  core/db/tests/21_artifact_page*
+  core/db/tests/22_timeline*
+  core/db/tests/24_compendium_lenses*
+  core/db/tests/25_carrying*
+  core/db/tests/25_perception_naming_wall*
+  core/db/tests/26_in_world_label*
+  core/db/tests/26_knowledge_grouping*
+  core/db/tests/27_distinguishing_labels*
+  core/db/tests/27_transcript*
+  core/db/tests/28_spoken_words*
+  core/db/tests/29_article_aware*
+  core/db/tests/2[67]_hearing_teaches*
+  core/db/tests/4*perception*
+  core/db/tests/42_visible*
+  core/db/tests/43_perceived_name*
+  core/db/tests/44_display_name*
+  core/db/tests/45_actor_page*
+  core/db/tests/46_wall_clause*
+  core/db/tests/97_perception_determinism*
+  core/db/tests/9[34]_generate_perceptions*
+space-and-journey
+  core/api/journey*
+  core/api/mint*
+  core/db/tests/102_duration_class*
+  core/db/tests/108_held_outcome*
+  core/db/tests/110_fn_distance*
+  core/db/tests/111_fn_move_duration*
+  core/db/tests/112_fn_place_at*
+  core/db/tests/113_extent_class*
+  core/db/tests/113_object_relocated*
+  core/db/tests/114_fn_world_now*
+  core/db/tests/114_portal_traversal*
+  core/db/tests/115_journey_legs*
+  core/db/tests/115_mint_persistence*
+  core/db/tests/116_drowned_lantern_space*
+  core/db/tests/117_move_target*
+  core/db/tests/99_location_ids*
+  core/db/tests/9[12]_fn_*
+play-loop
+  core/api/ruling*
+  core/api/schema/ruling*
+  core/api/verdict*
+  core/api/addressed_test.go
+  core/api/anthropic*
+  core/api/batchpath_test.go
+  core/api/beat*
+  core/api/bridge*
+  core/api/cognition*
+  core/api/costsink*
+  core/api/narrat*
+  core/api/openaicompat*
+  core/api/orchestrator*
+  core/api/playervoice*
+  core/api/pressure*
+  core/api/prompts/README.md
+  core/api/prompts/cognition.txt
+  core/api/prompts/decompose.txt
+  core/api/prompts/narrate.txt
+  core/api/prompts/resolve.txt
+  core/api/prompts/system-anthropic.txt
+  core/api/query_test.go
+  core/api/raindrop*
+  core/api/reaction*
+  core/api/resolve_factsheet_test.go
+  core/api/resolveprompt*
+  core/api/scenehandler*
+  core/api/schema/beat_*
+  core/api/schema/narration*
+  core/api/schema/npc_attempts*
+  core/api/schema/scene_current*
+  core/api/sse*
+  core/api/station_[def]_exit_test.go
+  core/api/streamquote_test.go
+  core/api/telegraph_test.go
+  core/api/tension*
+  core/api/tier1*
+  core/api/trace*
+  core/api/worldstatement*
+  core/db/tests/103_world_pressure*
+  core/db/tests/104_world_slice*
+  core/db/tests/10[357]_*
+  core/db/tests/116_watch_horizon*
+  core/db/tests/95_apply_beat*
+  core/db/tests/96_apply_beat*
+  core/db/tests/98_play_loop_invariants*
+art-and-assets
+  core/api/artcommission*
+  core/api/artstyle*
+  core/api/genesisart_test.go
+  core/api/imageclient*
+  core/api/imagehandler*
+  core/api/imagelive*
+  core/api/schema/art_styles*
+  core/api/schema/image_regenerate*
+  core/api/worldartstyleshandler*
+contracts-and-platform
+  .dockerignore
+  .env.example
+  .github/**
+  .gitignore
+  AGENTS.md
+  CLAUDE.md
+  Dockerfile
+  Makefile
+  README.md
+  ci/*
+  core/api/auth*
+  core/api/cors*
+  core/api/go.*
+  core/api/governance_test.go
+  core/api/main*
+  core/api/migrations.txt
+  core/api/promptlatitude_test.go
+  core/api/promptnames_test.go
+  core/api/schema_payloads_test.go
+  core/api/schemaversion*
+  core/api/seatconfig*
+  core/api/seatprompt_test.go
+  core/api/viewer*
+  core/db/Dockerfile
+  docker-compose.yml
+!unowned
+  Image Jun 5, 2026, 02_50_58 PM (1).png   # a screenshot committed to the repo root by accident; no area owns it and it should be deleted

@@ -1,5 +1,9 @@
 # DreamChat Implementation Playbook — Superpowers Edition
 
+> **Repo names below are as of writing.** The frontend is now `dream-weaver-visuals` on port
+> **5273**; `dreamchat-frontend` is its ARCHIVED predecessor and 5173 is retired with it
+> (`workspace:ADR-W003`). The chunk ladder itself is unaffected — only the repo name moved.
+
 **Status:** v1 — 2026-06-10 | Companion to `mvp_slice_and_bridge.md`
 **Premise:** the doc set is the build contract. Superpowers' brainstorm phase is ~80% already done — your specs are the brainstorm outputs. The loop per chunk is therefore: *short targeted brainstorm (edges only) → write-plan from the spec → execute-plan with TDD → gate check → next chunk.* Nothing advances past a red gate.
 

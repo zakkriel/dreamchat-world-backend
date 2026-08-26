@@ -1,5 +1,8 @@
 package main
 
+// Governed-by: ADR-P018 — seat semantics live at the call site; only provider shaping belongs in the driver (D-13).
+// Change what this file decides, and that ADR changes with it (D-9).
+
 import (
 	"context"
 	_ "embed"
