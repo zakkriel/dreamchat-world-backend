@@ -1,5 +1,17 @@
 package main
 
+// Governed-by: D-1 — nothing mutates canon directly; this function IS the validation step the Core
+// runs before apply_event commits anything (orchestrator.go:1535 is its only caller, and cites D-1).
+// Also SPEC-015 / ADR-009 — the closed vocabulary in allowedRuledEventTypes below is enforced at token
+// generation by the structured-output leash; THIS is the post-hoc belt, and D-13 forbids assuming the
+// driver honoured its schema. Also B-6 — Truth and Appearance are separate fields on purpose:
+// contradiction lives in perception, never in canon, so a missing truth would make the lie the record.
+//
+// Derived 2026-08-26 from: this file's only caller, its own allowedRuledEventTypes set, and its
+// Truth/Appearance split. It cited nothing before, and every structural guard in it survived mutation
+// for fifteen days after QA-SPAN-2026-08-11 reported them — see ruling_v2_guards_test.go.
+// Change what this file decides and those decisions change with it (D-9).
+
 import (
 	_ "embed"
 	"encoding/json"

@@ -200,6 +200,19 @@ gate, move the row.
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
+**The decisions now live in the files, and a ratchet stops that falling back.** Measured 2026-08-26:
+11 of 59 non-test files under `core/api/` declared what governed them, and `ruling.go` — the
+LLM-to-canon boundary — named nothing. Now 37 of 59, with `../harness/check.sh governed-by` failing if
+coverage drops below a floor recorded in `GOVERNED_FLOOR` and naming the files still missing.
+
+The reasoning matters more than the number. This project holds **96 decisions indexed by identifier**,
+and an agent arrives with a *question*. It cannot find the decision, so it decides locally — which is
+the most expensive failure mode here and an **indexing** problem, not a discipline one. Every other
+gate in this repo fires at PR time, by which point the wrong shape is written and its author is
+invested in it. A `Governed-by:` line is the only lever that acts *before* a line is written, because
+it is inside the file the agent already opened. `../harness/brief.sh <path>` is the same information on
+demand, and `../docs/00_workspace/closed-questions.md` is the index by question rather than by id.
+
 **Friction is logged live, by a command, and the gate measures time not prose.**
 `../harness/friction.sh gap|conflict|surprise|decision "…"` appends a timestamped line to the round's
 journal under `../docs/00_workspace/friction/`. The bar is anything unexpected, because an unexpected

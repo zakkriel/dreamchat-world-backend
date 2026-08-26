@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: ADR-P018 — model-agnostic per-seat LLM routing. Also D-13.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 // openAICompatDriver — a generic OpenAI-compatible chat/completions driver. Any provider that speaks
 // the OpenAI chat/completions wire format (DeepInfra, DeepSeek, OpenRouter, self-hosted vLLM, etc.)
 // can serve a seat via env config — model-agnostic per-seat routing (D-13/ADR-P018).

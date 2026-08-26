@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: ADR-P017 — Go is the backend language.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"net/http"
 

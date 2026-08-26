@@ -9,6 +9,19 @@
 > **Workspace harness:** `../AGENTS.md` + `../docs/00_workspace/` govern anything crossing a repo
 > boundary. Read it before cross-repo work; this file governs everything inside this repo.
 
+**FIRST MOVE, before you write a line — not a courtesy:**
+
+```bash
+../harness/brief.sh core/api/<the file you are about to change>
+../harness/brief.sh --ask "<your question, in your own words>"
+```
+
+It prints the owning area, the decisions that govern that path, what has already gone wrong there, and
+the closed questions it touches. Every other gate here fires at PR time, which is too late: by then the
+wrong shape is written. `../docs/00_workspace/closed-questions.md` is the same index in file form — if
+your question is answered there it is **CLOSED**, and disagreeing with it is a new ADR, not a local
+exception.
+
 **Mandate — before any work:** read `docs/00_strategy/06_rules_register.md` (**the law**)
 and cite the rule IDs you rely on in your plans and PRs. No code, doc, or config change
 ships without first checking it against the register.

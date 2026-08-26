@@ -1,5 +1,14 @@
 package main
 
+// Governed-by: D-1 — a verdict is a COMPUTED judgement, never a stored column. It is the arithmetic
+// the Core runs at the moment of asking; caching one is D-11 (coupled quantities are derived, never
+// stored) and a cached judgement rots.
+//
+// Derived 2026-08-26 from FINAL-action-contracts.md §"Second core rule" — "state stores MEASUREMENTS;
+// verdicts are COMPUTED, never stored" — and from this file being a self-contained helper with no
+// persistence. It cited nothing before.
+// Change what this file decides and those decisions change with it (D-9).
+
 import (
 	"encoding/json"
 	"strconv"

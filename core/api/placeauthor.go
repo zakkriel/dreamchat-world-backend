@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-1 — nothing mutates canon directly — proposals only, the Core commits.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"context"
 	_ "embed"
@@ -107,9 +111,9 @@ func (o *Orchestrator) authorPlaceForLeg(ctx context.Context, j *Journey, fromID
 
 	newAttrs, err := json.Marshal(map[string]any{
 		"parent_location_id": j.FrameID,
-		"coordinates":         json.RawMessage(point),
-		"area":                json.RawMessage(area),
-		"kind":                kind,
+		"coordinates":        json.RawMessage(point),
+		"area":               json.RawMessage(area),
+		"kind":               kind,
 	})
 	if err != nil {
 		return false, fmt.Errorf("authorPlaceForLeg: attrs: %w", err)
