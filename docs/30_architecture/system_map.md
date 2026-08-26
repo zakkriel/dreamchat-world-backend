@@ -200,6 +200,14 @@ gate, move the row.
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
+**Friction is logged live, by a command, and the gate measures time not prose.**
+`../harness/friction.sh gap|conflict|surprise|decision "…"` appends a timestamped line to the round's
+journal under `../docs/00_workspace/friction/`. The bar is anything unexpected, because an unexpected
+situation is evidence the **input** was incomplete — the spec, the dossier, the error message, the map.
+`../harness/check.sh journal` enforces **timestamp spread**: three entries in one second is a batch,
+and a journal that can be filled in afterwards is the retrospective it replaced. That check failed on
+its own author within a minute of existing.
+
 **A round now records what the harness cost it.** `ci/check_closeout.sh` requires a `Friction:` line
 in the PR body ending **`EARNED`**, **`WASTE`** or **`UNCLEAR`**, and refuses a description with no
 verdict — a complaint is not a verdict, and no rule can die from a complaint. Detail goes in
