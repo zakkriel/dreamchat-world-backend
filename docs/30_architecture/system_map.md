@@ -244,6 +244,13 @@ of these were nearly reported as regressions the author had caused:
 - `make schema-check` leaves the database **migrated but unseeded**. Running `make schema-contract`
   straight after it fails with `invalid input syntax for type uuid: ""` — a seed lookup returning
   empty, not a contract breach.
+- **`go test ./...` in `core/api` mutates the world too, and is not idempotent against itself.**
+  `pressure_test.go` reads `world_eruption` for a seeded world/tier and fails with `chance = 1, want
+  exactly 0.70 … (run make reset)` once a prior run has drained it. Two consequences, both hit on
+  2026-08-26: running the Go suite twice turns it red on its own, and running it before `make test`
+  turns **pgTAP** red. A mutation experiment over Go tests therefore needs `make reset` inside the test
+  command, or every verdict after the first few is "caught because the DB was dirty" — which is not a
+  verdict at all.
 - `make schema-contract` **mutates the world** (`ci/gen_payloads.sh` writes transcript rows to capture
   payloads). Running `make test` straight after it reddens seed-dependent suites — the shared
   stateful-singleton hazard, from the one direction the docs did not warn about.

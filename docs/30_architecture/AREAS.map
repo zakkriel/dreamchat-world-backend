@@ -211,6 +211,7 @@ contracts-and-platform
   core/api/migrations.txt
   core/api/promptlatitude_test.go
   core/api/promptnames_test.go
+  core/api/router_coverage_test.go
   core/api/schema_payloads_test.go
   core/api/schemaversion*
   core/api/seatconfig*
