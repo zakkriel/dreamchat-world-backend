@@ -435,6 +435,20 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		log.Printf("beats stream: NAMING WALL could not be loaded (%v) — narration belt is DOWN this beat", err)
 		wall = nil
 	}
+	// THE WORLD'S GLOBAL STATEMENT. The narrator already receives this world's prose every beat — the
+	// PLACE description, the PRESENT labels, the perception lines are all authored text — but all of it
+	// is local. Nothing has ever told the narrator what world this is. Loaded once per beat, like the
+	// naming wall above: it is a single primary-key row read and it changes only at genesis.
+	worldStatement, err := loadWorldStatement(ctx, bh.pool, worldID)
+	if err != nil {
+		// Same ruling as the naming wall, for the same reason: killing a beat over a projection read is
+		// not on the table. Fail LOUD and narrate without the block — which is exactly the narration
+		// every beat before this change got, so the degraded path is the known-good one.
+		log.Printf("beats stream: world statement could not be loaded (%v) — the narrator renders this beat without it", err)
+		worldStatement = WorldStatement{}
+	}
+	post.World = worldStatement
+
 	speechTexts, err := bh.speechTexts(ctx, worldID, viewerID, startTick)
 	if err != nil {
 		log.Printf("beats stream: speechTexts lookup failed (belt runs with no evidence): %v", err)

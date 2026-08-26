@@ -36,8 +36,11 @@ each var's declaration) and is byte-identical to the const it replaced.
   field) at the top of `buildDecomposePrompt` (`beathandler.go`), before the SCENE/CANDIDATES/PLAYER
   INPUT sections.
 - `narrate.txt` — the narrate seat. Injected as the STABLE HEADER (prompt-prefix) at the top of
-  `buildNarratePrompt` (`narrateprompt.go`), before the PLACE/PRESENT/WHAT JUST HAPPENED/RECENT
-  BACKGROUND sections (delta-first: new events vs already-known context).
+  `buildNarratePrompt` (`narrateprompt.go`), before the THE WORLD/PLACE/PRESENT/WHAT JUST
+  HAPPENED/RECENT BACKGROUND sections (delta-first: new events vs already-known context). THE WORLD is
+  the world's global statement and is rendered by `narrateSceneBody`, never appended to this file: the
+  plain fallback slices the header at `OUTPUT — STRUCTURED NARRATION SEGMENTS`, so anything added after
+  that line reaches only the structured path. Rules meant for all three builders go BEFORE it.
 - `cognition.txt` — the cognition seat, shared by BOTH the batch and isolated calls. Injected as the
   STABLE HEADER (prompt-prefix) at the top of `buildCognitionPrompt` (`cognitionprompt.go`), before
   the SCENE/THE MINDS YOU SPEAK FOR/(private)/PUBLIC MOMENT/IMMINENT sections.

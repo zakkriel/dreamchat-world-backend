@@ -25,6 +25,17 @@ type PerceptionPayload struct {
 	// know (§3 naming reach — leaking it would breach the naming wall). The narrate YOU ARE block
 	// renders it so a third-person reference to the viewer resolves to "you". Empty ⇒ no YOU ARE block.
 	ViewerAliases []string `json:"viewer_aliases,omitempty"`
+	// World is this world's GLOBAL statement — its name, its authored premise, its region and its
+	// minted register words. Every field is the committed genesis document's own content (see
+	// WorldStatement); world.brief is structurally excluded, and that exclusion is tested.
+	//
+	// Not serialised to the seats (json:"-"), for the same reason Here is not: it is prompt material
+	// the narrate builder renders as THE WORLD, not a fact the seats decompose over. Keeping it out of
+	// the JSON also keeps the seat payload contract and its generated fixtures untouched.
+	//
+	// This carries no raw canon and breaches no wall: it is world-level authorship visible to anyone
+	// standing in the world, holder-independent by construction, with nothing per-entity in it.
+	World WorldStatement `json:"-"`
 }
 
 // BeatStep is one element of the closed-vocabulary chain (beat_chain/1).
