@@ -1,5 +1,46 @@
 # DreamChat Documentation — Master Index
 
+**Date:** 2026-08-26 (rev 11)
+
+**Rev 11 — the world model's reader half, measured.** `30_architecture/world_model/` indexed here for
+the first time. The contract reached v4 on the author's side and its **reader** half had never been run;
+one round ran it and it changed the plan.
+
+- **`SCHEMA-v5.md` — v4 died on the reader half.** Two blind builders, neither prompted to look, both
+  published an entity's `hiding` string, both citing the same obligation. `channel.conceals` had been
+  named for identity and was also disclosing interiors: **O4 obliged the author to withhold while §4
+  obliged the builder to publish.** v5 splits it in two — a channel discloses identity only and **never**
+  an interior. Evidence: `R_grelda_aborted_b1/b2.md`. Re-run with three fresh builders: all three refused.
+- **`R_score_grelda.md` — the reader half transmits rulings and not quantities.** 9 of 22 questions
+  identical (every one a permit/refuse), 9 contradictory (every one a magnitude). The ladder gap is now
+  evidence: three builders returned day 10/14/18 and 25/27/28 for two unanchored accumulator rungs while
+  agreeing **exactly** on day 40 for the one carrying an `exemplar`. **v4's F1 is narrower than it
+  claims** — an exemplar pins one point on one scale, fixes neither the dimension nor the interior rungs,
+  but does *bound* a ladder; it belongs on interval endpoints.
+- **A self-scored round mis-attributes toward the contract.** The adversarial seat moved 5 of 22 rows,
+  found 2 builder errors under a claimed zero, and withdrew a defect the score file had asserted against
+  v5 (`R_score_grelda_review.md`, including the one finding rejected on evidence).
+- **`01_engine_capability_audit.md` added — 24 obligations vs the engine: 3 working, 12 partial, 9
+  absent**, every row cited to file:line. **13 of the 24 dead-end in a class word the engine cannot
+  resolve**, and the seat leash forbids the authoring model any number, so the ladder is the only path
+  and twelve of thirteen rungs do not exist. **World identity during play: none** — `world.brief` carries
+  a `COMMENT` stating it is never rendered, `world.theme` is frontend chrome, and the per-world `excluded[]`
+  list that all three test worlds wrote is enforced by no code. Also a genesis coverage bug one layer
+  earlier than `cast[].standing`: content **stated in a brief and never authored at all**, which passed
+  every existing check.
+- **`SCHEMA-v6.md` — containment settled, and the validator unblocked.** `SCHEMA-v2.md:28` gated `within`
+  to the `extent` facet; D4 makes a facet key without its facet an R7 refusal; and D1's own worked example
+  is *"a person in a room."* **The sentence establishing the rule broke the rule.** Counted, not estimated:
+  the gate is violated **28 times across the three v4 documents** (9/10/9) and every instance is ordinary
+  containment — not one is an error. (`G_grelda_by_simarch.md` §3's figure of "fourteen" was wrong and had
+  propagated into two other docs; corrected.) `within` becomes ungated, and **which containment tree an
+  edge belongs to is derived from the container's facets** — the distinction `core/api/tier1.go:16-20`
+  already keeps in three separate edges because each feeds different arithmetic.
+- **`superpowers/plans/2026-08-26-world-model-eight-increments.md` — the program roadmap.** Eight product
+  increments, sized against the audit, with nine closed decisions and a three-wave parallel plan.
+  Increment 1 is the platform rebuild (one declaration per concept, per `prd_world_creation_depth.md`);
+  five increments then run concurrently.
+
 **Date:** 2026-08-20 (rev 10)
 
 **Rev 10 — the agent harness.** `30_architecture/system_map.md` added: what exists, which repo owns
