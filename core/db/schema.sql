@@ -155,6 +155,7 @@ DECLARE
   vis_scope    text;
   final_type   text;
   v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
+  v_witness    uuid;   -- SPEC-035: each named witness, validated co-present before it is recorded
 BEGIN
   ev_type := p_attempt->>'type';
 
@@ -186,6 +187,22 @@ BEGIN
     OR NOT EXISTS (SELECT 1 FROM entity_registry WHERE entity_id = dest_eid  AND world_id = p_world_id)
     THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
+    -- SPEC-035: a named witness must have been THERE. Co-presence is necessary but not sufficient -
+    -- the founder's ruling is "just because they were there doesn't mean they saw it" - so the caller
+    -- names who saw it and the gate refuses anyone who could not have. This is byte-for-byte the shape
+    -- of the 'Communicated' listener gate above (fn_actors_at against the instigator's location), and
+    -- it is deliberate: the engine BLOCKS impossibilities, it never awards perception
+    -- (FINAL-action-contracts.md - "deterministic machinery blocks impossibilities").
+    IF jsonb_typeof(p_attempt->'witnesses') = 'array' THEN
+      SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
+        WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
+      FOR v_witness IN SELECT (value #>> '{}')::uuid FROM jsonb_array_elements(p_attempt->'witnesses') LOOP
+        IF NOT EXISTS (SELECT 1 FROM fn_actors_at(p_world_id, here) WHERE entity_id = v_witness) THEN
+          RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+        END IF;
+      END LOOP;
     END IF;
     IF EXISTS (SELECT 1 FROM artifact_state
                WHERE world_id = p_world_id AND entity_id = dest_eid AND attrs ? 'max_room') THEN
@@ -252,6 +269,35 @@ BEGIN
   ELSE
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
       VALUES (ev_id, p_actor_id, 'actor', 'instigator');
+  END IF;
+
+  -- SPEC-035: THE EVENT NAMES WHO SAW IT. Measured before this was written: a caller could already
+  -- pass 'witnesses' and apply_event discarded it without a word - the payload came back {} and
+  -- event_participant held nothing but 'instigator', so the question "who watched this handover"
+  -- had no answer anywhere in the database. That is not a missing feature, it is a silent drop.
+  --
+  -- WHY A PARTICIPANT ROW AND NOT A PAYLOAD FIELD. 'Communicated' already records its recipients as
+  -- 'listener' participants and generate_perceptions reads them back by role_qualifier; this is the
+  -- same question with the same answer, so it takes the same shape (B-2: the event names its
+  -- participants). A payload field would have been a second mechanism for one meaning, and the
+  -- payload is exactly where SPEC-034 proved data goes to die: a committed ObjectRelocated's payload
+  -- is '{}'.
+  --
+  -- WHY IT CANNOT BE BACKFILLED, which is why this lands now rather than later: replay_0A() asserts
+  -- it reproduces domain-equivalent PROJECTION state, and perceptions are not projections - they are
+  -- not regenerated on replay (ADR-026). An event committed without its witnesses is unwitnessable
+  -- forever. Every handover accepted before this migration is already in that state.
+  IF ev_type = 'ObjectRelocated' AND jsonb_typeof(p_attempt->'witnesses') = 'array' THEN
+    INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+    SELECT ev_id, w.eid, 'actor', 'witness'
+      FROM (SELECT DISTINCT (value #>> '{}')::uuid AS eid
+              FROM jsonb_array_elements(p_attempt->'witnesses')) w
+     WHERE w.eid IS NOT NULL
+       -- A holder is not a witness. Both already perceive as parties to the handover (SPEC-034), and
+       -- a duplicate row would mint them a second perception of one event.
+       AND w.eid <> p_actor_id
+       AND w.eid <> dest_eid
+    ON CONFLICT DO NOTHING;
   END IF;
 
   IF ev_type = 'ActorMoved' THEN
@@ -3462,6 +3508,9 @@ BEGIN
     END;
   END IF;
 
+  -- ── SPEC-035 amends this arm: witnesses perceive too. See the perceiver set below and the
+  -- gate + participant recording in the same migration. The arm's shape is unchanged.
+  --
   -- ── SPEC-034: ObjectRelocated ─────────────────────────────────────────────────────────────────
   -- Reproduced on the seeded world before this was written: Kade carries the Sealed Note
   -- (fn_carrying lists it) and fn_entity_visible(DL,Kade,note) is FALSE, fn_artifact_page returns
@@ -3526,10 +3575,20 @@ BEGIN
         -- Whoever the event names, deduplicated: the actor who did it, and the destination when the
         -- destination is a person. A location or container destination names no perceiver — "the
         -- packet is now in the back room" is not knowledge anybody acquired.
+        --
+        -- SPEC-035: and whoever the event names as a WITNESS. They take the same branch as the
+        -- holders on purpose, because the founder's ruling is that they are in the same epistemic
+        -- position: they saw it happen, so 'direct', and the same subjects. What separates a witness
+        -- from a co-present bystander is not the perception rule, it is that apply_event only records
+        -- the ones the caller NAMED and could prove were there — "just because they were there
+        -- doesn't mean they saw it" is enforced at the gate, not re-litigated here. This is the same
+        -- division 'Communicated' already makes: addressed listeners get 'told', and the comment on
+        -- that arm says co-present overhearers defer. Concealment, when it lands, shortens the list
+        -- the caller passes; it needs no change on this side.
         FOR or_who IN
           SELECT DISTINCT h FROM (
             SELECT entity_id AS h FROM event_participant
-              WHERE event_id = p_event_id AND role_qualifier = 'instigator'
+              WHERE event_id = p_event_id AND role_qualifier IN ('instigator', 'witness')
             UNION
             SELECT or_dest WHERE or_dest IS NOT NULL AND or_kind = 'actor'
           ) s WHERE h IS NOT NULL
@@ -5000,4 +5059,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260820200000'),
     ('20260821090000'),
     ('20260821120000'),
-    ('20260825120000');
+    ('20260825120000'),
+    ('20260825130000');

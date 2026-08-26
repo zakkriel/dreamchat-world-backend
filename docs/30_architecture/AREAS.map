@@ -90,6 +90,7 @@ perception
   core/db/tests/119_fact_sheet*
   core/db/tests/121_name_token_wall*
   core/db/tests/122_object_relocated_perceptions*
+  core/db/tests/123_object_relocated_witnesses*
   core/db/tests/16_chunk4_seed*
   core/db/tests/17_entity_visible*
   core/db/tests/18_compendium_index*

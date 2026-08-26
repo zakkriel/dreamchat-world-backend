@@ -850,7 +850,7 @@ Three things measured while building it, all of which changed the implementation
 they can see it — just because they were there doesn't mean they saw it."* The second half is
 unimplementable today and the reason is recorded rather than worked around → **SPEC-035**.
 
-## SPEC-035 — `ObjectRelocated` records no witnesses, so "who saw it" cannot be answered
+## SPEC-035 — `ObjectRelocated` records no witnesses, so "who saw it" cannot be answered (LANDED 2026-08-25)
 
 **Raised by:** the SPEC-034 implementation, 2026-08-25, against an explicit founder ruling that
 co-presence is not perception.
@@ -884,6 +884,36 @@ question owned by **SPEC-016**, is undecided. The gap is measured, not invented 
 **Firing trigger:** fired the moment SPEC-034 landed — `122_object_relocated_perceptions_test.sql`
 asserts that a third actor perceives nothing, and that assertion is the thing SPEC-035 must change
 deliberately rather than by drift.
+
+**LANDED 2026-08-25** — `20260825130000_object_relocated_witnesses.sql`, suite
+`core/db/tests/123_object_relocated_witnesses_test.sql` (10 assertions).
+
+Reproduced before implementation, on the seeded world: Kade hands the note to Mara with Jonas
+co-present and `witnesses: [jonas]` passed in. The event recorded `instigator` only, Jonas held zero
+perceptions, and **the `witnesses` array was silently discarded** — `payload` came back `{}` with no
+`halt_reason`. The caller could already name witnesses; the engine dropped them without a word.
+
+Shape, per the founder ruling of 2026-08-25 ("holders and co-present as long as they can see it — just
+because they were there doesn't mean they saw it"): the event **names** its witnesses as
+`event_participant.role_qualifier = 'witness'`, exactly as `Communicated` names its `listener`s (B-2),
+and `generate_perceptions` reads them back. Co-presence is enforced as **necessary but not
+sufficient** — the caller supplies sufficiency by naming, `apply_event` refuses anyone who was not
+there (`gate_reject`), byte-for-byte the listener gate's shape. No new column and no payload field:
+the payload is where SPEC-034 proved data goes to die.
+
+Deliberately unchanged: SPEC-034's suite asserts "a third actor the event does not name perceives
+nothing," and SPEC-035 did **not** have to weaken it — because witnesses are named, not inferred from
+co-presence. That is the ruling, mechanised. Test 123's tenth assertion pins it from the other side.
+
+Mutation-verified with `ci/mutate.sh` — 4 mutants, 4 caught: witnesses never perceive, co-presence
+gate defanged, holders recordable as their own witness, witnesses never recorded.
+
+**Still open, and named rather than implied:** concealment. There is no visibility or concealment
+signal anywhere in the schema (`ObjectRelocated`'s two founder-locked dimensions are volume and
+weight; the 18 `secret` hits in `schema.sql` are Mara's *perception* secret, not a mechanism). The
+PRDs' flagship perception example — "You saw Seren pass a sealed note to a cloaked figure" — is a
+*witnessed handover*, so it is now expressible. A *concealed* one still is not: it would shorten the
+list the caller passes, which needs no engine change, but nothing yet computes that list.
 
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in

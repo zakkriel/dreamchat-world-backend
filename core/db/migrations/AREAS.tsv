@@ -86,3 +86,4 @@
 20260821090000_durable_worlds.sql	world-genesis
 20260821120000_name_token_wall.sql	perception
 20260825120000_object_relocated_perceptions.sql	perception
+20260825130000_object_relocated_witnesses.sql	perception

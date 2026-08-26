@@ -46,7 +46,7 @@ core/api/schemaversion*	docs/30_architecture/system_map.md	§5 is the deployment
 core/api/seatconfig.go	docs/30_architecture/system_map.md	§8 states what adding a seat costs
 core/api/schema/*	docs/30_architecture/system_map.md	§4 and §6 describe the published contract
 .github/workflows/*	docs/30_architecture/system_map.md	§7 is the enforced/not-enforced ledger — a new gate moves a row
-ci/check_*	docs/30_architecture/system_map.md	§7 is the enforced/not-enforced ledger'
+ci/*.sh	docs/30_architecture/system_map.md	§7 is the enforced/not-enforced ledger'
 
 changed_has() { printf '%s\n' "$@" | grep -qxF "$DOC"; }
 

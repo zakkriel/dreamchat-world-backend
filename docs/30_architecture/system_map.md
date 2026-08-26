@@ -200,6 +200,14 @@ gate, move the row.
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
+**The mutation experiment now has a runner, and is still honour-system.** `ci/mutate.sh` (7 selftest
+probes) applies named mutants, runs a test command, restores on any exit, and fails when a mutant
+survives, when a sed script matches nothing, or when the baseline is already red. What it does **not**
+have is a CI job: nothing forces a round to run it, because the mutants worth trying depend on the
+change and cannot be enumerated in advance. So it stays in the not-enforced table below — but the
+excuse "there was no runner" is gone, and `round-protocol.md` §7 plus all seven area briefs now name
+the command.
+
 **Gate ORDER is load-bearing, and it is not obvious.** Learned in the SPEC-034 round, where both
 of these were nearly reported as regressions the author had caused:
 

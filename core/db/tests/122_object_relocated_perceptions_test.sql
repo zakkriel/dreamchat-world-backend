@@ -70,9 +70,14 @@ SELECT ok( fn_artifact_page(:'W'::uuid, :'A2'::uuid, :'OB'::uuid) IS NOT NULL,
 
 -- ── the negative case, and it is what keeps the arm honest ──────────────────────────────────────
 -- The founder ruled that co-presence is not perception — "just because they were there doesn't mean
--- they saw it" — and ObjectRelocated carries no witness field, so this arm names nobody the event
--- does not name. If a later round widens this to witnesses (SPEC-035), THIS assertion is the one that
--- must change deliberately, with a ruling, rather than drifting.
+-- they saw it" — so this arm names nobody the event does not name.
+--
+-- SPEC-035 LANDED the same day and this assertion did NOT have to change. That is the whole point of
+-- the shape chosen: witnesses are NAMED on the event (role_qualifier = 'witness'), never inferred from
+-- co-presence, so a third actor the event does not name still perceives nothing. The prediction here
+-- was that widening to witnesses would force this line to be weakened deliberately; the ruling turned
+-- out to make weakening unnecessary. `123_object_relocated_witnesses_test.sql` pins the same rule from
+-- the other side — a handover naming no witnesses records none.
 SELECT ok( NOT fn_entity_visible(:'W'::uuid, :'A3'::uuid, :'OB'::uuid),
   'SPEC-034: a third actor the event does not name perceives nothing (witnesses are SPEC-035)' );
 
