@@ -1,0 +1,88 @@
+# Migration → feature area
+#
+# WHY THIS FILE EXISTS. `core/db/migrations/*` was globbed to canon-recording, on the reasoning that a
+# migration is a schema change. That is true and it is not enough: 56 of these 64 migrations are not
+# primarily canon-recording work. The proof was that 28 feature stems had their migration in one area
+# and their own test in another — 20260807100003_journey.sql owned by canon-recording while
+# 115_journey_legs_test.sql was owned by space-and-journey.
+#
+# A path glob cannot see what a migration is FOR. So each migration declares it, the same way a Go file
+# declares its ADR with `Governed-by:` rather than being matched by a hand-written path map — the map
+# that covered 231 of 322 files and failed by being quiet (core/api/governance_test.go:11-25).
+#
+# canon-recording is a CO-OWNER OF EVERY ROW HERE and is not repeated below. Every migration is a
+# change to the Master DDL surface and must satisfy D-4, append-only (B-5/ADR-006), `make schema-check`,
+# and replay (I-1). The area named below is the SECOND owner: whose feature this serves. Both experts
+# review a migration.
+#
+# Applied migration files are never edited to carry this — a sidecar cannot change a checksum or a
+# schema dump. `harness/check.sh areas` asserts completeness BOTH WAYS: a migration with no row here
+# fails, and a row here naming no migration fails. So it cannot drift.
+#
+# Format: <migration filename><TAB><area>
+
+20260610090001_extensions_roles.sql	canon-recording
+20260610090002_canon_spine.sql	canon-recording
+20260610090003_registry.sql	canon-recording
+20260610090004_deltas_epistemic_causal.sql	canon-recording
+20260610090005_projections.sql	canon-recording
+20260610090006_apply_mutation_and_triggers.sql	canon-recording
+20260610090007_spec002_accepted_order_unique.sql	canon-recording
+20260611090001_causal_acyclicity.sql	canon-recording
+20260614090001_perception_subject.sql	perception
+20260614090002_projection_functions.sql	canon-recording
+20260615090001_compendium_read_functions.sql	perception
+20260618090001_play_loop_engine.sql	play-loop
+20260723100001_location_ids.sql	space-and-journey
+20260723100002_six_type_spine.sql	canon-recording
+20260723100003_personality_world.sql	world-genesis
+20260723100004_apply_event.sql	canon-recording
+20260724100001_gather_slice.sql	play-loop
+20260724100002_apply_ruled_event.sql	canon-recording
+20260724110001_gather_slice_multiactor.sql	play-loop
+20260724110002_perception_subject_all_branches.sql	perception
+20260724110003_cognition_lookups.sql	play-loop
+20260724110004_held_outcome.sql	space-and-journey
+20260726100001_display_name_naming_reach.sql	perception
+20260729100001_coordinates_distance.sql	space-and-journey
+20260729100002_move_duration.sql	space-and-journey
+20260729100003_object_relocated.sql	space-and-journey
+20260729100004_portal_traversal.sql	space-and-journey
+20260729100005_mint_persistence.sql	space-and-journey
+20260729100006_move_target.sql	space-and-journey
+20260729100007_entity_created.sql	canon-recording
+20260730100001_fact_sheet.sql	perception
+20260805100001_duration_class_config.sql	space-and-journey
+20260805100002_world_actor_pressure.sql	play-loop
+20260805100003_world_slice.sql	play-loop
+20260807100001_place_area.sql	space-and-journey
+20260807100002_extent_class.sql	space-and-journey
+20260807100003_journey.sql	space-and-journey
+20260807100004_journey_legs.sql	space-and-journey
+20260807100005_watch_horizon.sql	play-loop
+20260808090001_compendium_lenses.sql	perception
+20260808100001_interruption_tuning.sql	space-and-journey
+20260808100002_in_world_label_carry.sql	perception
+20260808100003_distinguishing_labels.sql	perception
+20260808100004_world_registry.sql	world-genesis
+20260808100005_image_slots.sql	art-and-assets
+20260808100006_image_field_v2.sql	art-and-assets
+20260809090001_carrying.sql	perception
+20260809090002_knowledge_grouping.sql	perception
+20260809090003_world_surface_images.sql	art-and-assets
+20260809090004_world_taglines.sql	world-genesis
+20260809090005_perception_naming_wall.sql	perception
+20260809090006_unearned_names_one_definition.sql	perception
+20260809090007_hearing_teaches_a_name.sql	perception
+20260809090008_transcript.sql	perception
+20260809090009_spoken_words.sql	perception
+20260813142100_world_templates.sql	world-genesis
+20260813160000_article_aware_relabel.sql	perception
+20260814140000_backfill_drowned_lantern_template.sql	world-genesis
+20260814170000_hearing_teaches_only_spoken_names.sql	perception
+20260815150000_world_brief.sql	world-genesis
+20260815150001_world_art_style.sql	art-and-assets
+20260820200000_character_sprite_variants.sql	art-and-assets
+20260821090000_durable_worlds.sql	world-genesis
+20260821120000_name_token_wall.sql	perception
+20260825120000_object_relocated_perceptions.sql	perception
