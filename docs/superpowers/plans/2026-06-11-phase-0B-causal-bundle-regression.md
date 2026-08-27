@@ -1,5 +1,16 @@
 # Phase 0B — Causal-Bundle Regression Implementation Plan
 
+> **RENAMED 2026-08-27 — founder ruling.** This plan's riders were lettered `A`/`B`, colliding with
+> the Phase 0A plan written **one day earlier**. Both were cited bare in shipped code. The letters are
+> gone; the rules are unchanged.
+>
+> | Was | Now | The rule |
+> |---|---|---|
+> | 0B Rider A | **`IMMUTABLE-BUNDLE-TOPOLOGY`** | `effect_ref` is append-only; bundle topology never mutates |
+> | 0B Rider B | **`ACYCLICITY-WALK`** | block a cycle that could resurrect on re-validation; depth-capped at 64 |
+>
+> Citation site updated: `20260611090001_causal_acyclicity.sql:13`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Enforce causal acyclicity (invariant I-4) on the bundle layer at insert time, freeze bundle topology after insert, and prove both with a hand-inserted Seren mini-scenario — with zero regression to the Phase 0A suite.

@@ -1,11 +1,11 @@
 -- migrate:up
 -- Source: canon_engine/03 §3 (projection rules), §6 (replay); design §4.3/§6.5.
--- Rider A: apply_mutation() is the ONLY projection write path; live trigger AND replay both call it.
+-- SOLE-PROJECTION-WRITER (was 0A Rider A): apply_mutation() is the ONLY projection write path; live trigger AND replay both call it.
 
 CREATE FUNCTION apply_mutation(m state_mutation) RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER AS $$
 DECLARE
-  -- strip leading 'attrs.' (6 chars) -> single-key JSON path under attrs (0A convention, Rider B)
+  -- strip leading 'attrs.' (6 chars) -> single-key JSON path under attrs (ABSOLUTE-STATE-SETS, was 0A Rider B)
   jpath text[] := string_to_array(substring(m.attribute_path from 7), '.');
 BEGIN
   IF m.entity_kind = 'actor' THEN
@@ -59,7 +59,7 @@ BEGIN
 
   TRUNCATE actor_state, location_state, artifact_state, relationship_state;
 
-  -- Rider C: domain-only deterministic order. recorded_at (volatile) excluded.
+  -- DETERMINISTIC-DOMAIN-ORDER (was 0A Rider C): domain-only deterministic order. recorded_at (volatile) excluded.
   FOR ev IN SELECT event_id FROM canon_event WHERE status='accepted'
             ORDER BY world_id, in_world_tick, beat_seq LOOP
     FOR m IN SELECT * FROM state_mutation WHERE event_id = ev.event_id

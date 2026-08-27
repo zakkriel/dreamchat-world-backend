@@ -1098,3 +1098,103 @@ This is the inverse of the ruled behaviour, not a degraded version of it.
   signature change with no clean number to report at the end.
 - **Status:** **OPEN.** Untouched by the 2026-08-25/26 verification work and untouched by the
   2026-08-27 harness trim, both of which deliberately changed no product behaviour.
+
+## SPEC-038 — Attention: a bounded, modifiable distribution that decides who perceives an event
+
+**Raised by:** founder, in conversation 2026-08-27. **Status:** DESIGNED, NOT BUILT. **Blocks:** nothing
+today; unblocks `attentional` blocks in `ADR-P025`, which currently name a category with no mechanism.
+
+### The problem it solves
+
+Perception today is decided by *what happened* and *where people were*. It has no account of *what they
+were doing*. Two actors in the same room are treated identically, which is wrong: an actor staring at
+Kade probably sees the handover; an actor absorbed in courting someone else is barely aware Kade is
+present.
+
+`ADR-P025` defines two block kinds — `physical` (Physics owns it) and `attentional`. **`attentional` was
+defined with no mechanism behind it.** This is that mechanism.
+
+### The design, as ruled
+
+**Attention is state, per actor, stored as a distribution.**
+
+- The value is an **array of splits** — how this actor's attention is divided across the entities and
+  events around them. Not a single target.
+- **100% is the BASE value**, not a hard ceiling. It is bounded so attention cannot be augmented for
+  free from the source: if 35 entities are present, the residual share divides among them, it is not
+  granted to each.
+- **Two kinds of modifier, and they are different things:**
+  - a **max modifier** — raises the base (e.g. `+100%` lets the actor distribute more attention overall,
+    or hold higher individual shares)
+  - a **flat check modifier** — added at the moment of the roll (e.g. `+15%` attention to any check)
+- **A 5% ambient floor.** Every present actor always has at least a 5% chance on any check, however
+  absorbed. This is the corner-of-the-eye case. **The floor applies to telegraphs too** — founder ruling
+  — so total absorption never means guaranteed blindness to a wind-up.
+- Example distribution: a 1:1 conversation is ~80% on the other person, ~20% divided across everything
+  else that could trigger or relate to an event.
+
+**The check is programmatic, one roll per event.** A handover triggers a roll. A window smashing triggers
+a roll. Someone speaking triggers a roll. **Not per (observer × target)** — per event, per observer, and
+the cost is minimal because no model is involved.
+
+**Attention is restated at beat end, by the LLM.** The resolve seat, knowing what happened, redistributes
+each scene participant's attention. **Forced attention** is that call doing its job rather than a special
+case: a window smashes, the 80% on the conversation collapses, and attention goes to the figure coming
+through.
+
+### Why the mid-beat question does not exist
+
+Asked during design: *does forced attention apply inside the beat that caused it?* It does not need to,
+because **the interruption window is already built.** `held_outcome` + `origin='telegraph'`
+(`20260724110004_held_outcome.sql`): a disruptive act commits its **wind-up** as perceivable canon, the
+full intended act is held, and the player's next input resolves it.
+
+So attention decides which side of that window an actor is on:
+
+- **Perceived the wind-up** → knows someone is about to come through → can act *before* it happens.
+- **Did not** → gets the forced acknowledgment when it lands, and acts on an already-broken window and a
+  man standing in it.
+
+The window smash and the figure coming through are **two beats — a telegraph and its resolution** — not
+two events inside one beat. No mid-beat mechanic is required.
+
+This also makes `C-7` quantitative for the first time: *"the longer or more consequential an action
+chain, the more chances the world has to react, interrupt, resist."* A longer wind-up is more
+perceivable, so more actors roll against it, so more of them can interrupt.
+
+### What it copies rather than invents
+
+| Piece | Existing pattern it follows |
+|---|---|
+| the roll | `pressure.go` `deterministicRoll` — an fnv64a hash of committed state, never `math/rand`, so replay reproduces it byte-for-byte (`I-1`) |
+| modifiers | `effective_speed = base_speed × Π(modifier factors)` and `effective_weight(container) = (empty_weight + Σ …) × weight_modifier` |
+| storage | `attrs.coordinates` — a structured value at a single-key path under `attrs`, written via `state_mutation`. `ABSOLUTE-STATE-SETS` covers it, so no deltas. Replayable without adding noise to the canon log. |
+| interruption | `held_outcome` + telegraph origin — **already built** |
+
+**Five new pieces, four of which copy an existing pattern. The interruption half exists.**
+
+### Hard constraint carried from `ADR-P025`
+
+**An `attentional` result may never overturn a `physical` block.** Keen senses can beat inattention and
+can never see through a wall. And no amount of absorption hides a horse: object size is a physical fact
+(`volume(size) = 4^(size-1)`, size 1–10), so a size-5 animal changing hands is perceived by everyone
+present regardless of their attention, while a size-1 sealed note is genuinely missable.
+
+### Still open
+
+1. **The size threshold** — where on the 1–10 scale does "can change hands unnoticed" stop? Seeded data:
+   a sealed note and a cellar key are `1`; `the bar` and a 92kg ballast stone are `2`. Not ruled.
+2. What sets the **max modifier** and the **flat check modifier** in practice — attributes, conditions,
+   equipment? `SPEC-016` (per-attribute perceivability) is adjacent and also open.
+3. Whether attention for actors **outside** the current scene persists unchanged, or decays.
+4. Whether the end-of-beat restatement covers every present actor or only those whose attention changed.
+
+### Related, and still unresolved from the same conversation
+
+**The ruled path contradicts the attempt path on who perceives.** `apply_ruled_event` writes perceptions
+itself, to **everyone co-present** (`fn_actors_at(world, here) UNION actor`), with `participant_ids` as
+subjects — so the object is never a subject, reproducing the SPEC-034 defect on that path, and granting
+perception by presence alone, which contradicts the named-witness ruling. Founder ruled that
+`apply_ruled_event` should get the same treatment as `apply_event`; the *shape* of that fix now depends
+on this SPEC. **A handover committed through the resolve seat is currently invisible to everyone,
+including the new holder.**

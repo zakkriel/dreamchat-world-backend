@@ -90,17 +90,17 @@ SELECT throws_ok($$
   VALUES ('b0000000-0000-0000-0000-0000000000a3','20000000-0000-0000-0000-000000000022','event','trigger')
 $$, 'P0001', NULL, 'I-4: edge I->G closing the G->H->I chain is rejected');
 
--- (8) Rider A: effect_ref is immutable (append-only; only {status} may change).
+-- (8) IMMUTABLE-BUNDLE-TOPOLOGY (was 0B Rider A): effect_ref is immutable (append-only; only {status} may change).
 SELECT throws_ok($$
   UPDATE causal_bundle SET effect_ref='20000000-0000-0000-0000-00000000000b'
   WHERE bundle_id='b0000000-0000-0000-0000-0000000000c0'
-$$, 'P0001', NULL, 'Rider A: UPDATE of effect_ref on causal_bundle rejected (append-only)');
+$$, 'P0001', NULL, 'IMMUTABLE-BUNDLE-TOPOLOGY: UPDATE of effect_ref on causal_bundle rejected (append-only)');
 
--- (9) Rider A: status alone may change.
+-- (9) IMMUTABLE-BUNDLE-TOPOLOGY: status alone may change.
 SELECT lives_ok($$
   UPDATE causal_bundle SET status='invalidated'
   WHERE bundle_id='b0000000-0000-0000-0000-0000000000c0'
-$$, 'Rider A: UPDATE of status alone is permitted');
+$$, 'IMMUTABLE-BUNDLE-TOPOLOGY: UPDATE of status alone is permitted');
 
 -- (10) ADR-006: bundle inputs cannot be deleted.
 SELECT throws_ok($$

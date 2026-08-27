@@ -1,5 +1,19 @@
 # Phase 0A Engine Contract Implementation Plan
 
+> **RENAMED 2026-08-27 — founder ruling.** This plan's riders were lettered `A`/`B`/`C`, and the
+> Phase 0B plan written **one day later** used the same letters for different rules. Both sets were
+> cited **bare** in shipped code, so `Rider B` in `causal_acyclicity.sql` meant something different
+> from `Rider B` in `world_templates.sql`. The letters are gone; the rules are unchanged.
+>
+> | Was | Now | The rule |
+> |---|---|---|
+> | 0A Rider A | **`SOLE-PROJECTION-WRITER`** | `apply_mutation()` is the only projection write path |
+> | 0A Rider B | **`ABSOLUTE-STATE-SETS`** | every `state_mutation.new_value` is the *resulting absolute* value at a **single-key** path under `attrs.` — no deltas, no nested-path creation. This is what makes re-apply idempotent and replay order-independent. |
+> | 0A Rider C | **`DETERMINISTIC-DOMAIN-ORDER`** | domain-only ordering; volatile columns such as `recorded_at` excluded |
+>
+> Citation sites updated: `20260610090006_apply_mutation_and_triggers.sql:3,8,62` ·
+> `20260813142100_world_templates.sql:267,319` · `core/db/schema.sql:431,2116,2168,3657`.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deploy the deterministic world-state spine (Phase 0A) so that hand-seeded `accepted` events produce correct projections + perceptions, and projections rebuild from the event log to domain-equivalent state — proven by I-1/I-2/I-7 green on the Mara scenario.
