@@ -123,20 +123,14 @@ func TestRouterCoverage_EveryHandlerIsReached(t *testing.T) {
 	}
 }
 
-// The first-match-wins ordering is load-bearing and `main.go:41-43` says why: /worlds/art-styles must
-// precede the id matchers or "art-styles" reads as a world id and 404s. That comment describes an
-// ordering constraint no test held, so a reorder would have shipped green.
-func TestRouterCoverage_ArtStylesPrecedesIDMatchers(t *testing.T) {
-	rt := coverageRouter()
-	i := claimant(rt, http.MethodGet, "/worlds/art-styles")
-	if i < 0 {
-		t.Fatal("/worlds/art-styles is unserved")
-	}
-	if _, isArtStyles := rt.handlers[i].(*worldArtStylesHandler); !isArtStyles {
-		t.Fatalf("/worlds/art-styles was claimed by %T, not the art-styles handler — "+
-			"an id matcher is reading 'art-styles' as a world id (main.go:41-43)", rt.handlers[i])
-	}
-}
+// TestRouterCoverage_ArtStylesPrecedesIDMatchers was deleted 2026-08-27: a proven tautology. Moving
+// the art-styles registration to the LAST position still passed, because `worldArtStylesRoute` is
+// `^/worlds/art-styles$` and every id matcher is `([0-9a-fA-F-]{36})`, so a 10-character literal can
+// never be swallowed. The ordering constraint `main.go:41-43` describes is not live today. The only
+// mutation that reddened it — breaking the art-styles regex — also reddens the two tests above, and
+// the permissive-matcher case it claimed to guard is caught by UnknownPathsAreClaimedByNobody below.
+// Strictly subsumed, and never mutation-verified despite shipping under a "7 of 7 caught" claim.
+// Receipts: docs/00_workspace/review-test-suite-2026-08-26.md §Q1.
 
 // A path nothing serves must reach nobody. Without this, a matcher whose regex is accidentally
 // permissive — `.*` instead of a uuid class — would satisfy both tests above while swallowing

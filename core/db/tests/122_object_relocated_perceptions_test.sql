@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(8);
+SELECT plan(7);
 
 -- SPEC-034 — a handover must make the object perceptible to the holders the event NAMES.
 --
@@ -62,11 +62,13 @@ SELECT ok( EXISTS(SELECT 1 FROM canon_event
 
 -- ── the fix ────────────────────────────────────────────────────────────────────────────────────
 SELECT ok( fn_entity_visible(:'W'::uuid, :'A2'::uuid, :'OB'::uuid),
-  'SPEC-034: the NEW holder can now see the object in his hands' );
+  'SPEC-034: the NEW holder can now see the object in his hands — and so his Artifact page no longer 404s, because fn_artifact_page returns NULL exactly when fn_entity_visible is false' );
 SELECT ok( fn_entity_visible(:'W'::uuid, :'A1'::uuid, :'OB'::uuid),
   'SPEC-034: the actor who handed it over perceives it too' );
-SELECT ok( fn_artifact_page(:'W'::uuid, :'A2'::uuid, :'OB'::uuid) IS NOT NULL,
-  'SPEC-034: the Artifact page no longer 404s for the new holder' );
+-- The separate fn_artifact_page assertion was deleted 2026-08-27. It could not go red unless the
+-- assertion above was already red — fn_artifact_page is `CASE WHEN NOT fn_entity_visible(...) THEN
+-- NULL` — so it had zero unique detection power across every mutant tried. Its user-facing claim is
+-- folded into the text above. Receipts: docs/00_workspace/review-test-suite-2026-08-26.md §Q1.
 
 -- ── the negative case, and it is what keeps the arm honest ──────────────────────────────────────
 -- The founder ruled that co-presence is not perception — "just because they were there doesn't mean
