@@ -1,37 +1,30 @@
 #!/usr/bin/env bash
-# check_citations.sh — a PR body must cite the law it relied on, and every id it cites must exist.
+# check_citations.sh — every rule id a PR body cites must exist.
 #
 #   ci/check_citations.sh <file>     read the body from a file
 #   ci/check_citations.sh -          read the body from stdin
 #   ci/check_citations.sh --selftest prove the check can fail
 #
-# AGENTS.md has opened with the same mandate since it was written: "read the rules register and cite
-# the rule IDs you rely on in your plans and PRs." system_map.md §7 has listed the missing gate as
-# "a PR-body check" for just as long. Prose loses to green CI, so it is a gate.
+# ONE assertion: EVERY identifier cited RESOLVES. `D-99` fails. `ADR-P007` fails. `SPEC-999` fails.
+# A body that cites nothing PASSES — there is nothing to resolve.
 #
-# TWO assertions, and the second one is the point:
-#
-#   1. The body cites at least one identifier — or explicitly declares that it relies on none.
-#   2. EVERY identifier it cites RESOLVES. `D-99` fails. `ADR-P007` fails. `SPEC-999` fails.
-#
-# Assertion 2 is what makes this more than a keyword tax. The register's own standing rule is "Do not
+# WHY THIS IS THE ONLY MECHANICAL GATE LEFT (2026-08-27 founder ruling; receipts in
+# docs/00_workspace/review-test-suite-2026-08-26.md §Q3). The register's standing rule is "Do not
 # invent constraints. If you cannot cite a rule ID, an ADR, or a line of code, you do not have a
-# constraint — you have a preference." An invented id is an invented constraint, and it now fails the
-# build. It also catches the ordinary version of the same defect: citing a real-sounding rule from
-# memory instead of opening the register. A PR once named
-# `core/api/schema/actor_page.v1.schema.json` as the contract source of truth in AGENTS.md itself;
-# that file did not exist.
+# constraint — you have a preference." An invented id is an invented constraint, and that is a fact a
+# script can establish in 20ms. Whether the cited rule is the RIGHT one is semantic and belongs to the
+# domain-trained reviewer (harness/roles/area-expert.md) — you can prove nobody invented a rule id,
+# you cannot prove they obeyed one.
+#
+# The MANDATORY-CITE half was cut the same day, with its waiver. It required at least one id, but the
+# id universe is 100+ ids and none is correlated with the diff, so `Rules: B-1` passed a change to the
+# Makefile. A tax that any four characters satisfy teaches pasting, not reading.
 #
 # KNOWN FALSE-POSITIVE CLASS, stated rather than hidden: an id QUOTED in order to say it does not (or
 # no longer) exist is indistinguishable from an id CLAIMED. `docs/adr/ADR-W002` names `ADR-P002` to
 # record that the backend never allocated it; a doc-wide sweep flags that as unresolved. This gate is
-# scoped to PR BODIES, where the distinction does not arise — nobody cites a retired id as authority for
-# a change. Running it as a general doc linter is a bonus, not its contract, and it has this blind spot
-# there. Do not "fix" it by loosening the resolver; that would make every invented id pass.
-#
-# Deliberately NOT asserted: that the citation is apposite. No script can tell whether D-7 is the
-# right rule for your change. That judgement is the reviewer's, and this gate exists to make sure the
-# reviewer has something to judge.
+# scoped to PR BODIES, where the distinction does not arise — nobody cites a retired id as authority
+# for a change. Do not "fix" it by loosening the resolver; that would make every invented id pass.
 set -uo pipefail
 
 # Resolve a file argument BEFORE cd'ing, or a relative path silently resolves against the repo root
@@ -65,20 +58,6 @@ spec_exists()  { grep -qE "^#+[[:space:]]*$1\b" "$SPECS" 2>/dev/null; }
 check_body() { # check_body <body-text> ; echoes findings, returns 0 ok / 1 fail
   local body="$1" id kind bad=0 found=0 seen=""
 
-  # An explicit, visible waiver. Silent exemption is how a gate stops meaning anything, so the escape
-  # hatch is a sentence a reviewer can disagree with, not a missing line.
-  if printf '%s' "$body" | grep -qiE '^[[:space:]]*(rules|law|cites?):[[:space:]]*none[[:space:]]*[-—:][[:space:]]*\S'; then
-    local why
-    why="$(printf '%s' "$body" | grep -iE '^[[:space:]]*(rules|law|cites?):[[:space:]]*none' | head -n1)"
-    if [ "${#why}" -lt 40 ]; then
-      echo "FAIL  the 'Rules: none' waiver needs a real reason, not a word."
-      echo "      got: $why"
-      return 1
-    fi
-    echo "OK    explicit waiver: ${why}"
-    return 0
-  fi
-
   for id in $(printf '%s' "$body" | grep -oE '\b(ADR-P[0-9]{3}|ADR-[0-9]{3}|SPEC-[0-9]{3}|GA-[0-9]{1,2}|[BCDEFI]-[0-9]{1,2})\b' | sort -u); do
     case " $seen " in *" $id "*) continue ;; esac
     seen="$seen $id"
@@ -93,9 +72,9 @@ check_body() { # check_body <body-text> ; echoes findings, returns 0 ok / 1 fail
     echo "OK    $id ($kind)"
   done
 
+  # Citing nothing is not a finding. The gate resolves what is there; it does not levy a keyword tax.
   if [ "$found" -eq 0 ]; then
-    echo "FAIL  this body cites no rule, ADR, or SPEC."
-    bad=1
+    echo "OK    no identifiers cited — nothing to resolve"
   fi
   return "$bad"
 }
@@ -117,18 +96,15 @@ if [ "${1:-}" = "--selftest" ]; then
     fi
   }
 
-  probe fail "empty body"                    ""
-  probe fail "prose with no citation"        "Fixes the thing that was broken. Tested locally."
+  probe pass "empty body"                    ""
+  probe pass "prose with no citation"        "Fixes the thing that was broken. Tested locally."
   probe fail "invented rule id"              "Per D-99 the payload must be flat."
   probe fail "invented platform ADR"         "Follows ADR-P007."
   probe fail "invented spec"                 "Closes SPEC-999."
   probe fail "real id shape, wrong series"   "Per GA-99 terms must be generic."
-  probe fail "bare waiver with no reason"    "Rules: none"
-  probe fail "waiver with a one-word reason" "Rules: none — typo"
   probe pass "one real rule"                 "Perception-bound per B-1; no canon rows cross the API."
   probe pass "real rule + real platform ADR" "Art is reconciled (ADR-P021), not commissioned. Async per D-8."
   probe pass "real spec item"                "Closes SPEC-011 by capturing a payload for the new schema."
-  probe pass "long-form waiver"              "Rules: none — this PR only fixes a typo in a code comment and changes no behaviour."
   probe fail "one real id, one invented"     "Per B-1 and D-77, the page renders from perception."
   probe fail "invented invariant"            "Guaranteed by I-77."
   probe fail "invented engine ADR"           "Decided in ADR-888."
@@ -154,19 +130,14 @@ fi
 
 cat >&2 <<'EOF'
 
-::error::The PR body must cite the law it relied on, and every id it cites must exist.
-
-AGENTS.md, first mandate: read docs/00_strategy/06_rules_register.md and cite the rule IDs you rely
-on in your plans and PRs.
+::error::A rule id cited in this PR body does not exist. An invented id is an invented constraint.
 
   rules    docs/00_strategy/06_rules_register.md          B-*, C-*, D-*, E-*, F-*, GA-*, I-*
   ADRs     docs/30_architecture/adr/                      ADR-P###
            docs/30_architecture/canon_engine/02_...md     ADR-### (engine)
   specs    docs/open-spec-items.md                        SPEC-###
 
-If this change genuinely rests on nothing, say so where a reviewer can disagree with you:
-
-  Rules: none — <why, in a sentence>
+Cite what you actually read, or cite nothing — a body that cites nothing passes this gate.
 
 Run it locally before you push:  ci/check_citations.sh - <<'BODY' ... BODY
 EOF
