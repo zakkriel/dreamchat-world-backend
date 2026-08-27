@@ -1028,3 +1028,73 @@ does it decay like any other unconfirmed perception?
 
 **Firing trigger:** the first playtest where an NPC introduces another by name and the player
 notices the world did not hear it.
+
+---
+
+## SPEC-037 — A sentence the engine cannot bind is treated as a "continue" press, so it advances the journey the ruling says it should end
+
+A player on an active journey has two moves. **Continue** advances one leg. Typing anything else is
+meant to stop the journey. The founder's ruling is quoted verbatim in the code that implements it
+(`core/api/orchestrator.go:144-151`):
+
+> *"Continue advances one leg. **Any other input ends the journey** and runs as a normal turn where you
+> stand"* (founder, R6).
+
+**The code cannot implement that rule, because "continue" has no representation of its own.**
+`core/api/beatsstream.go:248-256` states it outright — *"an empty chain against an active journey IS
+the continue press"* — and sets `chain = []Attempt{}` for `POST /beats/continue`. So the router in
+`orchestrator.go:156-167` decides on emptiness alone:
+
+```go
+if j != nil {                       // the actor is on a journey
+    if len(chain) == 0 {            // read as "continue"
+        o.runJourneyLeg(...)        // advance one leg
+        outcome.TicksAdvanced = j.CurrentTick - startTick
+        return outcome, nil
+    }
+    o.endJourney(ctx, j, "ended")   // any other input: the journey ends
+}
+```
+
+A typed sentence that the decompose seat cannot bind to any candidate returns **no attempts** — an
+empty chain. Which is indistinguishable from a continue press. **So the player tries to break off the
+journey and the world carries them one leg further along it**, spending world time, running the
+world's turn, and discarding the stated intention with no signal that it was not understood.
+
+This is the inverse of the ruled behaviour, not a degraded version of it.
+
+- **Evidence:** measured live against the running server by an independent QA span, 2026-08-11
+  (`../../docs/90_archive/reports/QA-SPAN-2026-08-11.md` finding 1, graded *"Severity: **highest**"*):
+  `POST /worlds/{w}/beats {"text":"travel to Salt Quay"}` → `chain: []`, `committed: []`,
+  **`ticks_advanced: 2`**. Re-checked 2026-08-27: `RunBeat`'s signature at `orchestrator.go:135` is
+  byte-for-byte what QA quoted 16 days earlier, and the `len(chain) == 0` branch is unchanged.
+  Related but distinct: `SPEC-030` was about movement being *unnameable*; this is about an unbindable
+  sentence being silently reinterpreted as a different, consequential action.
+- **Root cause, and why it is structural rather than a typo:**
+  `RunBeat(ctx, worldID, actorID, chain []Attempt, startTick int64, trace *BeatTrace)` carries **no
+  parameter for which kind of press this was.** Emptiness is overloaded to mean two different things —
+  *"the player deliberately passed"* and *"we could not understand the player"* — so nothing downstream
+  is able to tell them apart. The information exists at the edge and is thrown away:
+  `beatsstream.go` already holds a `continuePress` boolean (`:255`) and does not pass it on.
+- **Source:** independent QA span 2026-08-11, finding 1; re-verified during the harness trim,
+  2026-08-27 (`../../docs/00_workspace/review-test-suite-2026-08-26.md`).
+- **Owner:** BE, `play-loop` area. The reviewer for a round on this is
+  `../../harness/roles/area-expert.md`, the `play-loop` row.
+- **Expected outcome:** the mechanical half is not in doubt — thread the press kind from
+  `beatsstream.go` into `RunBeat` and route the journey branch on **that** instead of on `len(chain)`,
+  so a typed beat ends the journey whether or not its chain bound. What needs a **ruling** rather than
+  a mechanism (anti-drift) is the player-facing half, and it is a real design question: when a sentence
+  binds to nothing, what does the player see? Three candidates, all with consequences —
+  (a) the journey ends and the world runs a normal turn where they stand, which honours the ruling but
+  spends a turn on a sentence nobody understood; (b) the journey ends and the beat is refused with an
+  in-world "you can't do that from here", costing no world time; (c) nothing happens at all — no tick,
+  no turn, journey intact — which is safest for the player but makes an unparsed sentence free, and the
+  engine has no other free action. **No choice is made here.**
+- **Firing trigger:** **already fired.** It is reachable from the shipped client on any journey, and it
+  is the highest-severity item the independent QA span raised.
+- **Guard it will need:** a test that a typed, unbindable beat against an active journey **ends** the
+  journey rather than advancing a leg. That test reddens against today's code, which is the whole point
+  — of QA's seven recommendations this is the one nobody executed, and the reason is that its fix is a
+  signature change with no clean number to report at the end.
+- **Status:** **OPEN.** Untouched by the 2026-08-25/26 verification work and untouched by the
+  2026-08-27 harness trim, both of which deliberately changed no product behaviour.
