@@ -46,7 +46,8 @@ world's premise. The generator never saw them. Per entry, from the scorer's rows
 3 and 9 — the identity covers only the Andante-facing half: "no son monturas ni dioses") and
 diagnostic uncertainty (row 13 — the identity's Register actively leans the other way: "tu ciudad
 tiene fecha"). Context that matters for the decision: a documented encoder failure was refusing to
-infer any negative canon at all. This run inferred seven exclusions unprompted and generalised
+infer any negative canon at all. This run emitted seven exclusions, four of them inferred (the identity's own provenance marks
+exclusions 2, 3, 4 as stated by the brief's rules), and generalised
 correctly beyond the brief's own list (the tenth-Andante and young-Andante cases were entailed by an
 exclusion's *reason*, not copied from anywhere).
 
