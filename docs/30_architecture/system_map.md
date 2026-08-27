@@ -192,18 +192,18 @@ gate, move the row.
 | The style catalogue is served, in order, without leaking prompt prose | `worldartstyleshandler_test.go` |
 | Portals are not drawn | `artcommission_test.go` |
 | A PR branch contains `origin/main` | `.github/workflows/branch-currency.yml` |
-| A PR cites rule IDs, and every id it cites EXISTS | `.github/workflows/citations.yml` → `ci/check_citations.sh`. An invented id is an invented constraint and fails the build. 17 probes in `--selftest` run in CI before the check, so a register reformat goes red rather than silently passing everything. |
-| A PR touching a shape this map describes also amends it | `.github/workflows/pr-contract.yml` job `closes-out` → `ci/check_closeout.sh`. Triggers on `art*.go`, `worldgenesis*`, `worldkickstart*`, `image*`, `prompts/*`, `schemaversion*`, `seatconfig.go`, `schema/*`, `.github/workflows/*` and `ci/check_*`. **This is the gate this row asked for.** |
-| A PR declares the areas its own diff touches | `pr-contract.yml` job `declares-its-areas` → `ci/check_round.sh`, computed from the diff and matched as a set |
-| A round states what it taught, and the file it names actually changed | same job. `Learned:` is required; a claim naming an unchanged file fails |
+| A PR cites rule IDs, and every id it cites EXISTS | `.github/workflows/pr-contract.yml` job `cites-the-law` → `ci/check_citations.sh`. An invented id is an invented constraint and fails the build. Citing nothing passes — the mandatory-cite half was cut 2026-08-27 because `Rules: B-1` satisfied a change to the Makefile. **There is no `citations.yml`; this row named one for weeks and the file never existed.** |
 | A built world commissions its own art | `genesisart_test.go` |
 | Frontend contracts match backend `main` | `bun run verify:contract` — **in the FRONTEND repo only.** A backend PR that changes a published schema passes backend CI without it, and breaks the frontend on ITS next run. |
 | Vendored frontend contracts are byte-identical to `core/api/schema/` | `../harness/check.sh contract-drift` — **in the WORKSPACE harness, not this repo's CI.** See the matching row below. |
 
-**The decisions now live in the files, and a ratchet stops that falling back.** Measured 2026-08-26:
-11 of 59 non-test files under `core/api/` declared what governed them, and `ruling.go` — the
-LLM-to-canon boundary — named nothing. Now 37 of 59, with `../harness/check.sh governed-by` failing if
-coverage drops below a floor recorded in `GOVERNED_FLOOR` and naming the files still missing.
+**The decisions live in the files, and a Go test holds the line.** Measured 2026-08-26: 11 of 59
+non-test files under `core/api/` declared what governed them, and `ruling.go` — the LLM-to-canon
+boundary — named nothing. Now 37 of 59. `core/api/governance_test.go:29,75,84,114` is the enforcement:
+it requires the named ADR to exist **and** to reciprocally claim the file, which is strictly sharper
+than counting comment headers. `../harness/check.sh governed-by` and its `GOVERNED_FLOOR` ratchet were
+deleted 2026-08-27 — the floor was pinned at the measured value, so it could only fire on deleting an
+existing header, and it printed 22 filenames as a permanent warning on every run.
 
 The reasoning matters more than the number. This project holds **96 decisions indexed by identifier**,
 and an agent arrives with a *question*. It cannot find the decision, so it decides locally — which is
@@ -213,35 +213,33 @@ invested in it. A `Governed-by:` line is the only lever that acts *before* a lin
 it is inside the file the agent already opened. `../harness/brief.sh <path>` is the same information on
 demand, and `../docs/00_workspace/closed-questions.md` is the index by question rather than by id.
 
-**Friction is logged live, by a command, and the gate measures time not prose.**
+**Friction is logged live, by a command.**
 `../harness/friction.sh gap|conflict|surprise|decision "…"` appends a timestamped line to the round's
 journal under `../docs/00_workspace/friction/`. The bar is anything unexpected, because an unexpected
 situation is evidence the **input** was incomplete — the spec, the dossier, the error message, the map.
-`../harness/check.sh journal` enforces **timestamp spread**: three entries in one second is a batch,
-and a journal that can be filled in afterwards is the retrospective it replaced. That check failed on
-its own author within a minute of existing.
 
-**A round now records what the harness cost it.** `ci/check_closeout.sh` requires a `Friction:` line
-in the PR body ending **`EARNED`**, **`WASTE`** or **`UNCLEAR`**, and refuses a description with no
-verdict — a complaint is not a verdict, and no rule can die from a complaint. Detail goes in
-`../docs/00_workspace/friction-log.md`; `../harness/check.sh friction` enforces row verdicts and a
-reviewer ruling from the workspace side, where both trees are visible. This exists because every rule
-in this harness traces to a `failure-log.md` row and that log only grows — nothing measured the cost,
-so nothing could ever justify a deletion.
+No gate measures it any more. `../harness/check.sh journal` enforced timestamp spread and was deleted
+2026-08-27: it failed only when three rows shared one hand-typed `HH:MM:SSZ` string, compared against
+no clock at all, so pressing a different digit defeated it permanently. `../harness/check.sh friction`
+went the same day — it required a literal `**Reviewer:**` line, and both blocks on record read
+`**Reviewer:** none`. `ci/check_closeout.sh`, which required the `Friction:` verdict in the PR body,
+went with them.
 
-**Format trap, found by this gate refusing its own commit message:** the block reader treats any
-lower-cased `word:` at line start as the next header and stops there, so a verdict written as
-`UNCLEAR: because…` on its own line is truncated away before the verdict check runs. Keep the verdict
-**inline** — `… — UNCLEAR, because …`.
+**What replaced all three is the area expert** (`../harness/roles/area-expert.md`), which rules on the
+friction as part of its approval and may delete a rule. That is the mechanism the log always claimed —
+"the only mechanism by which a rule in this harness can ever die" — and before 2026-08-27 it had run
+16 rows, 3 WASTE verdicts and **zero deletions**, because no independent reviewer had ever ruled.
 
 **A green mutation table covers one class of two, and the second one shipped a bug.** A `sed` script
 mutates *source*, so it structurally can only ask "what if the code is wrong". It cannot ask "what if
 the **input** is wrong". SPEC-035 was mutation-tested — 4 mutants, 4 caught — and shipped with
 `witnesses: "<uuid>"` as a bare string committing zero witnesses and no `halt_reason`: the precise
 defect that SPEC was filed to remove, reintroduced inside its own fix. Repaired by
-`20260825140000_witnesses_malformed_is_refusal.sql`, gated by 4 assertions, mutation-tested in both
-directions. `ci/mutate.sh` documents both classes; all seven area briefs carry the four questions to
-ask per field a change reads — **absent · null · wrong type · empty**. See `failure-log.md` #45.
+`20260825140000_witnesses_malformed_is_refusal.sql`, gated by 2 assertions, mutation-tested in both
+directions. `ci/mutate.sh` documents both classes; `../harness/roles/area-expert.md` carries the four
+questions to ask per field a change reads — **absent · null · wrong type · empty**, plus the
+kill-vector rule that separates a load-bearing assertion from one fact wearing three fixtures. See
+`failure-log.md` #45.
 
 **The mutation experiment now has a runner, and is still honour-system.** `ci/mutate.sh` (7 selftest
 probes) applies named mutants, runs a test command, restores on any exit, and fails when a mutant
