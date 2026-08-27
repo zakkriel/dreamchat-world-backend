@@ -1,7 +1,7 @@
 -- Phase 0B (chunk-2): I-4 causal acyclicity + bundle topology immutability.
 -- Seren mini-scenario, TEST-TRANSACTION-ONLY (BEGIN/ROLLBACK) — no standing rows,
 -- distinct world 2222… so 0A (world 1111…) is untouched. Events only; no state_mutation,
--- no perception_record => zero projection writes. Spec: docs/superpowers/specs/2026-06-11-*.
+-- no perception_record => zero projection writes. Spec: docs/design/2026-06-11-phase-0B-causal-bundle-regression-design.md.
 BEGIN;
 SELECT plan(11);
 

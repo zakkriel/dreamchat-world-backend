@@ -280,7 +280,7 @@ direction 2 fails on the mutant, so the check is not vacuously green.
 ## SPEC-012 — NPC cognition engine (deferred subsystem)
 The perceive → appraise → believe → decide → act loop, LLM-run and event-driven, is its own
 subsystem beside the canon and perception engines. NOT in Chunk 5. Captured in the Chunk-5 play-loop
-architecture notes (`docs/superpowers/specs/2026-06-16-chunk-5-play-loop-architecture-notes.md` §5,
+architecture notes (`docs/design/2026-06-16-chunk-5-play-loop-architecture-notes.md` §5,
 §7). **Firing trigger:** when the play loop + write-side perception generation are proven and the
 world needs autonomous NPCs (post-Chunk-5).
 
@@ -404,7 +404,7 @@ records the constraint that nothing may close that door.
 
 ## Gate & state model contracts (chunk-5.5 design, 2026-06-25)
 SPEC-025…027 are the three new contracts owed by the **Gate & State Model — v2** design
-(`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`). All three are **DESIGN** — needs
+(`docs/design/2026-06-25-gate-and-state-model.md`). All three are **DESIGN** — needs
 running-code evidence before they become canon (D-9); each files as a SPEC when built. None touches
 the frozen engine canon, an invariant, or the Master DDL at this stage.
 
@@ -414,7 +414,7 @@ A predefined catalog (the contract) mapping a status (`tied`, `limping`, `gagged
 `not-blocked` on that axis; `modify` scales a parameter and feeds `fits-time` (never gates). The
 engine applies it generically — new statuses are new catalog rows, never new gate logic. Feeds
 **`not-blocked` + `fits-time`**.
-- **Source:** Gate & State Model — v2 §5 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §5 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, A11-final)** — there is NO predefined catalog:
   statuses/modifiers are **LLM-minted typed rows** inside the hardcoded action contracts (percentage
   modifiers on movement types; floor −100%, no cap). Prevention emerges from the arithmetic
@@ -428,7 +428,7 @@ tier holds 4× the previous (`size n = 4^(n-1)` base units), with `has-room` ⟺
 `used_volume + 4^(size-1) ≤ volume_budget`; and **weight** — a `weight` per object vs a carrier's /
 container's `max_load`, with `within-load` ⟺ `used_weight + weight ≤ max_load` (a carrier's
 `max_load` is its strength dimension). The two are orthogonal. Feeds **`has-room` + `within-load`**.
-- **Source:** Gate & State Model — v2 §7 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §7 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, founder-ruled)** — the volume half survives
   (measurements `max_room`/`occupied_room`; `has-room` computed at ask-time, never stored). The weight
   half changed: **`within-load` is DEAD as a blocker** ("it does not really support the status system,
@@ -445,7 +445,7 @@ non-comprehending listener perceives that someone spoke, at whom, the tone — n
 Binary understand/not for v1; partial fluency later. The reception/comprehension axis also gates
 meaning-dependent outcomes at resolution (a non-comprehending target can't be talked into anything).
 Feeds **fan-out → full vs act-only**.
-- **Source:** Gate & State Model — v2 §8 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §8 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
   when built.
 - **Firing trigger:** when `Communicated` fan-out / comprehension-gated reception lands beyond the
@@ -471,7 +471,7 @@ declared seed/tooling-only for now (`MASTER_INDEX.md:125` lists B2 — World cre
 stub). A world list is a directory, not canon: no world *state* on this surface.
 - **Source:** frontend review pass against `dreamchat-frontend` @ `main` — the predecessor repo,
   since archived and superseded by `dream-weaver-visuals` (`workspace:ADR-W003`); full context in
-  `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §1.
+  `docs/design/2026-08-07-frontend-needs-from-backend.md` §1.
 - **Owner:** Chunk 6 (pairs with SPEC-019/020/021/022). **Cross-repo:** BE (this repo) + FE.
 - **Expected outcome:** a `GET /worlds` directory payload + a world-scoped viewer seam + a recorded
   ruling on world creation. No engine/DDL change; no perception-boundary change.
@@ -534,13 +534,13 @@ knowledge (B-1).
 Unmeetable while the stubs stood: **Actors AC#3, AC#4, AC#10**; **Locations AC#2, AC#3, AC#4, AC#5,
 AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version identity in the payload).
 - **Source:** frontend review pass while building the Compendium pages onto the design system; full
-  table in `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §2.5.
+  table in `docs/design/2026-08-07-frontend-needs-from-backend.md` §2.5.
 - **Owner:** reopened Chunk 4 (its gate is "all four PRDs' read-side ACs on seed",
   `implementation_playbook_superpowers.md:70`). **Cross-repo:** BE (this repo).
 - **Firing trigger:** fired — the FE Compendium surfaces were built and waiting on data.
 - **What landed.** Every lens below is computed from `fn_visible_perceptions(world, viewer)` only —
   no `*_state` read anywhere on these paths, so no canon crosses the boundary (B-1, I-3). Design
-  record: `docs/superpowers/specs/2026-08-08-spec-029-compendium-lenses.md`; pgTAP:
+  record: `docs/design/2026-08-08-spec-029-compendium-lenses.md`; pgTAP:
   `core/db/tests/24_compendium_lenses_test.sql`.
 
   | page | now computed |
@@ -573,7 +573,7 @@ AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version ident
   viewer is never a topic; the unheaded remainder is keyed by the page's own id and comes first.
   Measured: 28 groups → 3. **The payload shape does not move**, so `actor_page/2`,
   `location_page/1` and `artifact_page/1` all stay put. Design:
-  `docs/superpowers/specs/2026-08-09-knowledge-grouping.md`; pgTAP:
+  `docs/design/2026-08-09-knowledge-grouping.md`; pgTAP:
   `core/db/tests/26_knowledge_grouping_test.sql`.
 
 ---
@@ -1064,7 +1064,7 @@ world's turn, and discarding the stated intention with no signal that it was not
 This is the inverse of the ruled behaviour, not a degraded version of it.
 
 - **Evidence:** measured live against the running server by an independent QA span, 2026-08-11
-  (`../../docs/90_archive/reports/QA-SPAN-2026-08-11.md` finding 1, graded *"Severity: **highest**"*):
+  (`../../docs/00_workspace/evidence/QA-SPAN-2026-08-11.md` finding 1, graded *"Severity: **highest**"*):
   `POST /worlds/{w}/beats {"text":"travel to Salt Quay"}` → `chain: []`, `committed: []`,
   **`ticks_advanced: 2`**. Re-checked 2026-08-27: `RunBeat`'s signature at `orchestrator.go:135` is
   byte-for-byte what QA quoted 16 days earlier, and the `len(chain) == 0` branch is unchanged.

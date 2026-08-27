@@ -4,7 +4,7 @@
 -- 22222222-2222-2222-2222-222222222222 — founder Option B: play/fixture separation).
 -- Runs against the SEEDED, COMMITTED db (like the other seed checks) — reads the seed's
 -- fixed uuids inside a BEGIN/ROLLBACK envelope. Content canon:
--- docs/superpowers/specs/chunk-5.5-final/FINAL-drowned-lantern-souls.md.
+-- docs/law/rulings/FINAL-drowned-lantern-souls.md.
 --
 -- The gate this file guards: approved souls became rows, secrets are subject-linked
 -- PRIVATE records (never core traits), the wall (fn_isolated_npcs) trips on those secrets,
