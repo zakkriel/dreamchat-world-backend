@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(14);
+SELECT plan(12);
 
 -- SPEC-035 — an ObjectRelocated event must RECORD who saw it, and those witnesses must perceive it.
 --
@@ -172,19 +172,12 @@ SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
              6500, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
   'SPEC-035: witnesses as a BARE STRING is refused, not silently dropped' );
 
-SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
-             jsonb_build_object('type','ObjectRelocated','stated','a number',
-               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
-               'witnesses', 42),
-             6501, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
-  'SPEC-035: witnesses as a number is refused' );
-
-SELECT is( (SELECT apply_event(:'W'::uuid, :'A1'::uuid,
-             jsonb_build_object('type','ObjectRelocated','stated','an object',
-               'object_id', :'OB', 'dest_kind','actor', 'dest_id', :'A2',
-               'witnesses', jsonb_build_object('who', :'A3')),
-             6502, 0, 'fast_path')->>'halt_reason'), 'gate_reject',
-  'SPEC-035: witnesses as an object is refused' );
+-- The `number` and `object` shape assertions were deleted 2026-08-27. Measured kill-vectors: both were
+-- reddened by exactly the mutants that redden the bare-string assertion above and by nothing else, so
+-- they were one fact wearing three fixtures. `string` (a caller reasoning from `Communicated`'s
+-- `listener_id`) and `null` (below) are the two that earn their keep — `null` is the ONLY assertion in
+-- this file that catches a refusal made too broad, which is the mutant that would reject valid input.
+-- Receipts: docs/00_workspace/review-test-suite-2026-08-26.md §Q1.
 
 -- and the two legitimate absences still commit — a refusal that also refuses valid input is worse
 -- than the silence it replaced.

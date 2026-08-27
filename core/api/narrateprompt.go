@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-13 — per-seat model routing; no seat assumes a driver's capabilities.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	_ "embed"
 	"encoding/json"

@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: GA-2 — system terms stay genre-agnostic.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"context"
 	"encoding/json"

@@ -12,7 +12,7 @@
 -- seed's fixed uuids. Ticks 6000+ are well above the seed's max (Kade arrives at tick 50) and clear of
 -- test-85's transient world-2222 use (ticks 10–22). Content canon + coordinates (a SANCTIONED
 -- hand-authored test artifact, §3):
---   docs/superpowers/specs/chunk-5.5-final/FINAL-action-contracts.md §2/§3
+--   docs/law/rulings/FINAL-action-contracts.md §2/§3
 --   core/db/seeds/seed_drowned_lantern.sql
 --
 -- Fixed seed uuids:

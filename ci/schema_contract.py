@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # =============================================================================
 # SPEC-011 — published-schema contract check (two-sided). See
-# docs/open-spec-items.md (SPEC-011) and docs/superpowers/plans/2026-06-15-spec-011-*.
+# docs/open-spec-items.md (SPEC-011) and docs/design/2026-06-15-spec-011-schema-contract-ci.md.
 #
 #   Direction 1 (payload -> schema): every REAL payload (produced by the SQL JSON
 #     functions, see ci/gen_payloads.sh) validates against its published schema,

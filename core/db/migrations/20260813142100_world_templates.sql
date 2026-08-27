@@ -264,7 +264,7 @@ INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
  (v_perception_hooded_contract,v_kade,p_world_id);
 
 -- ── Scene state via state_mutation (event f9) — projects through sm_project; replay-safe ──
--- Single-key absolute sets under attrs (Rider B). Tier-1 keys: open, locked, connects, size,
+-- Single-key absolute sets under attrs (ABSOLUTE-STATE-SETS, was 0A Rider B). Tier-1 keys: open, locked, connects, size,
 -- weight, tension (see core/api/tier1.go). carry is the single Tier-1 key `contained_by` (§4 eager
 -- encumbrance requires carry to be engine-readable state; the former Tier-2 carried_by/held_by are
 -- unified into it — contents of X = entities whose contained_by = X, actors are root carriers). connects is the
@@ -316,7 +316,7 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
 -- fn_distance measures any pair at their nearest common parent's frame; fn_place_at measures which
 -- child's area contains a point.
 -- Coordinates are a SANCTIONED hand-authored test artifact (§3); production mints them (Task 6). Each
--- (entity, attribute_path) is written EXACTLY ONCE → replay-order-independent (Rider B, D-1). Tier-1 keys
+-- (entity, attribute_path) is written EXACTLY ONCE → replay-order-independent (ABSOLUTE-STATE-SETS, was 0A Rider B; D-1). Tier-1 keys
 -- only for engine-read attrs (coordinates, parent_location_id, max_room, empty_weight, weight, size,
 -- contained_by, area — fn_place_at reads it, so it is engine-read, not descriptive). seq 26+ continues
 -- f9's single monotonic seq space.

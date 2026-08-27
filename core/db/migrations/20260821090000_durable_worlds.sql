@@ -1,6 +1,6 @@
 -- migrate:up
 
--- Durable worlds (spec: docs/superpowers/specs/2026-08-21-durable-worlds-design.md).
+-- Durable worlds (spec: docs/design/2026-08-21-durable-worlds-design.md).
 --
 -- A generated world now commits when AUTHORING ends, not when the player finally answers the last
 -- kickstart question. Production taught the ordering of value the hard way (2026-08-20/21): the

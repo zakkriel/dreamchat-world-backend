@@ -280,7 +280,7 @@ direction 2 fails on the mutant, so the check is not vacuously green.
 ## SPEC-012 — NPC cognition engine (deferred subsystem)
 The perceive → appraise → believe → decide → act loop, LLM-run and event-driven, is its own
 subsystem beside the canon and perception engines. NOT in Chunk 5. Captured in the Chunk-5 play-loop
-architecture notes (`docs/superpowers/specs/2026-06-16-chunk-5-play-loop-architecture-notes.md` §5,
+architecture notes (`docs/design/2026-06-16-chunk-5-play-loop-architecture-notes.md` §5,
 §7). **Firing trigger:** when the play loop + write-side perception generation are proven and the
 world needs autonomous NPCs (post-Chunk-5).
 
@@ -404,7 +404,7 @@ records the constraint that nothing may close that door.
 
 ## Gate & state model contracts (chunk-5.5 design, 2026-06-25)
 SPEC-025…027 are the three new contracts owed by the **Gate & State Model — v2** design
-(`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`). All three are **DESIGN** — needs
+(`docs/design/2026-06-25-gate-and-state-model.md`). All three are **DESIGN** — needs
 running-code evidence before they become canon (D-9); each files as a SPEC when built. None touches
 the frozen engine canon, an invariant, or the Master DDL at this stage.
 
@@ -414,7 +414,7 @@ A predefined catalog (the contract) mapping a status (`tied`, `limping`, `gagged
 `not-blocked` on that axis; `modify` scales a parameter and feeds `fits-time` (never gates). The
 engine applies it generically — new statuses are new catalog rows, never new gate logic. Feeds
 **`not-blocked` + `fits-time`**.
-- **Source:** Gate & State Model — v2 §5 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §5 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, A11-final)** — there is NO predefined catalog:
   statuses/modifiers are **LLM-minted typed rows** inside the hardcoded action contracts (percentage
   modifiers on movement types; floor −100%, no cap). Prevention emerges from the arithmetic
@@ -428,7 +428,7 @@ tier holds 4× the previous (`size n = 4^(n-1)` base units), with `has-room` ⟺
 `used_volume + 4^(size-1) ≤ volume_budget`; and **weight** — a `weight` per object vs a carrier's /
 container's `max_load`, with `within-load` ⟺ `used_weight + weight ≤ max_load` (a carrier's
 `max_load` is its strength dimension). The two are orthogonal. Feeds **`has-room` + `within-load`**.
-- **Source:** Gate & State Model — v2 §7 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §7 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **⚠ SUPERSEDED IN PART (2026-07-22, founder-ruled)** — the volume half survives
   (measurements `max_room`/`occupied_room`; `has-room` computed at ask-time, never stored). The weight
   half changed: **`within-load` is DEAD as a blocker** ("it does not really support the status system,
@@ -445,7 +445,7 @@ non-comprehending listener perceives that someone spoke, at whom, the tone — n
 Binary understand/not for v1; partial fluency later. The reception/comprehension axis also gates
 meaning-dependent outcomes at resolution (a non-comprehending target can't be talked into anything).
 Feeds **fan-out → full vs act-only**.
-- **Source:** Gate & State Model — v2 §8 (`docs/superpowers/specs/2026-06-25-gate-and-state-model.md`).
+- **Source:** Gate & State Model — v2 §8 (`docs/design/2026-06-25-gate-and-state-model.md`).
 - **Status:** **DESIGN / needs running-code evidence (D-9).** File as a spec with empirical evidence
   when built.
 - **Firing trigger:** when `Communicated` fan-out / comprehension-gated reception lands beyond the
@@ -471,7 +471,7 @@ declared seed/tooling-only for now (`MASTER_INDEX.md:125` lists B2 — World cre
 stub). A world list is a directory, not canon: no world *state* on this surface.
 - **Source:** frontend review pass against `dreamchat-frontend` @ `main` — the predecessor repo,
   since archived and superseded by `dream-weaver-visuals` (`workspace:ADR-W003`); full context in
-  `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §1.
+  `docs/design/2026-08-07-frontend-needs-from-backend.md` §1.
 - **Owner:** Chunk 6 (pairs with SPEC-019/020/021/022). **Cross-repo:** BE (this repo) + FE.
 - **Expected outcome:** a `GET /worlds` directory payload + a world-scoped viewer seam + a recorded
   ruling on world creation. No engine/DDL change; no perception-boundary change.
@@ -534,13 +534,13 @@ knowledge (B-1).
 Unmeetable while the stubs stood: **Actors AC#3, AC#4, AC#10**; **Locations AC#2, AC#3, AC#4, AC#5,
 AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version identity in the payload).
 - **Source:** frontend review pass while building the Compendium pages onto the design system; full
-  table in `docs/superpowers/handovers/2026-08-07-frontend-needs-from-backend.md` §2.5.
+  table in `docs/design/2026-08-07-frontend-needs-from-backend.md` §2.5.
 - **Owner:** reopened Chunk 4 (its gate is "all four PRDs' read-side ACs on seed",
   `implementation_playbook_superpowers.md:70`). **Cross-repo:** BE (this repo).
 - **Firing trigger:** fired — the FE Compendium surfaces were built and waiting on data.
 - **What landed.** Every lens below is computed from `fn_visible_perceptions(world, viewer)` only —
   no `*_state` read anywhere on these paths, so no canon crosses the boundary (B-1, I-3). Design
-  record: `docs/superpowers/specs/2026-08-08-spec-029-compendium-lenses.md`; pgTAP:
+  record: `docs/design/2026-08-08-spec-029-compendium-lenses.md`; pgTAP:
   `core/db/tests/24_compendium_lenses_test.sql`.
 
   | page | now computed |
@@ -573,7 +573,7 @@ AC#8**; **Artifacts AC#2, AC#3**; **Timeline AC#4** (no per-record version ident
   viewer is never a topic; the unheaded remainder is keyed by the page's own id and comes first.
   Measured: 28 groups → 3. **The payload shape does not move**, so `actor_page/2`,
   `location_page/1` and `artifact_page/1` all stay put. Design:
-  `docs/superpowers/specs/2026-08-09-knowledge-grouping.md`; pgTAP:
+  `docs/design/2026-08-09-knowledge-grouping.md`; pgTAP:
   `core/db/tests/26_knowledge_grouping_test.sql`.
 
 ---
@@ -915,6 +915,49 @@ PRDs' flagship perception example — "You saw Seren pass a sealed note to a clo
 *witnessed handover*, so it is now expressible. A *concealed* one still is not: it would shorten the
 list the caller passes, which needs no engine change, but nothing yet computes that list.
 
+## SPEC-036 — A world's own rules have no enforcement path, and the two kinds need different ones
+
+**Status: OPEN, deferred deliberately.** Raised during the world-genesis identity design (2026-08-26).
+Genesis will emit per-world rules; nothing today can hold a world to them. Parked so genesis can proceed,
+and recorded because it must be solved before world creation during gameplay, not after.
+
+**The split that matters, and it is not the one you would guess.** A world's rules divide by *when* they
+can be violated, and the two halves have nothing in common:
+
+- **Rules about what may EXIST** — *"no institution may promise a schedule."* No player action creates an
+  institution, so there is **no engine check possible, ever.** These are enforced only at content-creation
+  time: at genesis, and again at every lazy fill during play. A model judges them, every time. This is the
+  half that scales with hours played, and it is the cost risk.
+- **Rules about what may HAPPEN** — *"a closed house never reopens."* Something must *attempt* the
+  transition, that attempt is an action, and the play loop already resolves actions into a fixed set of
+  options each carrying its own checks. So the check has a home: one lookup added inside the checks that
+  already run at the matching option. Code we write once; rows minted per world.
+
+**The contract already has both sections, and the fixture mixes them up.** `excluded[]` is defined as
+*"refuse to author anything matching"* — the EXIST kind. `law[].forbids` takes a **subject and an act** —
+the HAPPEN kind, and naming an *act* is exactly what maps onto the decomposed action set.
+`G_grelda_by_simarch.md` files *"A house that has closed does not reopen by any means"* under
+**`excluded[]`**, which is why it reads as unenforceable: it is sitting in the section that has no
+enforcement path. It is a law with a forbidden act.
+
+**The honest limit.** A world can only forbid acts the engine can recognise. If a law names *"compelling a
+pact"* and the decomposer has no such act, the law is **narrator guidance, not enforcement** — honoured
+when the narrator notices and violated when it does not. Genesis must therefore mark each law as *enforced*
+or *guidance* rather than presenting both as rules the world will hold.
+
+**No code is generated per world, ever.** Checks are instances of shapes we have already coded, with the
+world's values filled in — the discipline `core/api/tier1.go` already states: *"the engine-known closed
+set. It grows only when we add a check in code — never at runtime, never by mint."*
+
+**How the checkable set should grow.** Not by designing a predicate language up front. Genesis emits prose
+rules; across many worlds some shapes recur (*X may never become Y*; *nobody may do Z without W*). Those
+recurrences are the evidence for which predicates to promote into code, and each promotion permanently
+retires a category of per-entity model cost.
+
+**Owner:** play-loop + contracts-and-platform, jointly. **Blocks:** world creation during gameplay.
+**Does not block:** genesis, which may emit rules with an enforcement marker and no enforcement.
+
+
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
 the viewer's perceived scene becomes earned — direct address and introduction included; overhearing
@@ -985,3 +1028,173 @@ does it decay like any other unconfirmed perception?
 
 **Firing trigger:** the first playtest where an NPC introduces another by name and the player
 notices the world did not hear it.
+
+---
+
+## SPEC-037 — A sentence the engine cannot bind is treated as a "continue" press, so it advances the journey the ruling says it should end
+
+A player on an active journey has two moves. **Continue** advances one leg. Typing anything else is
+meant to stop the journey. The founder's ruling is quoted verbatim in the code that implements it
+(`core/api/orchestrator.go:144-151`):
+
+> *"Continue advances one leg. **Any other input ends the journey** and runs as a normal turn where you
+> stand"* (founder, R6).
+
+**The code cannot implement that rule, because "continue" has no representation of its own.**
+`core/api/beatsstream.go:248-256` states it outright — *"an empty chain against an active journey IS
+the continue press"* — and sets `chain = []Attempt{}` for `POST /beats/continue`. So the router in
+`orchestrator.go:156-167` decides on emptiness alone:
+
+```go
+if j != nil {                       // the actor is on a journey
+    if len(chain) == 0 {            // read as "continue"
+        o.runJourneyLeg(...)        // advance one leg
+        outcome.TicksAdvanced = j.CurrentTick - startTick
+        return outcome, nil
+    }
+    o.endJourney(ctx, j, "ended")   // any other input: the journey ends
+}
+```
+
+A typed sentence that the decompose seat cannot bind to any candidate returns **no attempts** — an
+empty chain. Which is indistinguishable from a continue press. **So the player tries to break off the
+journey and the world carries them one leg further along it**, spending world time, running the
+world's turn, and discarding the stated intention with no signal that it was not understood.
+
+This is the inverse of the ruled behaviour, not a degraded version of it.
+
+- **Evidence:** measured live against the running server by an independent QA span, 2026-08-11
+  (`../../docs/00_workspace/evidence/QA-SPAN-2026-08-11.md` finding 1, graded *"Severity: **highest**"*):
+  `POST /worlds/{w}/beats {"text":"travel to Salt Quay"}` → `chain: []`, `committed: []`,
+  **`ticks_advanced: 2`**. Re-checked 2026-08-27: `RunBeat`'s signature at `orchestrator.go:135` is
+  byte-for-byte what QA quoted 16 days earlier, and the `len(chain) == 0` branch is unchanged.
+  Related but distinct: `SPEC-030` was about movement being *unnameable*; this is about an unbindable
+  sentence being silently reinterpreted as a different, consequential action.
+- **Root cause, and why it is structural rather than a typo:**
+  `RunBeat(ctx, worldID, actorID, chain []Attempt, startTick int64, trace *BeatTrace)` carries **no
+  parameter for which kind of press this was.** Emptiness is overloaded to mean two different things —
+  *"the player deliberately passed"* and *"we could not understand the player"* — so nothing downstream
+  is able to tell them apart. The information exists at the edge and is thrown away:
+  `beatsstream.go` already holds a `continuePress` boolean (`:255`) and does not pass it on.
+- **Source:** independent QA span 2026-08-11, finding 1; re-verified during the harness trim,
+  2026-08-27 (`../../docs/00_workspace/review-test-suite-2026-08-26.md`).
+- **Owner:** BE, `play-loop` area. The reviewer for a round on this is
+  `../../harness/roles/area-expert.md`, the `play-loop` row.
+- **Expected outcome:** the mechanical half is not in doubt — thread the press kind from
+  `beatsstream.go` into `RunBeat` and route the journey branch on **that** instead of on `len(chain)`,
+  so a typed beat ends the journey whether or not its chain bound. What needs a **ruling** rather than
+  a mechanism (anti-drift) is the player-facing half, and it is a real design question: when a sentence
+  binds to nothing, what does the player see? Three candidates, all with consequences —
+  (a) the journey ends and the world runs a normal turn where they stand, which honours the ruling but
+  spends a turn on a sentence nobody understood; (b) the journey ends and the beat is refused with an
+  in-world "you can't do that from here", costing no world time; (c) nothing happens at all — no tick,
+  no turn, journey intact — which is safest for the player but makes an unparsed sentence free, and the
+  engine has no other free action. **No choice is made here.**
+- **Firing trigger:** **already fired.** It is reachable from the shipped client on any journey, and it
+  is the highest-severity item the independent QA span raised.
+- **Guard it will need:** a test that a typed, unbindable beat against an active journey **ends** the
+  journey rather than advancing a leg. That test reddens against today's code, which is the whole point
+  — of QA's seven recommendations this is the one nobody executed, and the reason is that its fix is a
+  signature change with no clean number to report at the end.
+- **Status:** **OPEN.** Untouched by the 2026-08-25/26 verification work and untouched by the
+  2026-08-27 harness trim, both of which deliberately changed no product behaviour.
+
+## SPEC-038 — Attention: a bounded, modifiable distribution that decides who perceives an event
+
+**Raised by:** founder, in conversation 2026-08-27. **Status:** DESIGNED, NOT BUILT. **Blocks:** nothing
+today; unblocks `attentional` blocks in `ADR-P025`, which currently name a category with no mechanism.
+
+### The problem it solves
+
+Perception today is decided by *what happened* and *where people were*. It has no account of *what they
+were doing*. Two actors in the same room are treated identically, which is wrong: an actor staring at
+Kade probably sees the handover; an actor absorbed in courting someone else is barely aware Kade is
+present.
+
+`ADR-P025` defines two block kinds — `physical` (Physics owns it) and `attentional`. **`attentional` was
+defined with no mechanism behind it.** This is that mechanism.
+
+### The design, as ruled
+
+**Attention is state, per actor, stored as a distribution.**
+
+- The value is an **array of splits** — how this actor's attention is divided across the entities and
+  events around them. Not a single target.
+- **100% is the BASE value**, not a hard ceiling. It is bounded so attention cannot be augmented for
+  free from the source: if 35 entities are present, the residual share divides among them, it is not
+  granted to each.
+- **Two kinds of modifier, and they are different things:**
+  - a **max modifier** — raises the base (e.g. `+100%` lets the actor distribute more attention overall,
+    or hold higher individual shares)
+  - a **flat check modifier** — added at the moment of the roll (e.g. `+15%` attention to any check)
+- **A 5% ambient floor.** Every present actor always has at least a 5% chance on any check, however
+  absorbed. This is the corner-of-the-eye case. **The floor applies to telegraphs too** — founder ruling
+  — so total absorption never means guaranteed blindness to a wind-up.
+- Example distribution: a 1:1 conversation is ~80% on the other person, ~20% divided across everything
+  else that could trigger or relate to an event.
+
+**The check is programmatic, one roll per event.** A handover triggers a roll. A window smashing triggers
+a roll. Someone speaking triggers a roll. **Not per (observer × target)** — per event, per observer, and
+the cost is minimal because no model is involved.
+
+**Attention is restated at beat end, by the LLM.** The resolve seat, knowing what happened, redistributes
+each scene participant's attention. **Forced attention** is that call doing its job rather than a special
+case: a window smashes, the 80% on the conversation collapses, and attention goes to the figure coming
+through.
+
+### Why the mid-beat question does not exist
+
+Asked during design: *does forced attention apply inside the beat that caused it?* It does not need to,
+because **the interruption window is already built.** `held_outcome` + `origin='telegraph'`
+(`20260724110004_held_outcome.sql`): a disruptive act commits its **wind-up** as perceivable canon, the
+full intended act is held, and the player's next input resolves it.
+
+So attention decides which side of that window an actor is on:
+
+- **Perceived the wind-up** → knows someone is about to come through → can act *before* it happens.
+- **Did not** → gets the forced acknowledgment when it lands, and acts on an already-broken window and a
+  man standing in it.
+
+The window smash and the figure coming through are **two beats — a telegraph and its resolution** — not
+two events inside one beat. No mid-beat mechanic is required.
+
+This also makes `C-7` quantitative for the first time: *"the longer or more consequential an action
+chain, the more chances the world has to react, interrupt, resist."* A longer wind-up is more
+perceivable, so more actors roll against it, so more of them can interrupt.
+
+### What it copies rather than invents
+
+| Piece | Existing pattern it follows |
+|---|---|
+| the roll | `pressure.go` `deterministicRoll` — an fnv64a hash of committed state, never `math/rand`, so replay reproduces it byte-for-byte (`I-1`) |
+| modifiers | `effective_speed = base_speed × Π(modifier factors)` and `effective_weight(container) = (empty_weight + Σ …) × weight_modifier` |
+| storage | `attrs.coordinates` — a structured value at a single-key path under `attrs`, written via `state_mutation`. `ABSOLUTE-STATE-SETS` covers it, so no deltas. Replayable without adding noise to the canon log. |
+| interruption | `held_outcome` + telegraph origin — **already built** |
+
+**Five new pieces, four of which copy an existing pattern. The interruption half exists.**
+
+### Hard constraint carried from `ADR-P025`
+
+**An `attentional` result may never overturn a `physical` block.** Keen senses can beat inattention and
+can never see through a wall. And no amount of absorption hides a horse: object size is a physical fact
+(`volume(size) = 4^(size-1)`, size 1–10), so a size-5 animal changing hands is perceived by everyone
+present regardless of their attention, while a size-1 sealed note is genuinely missable.
+
+### Still open
+
+1. **The size threshold** — where on the 1–10 scale does "can change hands unnoticed" stop? Seeded data:
+   a sealed note and a cellar key are `1`; `the bar` and a 92kg ballast stone are `2`. Not ruled.
+2. What sets the **max modifier** and the **flat check modifier** in practice — attributes, conditions,
+   equipment? `SPEC-016` (per-attribute perceivability) is adjacent and also open.
+3. Whether attention for actors **outside** the current scene persists unchanged, or decays.
+4. Whether the end-of-beat restatement covers every present actor or only those whose attention changed.
+
+### Related, and still unresolved from the same conversation
+
+**The ruled path contradicts the attempt path on who perceives.** `apply_ruled_event` writes perceptions
+itself, to **everyone co-present** (`fn_actors_at(world, here) UNION actor`), with `participant_ids` as
+subjects — so the object is never a subject, reproducing the SPEC-034 defect on that path, and granting
+perception by presence alone, which contradicts the named-witness ruling. Founder ruled that
+`apply_ruled_event` should get the same treatment as `apply_event`; the *shape* of that fix now depends
+on this SPEC. **A handover committed through the resolve seat is currently invisible to everyone,
+including the new holder.**

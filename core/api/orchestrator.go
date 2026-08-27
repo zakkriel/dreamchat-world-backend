@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-1 — nothing mutates canon directly — proposals only, the Core commits. Also B-1, I-3.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"context"
 	"encoding/json"

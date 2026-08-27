@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-11 — coupled quantities are derived, never stored. Also I-3.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 // worldgenesiscommit.go — turning an authored world_genesis/1 document into a world you can walk into.
 //
 // This is the deterministic half of world creation, and it is deliberately the LARGER half: everything

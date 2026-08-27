@@ -13,8 +13,8 @@
 -- Runs against the SEEDED, COMMITTED db (like 116/117) inside a BEGIN/ROLLBACK envelope, reading
 -- the seed's fixed uuids. Ticks 7000+ are well above the seed's max (Kade arrives at tick 50) and
 -- clear of 117's 6000-block.
---   docs/superpowers/specs/chunk-5.5-final/FINAL-action-contracts.md §8 (minting/three nets) + §5.4
---   docs/superpowers/specs/chunk-5.5-final/FINAL-interaction-loop-PRD.md R3/R4 (doc-05 matcher)
+--   docs/law/rulings/FINAL-action-contracts.md §8 (minting/three nets) + §5.4
+--   docs/law/rulings/FINAL-interaction-loop-PRD.md R3/R4 (doc-05 matcher)
 --   core/db/seeds/seed_drowned_lantern.sql
 --
 -- Fixed seed uuids:

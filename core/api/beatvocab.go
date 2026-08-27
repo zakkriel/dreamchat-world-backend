@@ -1,8 +1,12 @@
 package main
 
+// Governed-by: ADR-009 — the structured-output leash. Also D-1, SPEC-015.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
-	"encoding/json"
 	_ "embed"
+	"encoding/json"
 )
 
 //go:embed schema/beat_chain.v2.schema.json

@@ -6,7 +6,7 @@
 -- Runs against the SEEDED, COMMITTED db (like 109), reading the seed's fixed uuids inside a
 -- BEGIN/ROLLBACK envelope. Content canon (coordinates are a SANCTIONED hand-authored test artifact,
 -- spec §3 — "the hand-placed seed world is a test artifact, not the pattern"; production mints them):
---   docs/superpowers/specs/chunk-5.5-final/FINAL-drowned-lantern-souls.md
+--   docs/law/rulings/FINAL-drowned-lantern-souls.md
 --   core/db/seeds/seed_drowned_lantern.sql
 --
 -- Fixed seed uuids (must match seed_drowned_lantern.sql):

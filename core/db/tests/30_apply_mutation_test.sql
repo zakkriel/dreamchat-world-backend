@@ -15,7 +15,7 @@ SELECT is( (SELECT attrs->>'location_id' FROM actor_state WHERE entity_id='00000
 SELECT is( (SELECT last_event_id FROM actor_state WHERE entity_id='00000000-0000-0000-0000-0000000000f1'),
        'e0000000-0000-0000-0000-0000000000a1'::uuid, 'last_event_id provenance set');
 
--- (2) idempotency (Rider B): standalone re-apply changes no domain value (excl. volatile updated_at)
+-- (2) idempotency (ABSOLUTE-STATE-SETS, was 0A Rider B): standalone re-apply changes no domain value (excl. volatile updated_at)
 CREATE TEMP TABLE _before AS
   SELECT attrs,last_event_id,dirty FROM actor_state WHERE entity_id='00000000-0000-0000-0000-0000000000f1';
 SELECT apply_mutation(m.*) FROM state_mutation m WHERE m.entity_id='00000000-0000-0000-0000-0000000000f1';

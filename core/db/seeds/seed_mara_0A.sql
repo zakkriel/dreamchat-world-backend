@@ -2,7 +2,7 @@
 -- seed_mara_0A.sql — deterministic Mara scenario (doc 13 §4). Targets a CLEAN DB ONLY.
 -- Re-run path is `make reset` (NOT a self-clearing script). A seed that DELETEs canon or
 -- disables append-only enforcement would be the silent-workaround pattern made executable.
--- CONVENTION (Rider B): every state_mutation.new_value is an ABSOLUTE state set at a single-key
+-- CONVENTION (ABSOLUTE-STATE-SETS, was 0A Rider B): every state_mutation.new_value is an ABSOLUTE state set at a single-key
 -- path under attrs. (e.g. attrs.location_id). No deltas.
 -- =====================================================================================
 BEGIN;

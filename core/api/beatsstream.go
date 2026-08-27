@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-7 — the frontend owns presentation only. Also D-13, B-1, C-6, I-3.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"context"
 	"encoding/json"

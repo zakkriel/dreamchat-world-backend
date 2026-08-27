@@ -10,7 +10,7 @@
 -- It closes a cycle iff the effect is already a causal ancestor of the input. Walk ancestors of
 -- the new input; reject if the effect is reachable. Walk ALL edges regardless of status: bundle
 -- status transitions are unspecified in the frozen contract, so an invalidated edge must still
--- block a cycle that could resurrect on re-validation (spec Rider B). Depth-capped (64) fail-safe.
+-- block a cycle that could resurrect on re-validation (ACYCLICITY-WALK, was 0B Rider B). Depth-capped (64) fail-safe.
 CREATE FUNCTION causal_bundle_assert_acyclic() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE
   v_effect_ref  uuid;

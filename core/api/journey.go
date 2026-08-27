@@ -1,5 +1,9 @@
 package main
 
+// Governed-by: D-7 — the frontend owns presentation only. Also B-1, B-5.
+// Promoted from this file's own citations (2026-08-26), not newly decided. Change what this
+// file decides and those decisions change with it (D-9).
+
 import (
 	"context"
 	"encoding/json"
@@ -583,14 +587,14 @@ func (o *Orchestrator) journeyScene(ctx context.Context, j *Journey, tickAfter i
 // to say, rather than implying safety once a trip has begun).
 type journeyBlock struct {
 	Active        bool    `json:"active"`
-	Kind          string  `json:"kind"`          // "travel" | "wait" | "watch"
-	GoalLabel     *string `json:"goal_label"`     // the viewer's own name for the destination; nil for wait/watch (no goal_target)
-	WhereLabel    *string `json:"where_label"`    // the place currently being passed through; nil for open road
-	Progress      float64 `json:"progress"`       // 0..1 — journeyProgress against the row's own CurrentTick
+	Kind          string  `json:"kind"`        // "travel" | "wait" | "watch"
+	GoalLabel     *string `json:"goal_label"`  // the viewer's own name for the destination; nil for wait/watch (no goal_target)
+	WhereLabel    *string `json:"where_label"` // the place currently being passed through; nil for open road
+	Progress      float64 `json:"progress"`    // 0..1 — journeyProgress against the row's own CurrentTick
 	LegsDone      int     `json:"legs_done"`
 	LegsTotal     int     `json:"legs_total"`
-	Interruptible bool    `json:"interruptible"`  // true while active — the world may still stop you
-	Status        string  `json:"status"`         // "active" | "arrived" | "ended"
+	Interruptible bool    `json:"interruptible"` // true while active — the world may still stop you
+	Status        string  `json:"status"`        // "active" | "arrived" | "ended"
 }
 
 // projectJourneyBlock renders j into the scene payload's shape — the pure projection half of

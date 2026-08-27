@@ -9,7 +9,22 @@
 > **Workspace harness:** `../AGENTS.md` + `../docs/00_workspace/` govern anything crossing a repo
 > boundary. Read it before cross-repo work; this file governs everything inside this repo.
 
-**Mandate — before any work:** read `docs/00_strategy/06_rules_register.md` (**the law**)
+**FIRST MOVE, before you write a line — not a courtesy:**
+
+```bash
+../harness2/domain.sh core/api/<the file you are about to change>
+../harness2/domain.sh --ask "<your question, in your own words>"
+```
+
+It prints the owning domain package (or, as its documented fallback for paths with no written
+package yet, delegates to `../harness/brief.sh`'s area view), the decisions that govern that path,
+what has already gone wrong there, and
+the closed questions it touches. Every other gate here fires at PR time, which is too late: by then the
+wrong shape is written. `../docs/00_workspace/closed-questions.md` is the same index in file form — if
+your question is answered there it is **CLOSED**, and disagreeing with it is a new ADR, not a local
+exception.
+
+**Mandate — before any work:** read `docs/law/06_rules_register.md` (**the law**)
 and cite the rule IDs you rely on in your plans and PRs. No code, doc, or config change
 ships without first checking it against the register.
 
@@ -20,13 +35,13 @@ DreamChat is a persistent AI RPG world platform. **The world is the product; thi
 Read these before your first edit. They are short, and every one of them exists because the same
 mistake was made more than once.
 
-1. **`/docs/30_architecture/system_map.md`** — what exists, which repo owns it, and the seams you must
+1. **`/docs/maps/system_map.md`** — what exists, which repo owns it, and the seams you must
    not duplicate. If you are about to write something that already has an owner there, stop.
-2. **`/docs/30_architecture/adr/`** — the decisions. Read `ADR-P020`…`ADR-P024` first: they cover
+2. **`/docs/law/adr/`** — the decisions. Read `ADR-P020`…`ADR-P024` first: they cover
    migrations, art, prompts, art styles and seat config. Not knowing them has caused a production
    outage, a world shipped with no images, and a day of unnecessary work.
 3. **The pre-flight below**, run before you open a PR.
-4. **`/docs/00_strategy/06_rules_register.md`** — the law, as it always was.
+4. **`/docs/law/06_rules_register.md`** — the law, as it always was.
 
 ### Pre-flight (run it; do not assume)
 
@@ -53,8 +68,10 @@ mistake was made more than once.
 - **A style's look lives in `artstyle.go` and nowhere else** (ADR-P023). Clients pick by key.
 - **The live frontend is `dream-weaver-visuals`** (port 5273). It vendors this repo's published
   schemas byte-identically; `../harness/check.sh contract-drift` is the only gate that sees both
-  sides. **`dreamchat-frontend` is ARCHIVED** (`workspace:ADR-W003`) — the superseded predecessor
-  frontend; no work happens there and port 5173 is retired with it. **`dc-fix/` was removed**
+  sides. **`dreamchat-frontend` was REMOVED** 2026-08-27 — superseded by `dream-weaver-visuals`
+  and moved to quarantine pending deletion (`workspace:ADR-W006`, superseding `ADR-W003`'s
+  archive-in-place); never read, cite, or restore from it, and port 5173 is retired with it.
+  **`dc-fix/` was removed**
   2026-08-25: it was a stale detached worktree of this repo, 78 commits behind and 0 ahead. Need an
   isolated tree? `git worktree add` a fresh one from current `main` — a long-lived worktree is a second
   copy of the law, and the copy is the one that goes stale.
@@ -91,41 +108,38 @@ names the ADR must agree, and a `Governed-by` pointing at an ADR that does not e
 The list below is what those pointers lead INTO. It is not a reading list you work through.
 
 **Always, regardless of route:**
-- `/docs/00_strategy/06_rules_register.md` — **the law.** Every rule has an ID. Cite the IDs you rely on.
-- `/docs/30_architecture/system_map.md` — what exists and who owns it.
+- `/docs/law/06_rules_register.md` — **the law.** Every rule has an ID. Cite the IDs you rely on.
+- `/docs/maps/system_map.md` — what exists and who owns it.
 
 **Routed — read the one that covers what you are touching:**
-- `/docs/30_architecture/adr/` — the decisions. P020 migrations · P021 art · P022 prompts ·
+- `/docs/law/adr/` — the decisions. P020 migrations · P021 art · P022 prompts ·
   P023 art styles · P024 seat config.
-- `/docs/30_architecture/canon_engine/` — **FROZEN build contract (v4.1)**, start at `00_INDEX.md`.
-  Required before touching the gate, the Master DDL (doc 03), or any invariant. Never propose changes
-  to this set; a genuine problem produces a proposed superseding ADR in doc 02, never a code workaround.
-- `/docs/30_architecture/mvp_slice_and_bridge.md` — API contract + slice plan.
+- `/docs/law/02_world_state_adrs.md` — the engine ADRs, a **FROZEN build contract**.
+  Required before touching the gate, the Master DDL, or any invariant. Never propose changes
+  to this set; a genuine problem produces a proposed superseding ADR appended to that same doc,
+  never a code workaround.
+- `/docs/design/mvp_slice_and_bridge.md` — API contract + slice plan.
 - `/docs/open-spec-items.md` — the deferred seams. Check before building something that was parked.
 
 **Look up, do not read front-to-back:**
 - `/docs/MASTER_INDEX.md` — the map of everything, with statuses.
-- `/docs/30_architecture/implementation_playbook_superpowers.md` — the chunk ladder.
 - `/docs/runbooks/full-stack-from-zero.md` — exact commands to bring the stack up. Open it when you
   are bringing the stack up.
-- `/docs/superpowers/handovers/2026-08-08-three-repo-integration-handover.md` — **history.**
-  Superseded on world creation and images by `system_map.md` + ADR-P021/P023. Where they disagree,
-  the system map wins.
 
 ## Iron rules (non-negotiable; full versions in the register)
 - **Canon events are immutable; nothing mutates canon directly.** LLMs and modules *propose*; the deterministic validation gate decides (ADR-001/009, D-1).
-- **No mutable domain time.** In-world time is logical tick + display label, append-only; wall-clock `TIMESTAMPTZ` is operational telemetry only (B-5, ADR-030, `/docs/10_prds/compendium/00_time_and_mutability_rules.md`).
+- **No mutable domain time.** In-world time is logical tick + display label, append-only; wall-clock `TIMESTAMPTZ` is operational telemetry only (B-5, ADR-030).
 - **API responses never contain canon rows.** Everything crossing to the frontend is a perception-bound projection (B-1, I-3 — enforced at gate, context assembly, AND API boundary).
 - **No relationship UI exists** (B-3). The internal relationship model stays internal.
 - **Module mechanics never enter the Core** (D-2, GA-4). Module state = JSONB with mandatory `schema_version` + validation (D-4).
-- **Invariants I-1…I-10 are the permanent regression suite** (engine doc 07). They run in CI; a red invariant blocks merge, always.
+- **Invariants I-1…I-10 are the permanent regression suite** (named in `docs/law/06_rules_register.md` Part A). CI enforces a subset (I-1/I-2/I-7 plus guards — `invariants.yml` names them; failure-log #26 is why the claim is scoped); a red invariant blocks merge.
 
 ## Process
 - **Backend-only repo.** Frontend code lives in **github.com/zakkriel/dream-weaver-visuals** (the live surface; `dreamchat-frontend` is its predecessor) and must **not** be built here — do not recreate a `frontend/` directory (D-7, D-10). The API contract `core/api/schema/actor_page.v2.schema.json` is the source of truth the frontend repo generates its types from; it stays here.
-- We build in **chunks** (playbook §2). One chunk = one worktree = one plan = one PR. **Never start chunk N+1 while chunk N's gate is red.** Chunks marked 🪜 also require an honest answer to their Validation Ladder product question (§0.5) — green CI + product "no" = not done.
+- We build in **chunks**. One chunk = one worktree = one plan = one PR. **Never start chunk N+1 while chunk N's gate is red.** Chunks marked 🪜 also require an honest answer to their Validation Ladder product question — green CI + product "no" = not done.
 - Workflow per chunk: targeted brainstorm (open edges only) → write-plan from the spec → execute with TDD (failing test first, no exceptions) → gate check.
 - Scope control: PRD non-goals + the register ARE the out-of-scope list. "Wouldn't it be nice to…" already has an answer — look it up.
 - Empirical findings go to the tuning logs and, if they change a decision, to a register amendment or new ADR. Docs change because code taught us something — never to make code easier.
 
 ## Vocabulary
-Use the Glossary (`/docs/00_strategy/05_glossary_ubiquitous_language.md`). `entity` is legal **only** as the engine supertype in this repo's internals; user-facing and PRD language is Actor / Location / Artifact / Carrying / Timeline. System terms must be genre-agnostic (GA-2).
+Use the Glossary (`/docs/law/05_glossary_ubiquitous_language.md`). `entity` is legal **only** as the engine supertype in this repo's internals; user-facing and PRD language is Actor / Location / Artifact / Carrying / Timeline. System terms must be genre-agnostic (GA-2).
