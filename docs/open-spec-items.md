@@ -915,6 +915,49 @@ PRDs' flagship perception example — "You saw Seren pass a sealed note to a clo
 *witnessed handover*, so it is now expressible. A *concealed* one still is not: it would shorten the
 list the caller passes, which needs no engine change, but nothing yet computes that list.
 
+## SPEC-036 — A world's own rules have no enforcement path, and the two kinds need different ones
+
+**Status: OPEN, deferred deliberately.** Raised during the world-genesis identity design (2026-08-26).
+Genesis will emit per-world rules; nothing today can hold a world to them. Parked so genesis can proceed,
+and recorded because it must be solved before world creation during gameplay, not after.
+
+**The split that matters, and it is not the one you would guess.** A world's rules divide by *when* they
+can be violated, and the two halves have nothing in common:
+
+- **Rules about what may EXIST** — *"no institution may promise a schedule."* No player action creates an
+  institution, so there is **no engine check possible, ever.** These are enforced only at content-creation
+  time: at genesis, and again at every lazy fill during play. A model judges them, every time. This is the
+  half that scales with hours played, and it is the cost risk.
+- **Rules about what may HAPPEN** — *"a closed house never reopens."* Something must *attempt* the
+  transition, that attempt is an action, and the play loop already resolves actions into a fixed set of
+  options each carrying its own checks. So the check has a home: one lookup added inside the checks that
+  already run at the matching option. Code we write once; rows minted per world.
+
+**The contract already has both sections, and the fixture mixes them up.** `excluded[]` is defined as
+*"refuse to author anything matching"* — the EXIST kind. `law[].forbids` takes a **subject and an act** —
+the HAPPEN kind, and naming an *act* is exactly what maps onto the decomposed action set.
+`G_grelda_by_simarch.md` files *"A house that has closed does not reopen by any means"* under
+**`excluded[]`**, which is why it reads as unenforceable: it is sitting in the section that has no
+enforcement path. It is a law with a forbidden act.
+
+**The honest limit.** A world can only forbid acts the engine can recognise. If a law names *"compelling a
+pact"* and the decomposer has no such act, the law is **narrator guidance, not enforcement** — honoured
+when the narrator notices and violated when it does not. Genesis must therefore mark each law as *enforced*
+or *guidance* rather than presenting both as rules the world will hold.
+
+**No code is generated per world, ever.** Checks are instances of shapes we have already coded, with the
+world's values filled in — the discipline `core/api/tier1.go` already states: *"the engine-known closed
+set. It grows only when we add a check in code — never at runtime, never by mint."*
+
+**How the checkable set should grow.** Not by designing a predicate language up front. Genesis emits prose
+rules; across many worlds some shapes recur (*X may never become Y*; *nobody may do Z without W*). Those
+recurrences are the evidence for which predicates to promote into code, and each promotion permanently
+retires a category of per-entity model cost.
+
+**Owner:** play-loop + contracts-and-platform, jointly. **Blocks:** world creation during gameplay.
+**Does not block:** genesis, which may emit rules with an enforcement marker and no enforcement.
+
+
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
 the viewer's perceived scene becomes earned — direct address and introduction included; overhearing
