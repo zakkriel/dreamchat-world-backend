@@ -173,18 +173,27 @@ filler"* the contract warns about — four hundred authored words drowning under
 These are anchors, not chapters, and they must be short enough that all twenty stay in context on every
 later call, because that is how they do their third job.
 
-### 3.11 The quality test, and it is better than any count
+### 3.11 The pass criterion for §3.10 — not a separate test
 
-**Take a mundane thing the world never mentions. Ask the identity to shape it. Could the result exist in
-any other world?**
+**There is one test, and §3.10 is it.** This section is the criterion you apply to those twenty answers,
+not a second mechanism. An earlier draft presented it as its own test with a worked carpenter, which read
+as two things and misled the first agent to inherit the document. Corrected here.
 
-A carpenter in the trains world: he cannot guarantee materials arrive, so he keeps years of stock or
-builds only from what is already in the yard. His timber comes from wherever a train felt like going, so
-he is a carpenter of opportunistic materials with a reputation for the wrong wood. He has never worked the
-far side of the city — not because he won't, because he cannot reliably get back.
+The criterion, applied to each of the twenty answers:
 
-If the carpenter comes out as *a carpenter*, the identity is too thin, and every minted thing for the life
-of that world will be generic. This test costs ten seconds and catches what no coverage metric would.
+> **Could this answer exist in any other world?**
+
+If it could, the identity is too thin, and every element minted for the life of that world will be
+generic. The twenty functions are chosen precisely because **the identity never mentions any of them** —
+which is what makes them a real test rather than a restatement of what the identity already said.
+
+Worked, on *"who repairs and makes things"* in the trains world: he cannot guarantee materials arrive, so
+he keeps years of stock or builds only from what is already in the yard. His timber comes from wherever a
+train felt like going, so he works in opportunistic materials and has a reputation for the wrong wood. He
+has never worked the far side of the city — not because he won't, because he cannot reliably get back.
+
+That answer could not be lifted into another city. An answer that comes back as *a carpenter* is the
+failure signal, and it costs ten seconds to see.
 
 ## 4 · Rules have kinds, and the kind sets the work order
 
@@ -347,6 +356,26 @@ you the sound they want — and a rewritten sample is **authored** voice rather 
 slot where the author's own hand matters most.
 
 **Document confirmation** remains where it is, after filling.
+
+### 8.1 Fast lane gets no pre-build step at all — founder ruling, 2026-08-27
+
+> *"If the user wants the fast lane then they get the fast lane. We should not turn the goal of a fast
+> lane into a 'fast lane' that asks 35 questions to feel we are doing a good job."*
+
+So in the Fast lane: **no interview, and no identity confirmation screen.** The identity is inferred, the
+world is built, and **the finished world is the confirmation.** If it is wrong, the author regenerates or
+switches to Custom — which is what Custom is for.
+
+§8's confirmation point therefore belongs to **Custom only**, alongside §6's questions.
+
+**The cost, stated so it is chosen rather than discovered:** a bargain inferred at the wrong altitude
+produces a world that is coherently and confidently wrong, and in the Fast lane the author's first sight
+of that is the finished world. This is a deliberate trade of correctness-before-build for speed, and the
+mitigation is that the world is cheap to regenerate — not that a screen catches it.
+
+**The general principle, which outranks this instance:** a step that exists so the builder feels
+thorough is not a safeguard. If a confirmation cannot be justified by what it catches, it is friction
+wearing a safety costume, and it does not ship.
 
 The first makes the second far more likely to pass, because the expensive regeneration is usually caused
 by a misread that was visible at the cheap moment. The pipeline currently calls confirmation *"the only

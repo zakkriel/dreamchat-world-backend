@@ -123,6 +123,12 @@ Each was settled by the founder in a grilling session. Reopening one loses a day
 7. **Twenty universal human functions, phrased as functions, never professions.** They test the identity,
    build the ordinary life the pressure doesn't demand, and become the reference for content minted later.
    *"None, and here's why"* is a valid answer.
+   **There is ONE test and this is it.** Doc 03 §3.11 is the *criterion* applied to these twenty answers —
+   *could this answer exist in any other world?* — **not a second mechanism.** The carpenter is one
+   illustration of one of the twenty (*"who repairs and makes things"*), and there is no separate
+   "carpenter test". An earlier draft of doc 03 read as two things and misled the first agent to inherit
+   it; §3.11 is corrected. If you find yourself planning a carpenter test alongside the twenty functions,
+   you have read a stale draft.
 8. **Voice is imitable prose, not adjectives.** Shown to the author before any content exists, and
    **rewritable** — a rewritten sample is authored voice, not inferred.
 9. **Content register is a demand with a therefore, not a permission level.**
