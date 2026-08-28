@@ -362,7 +362,6 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	}
 	// Bookkeeping before the belt sees it, never authorship: drop what cannot be stored, and make the
 	// arrival offer coherent. Both cost a leaf at worst; neither costs the world.
-	detachVisitorFromCanon(doc)
 	dropUnstorable(doc)
 	normalisePersonNames(doc)
 	reconcileArrival(doc)
@@ -377,7 +376,6 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			return nil, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
-		detachVisitorFromCanon(doc)
 		dropUnstorable(doc)
 		normalisePersonNames(doc)
 		reconcileArrival(doc)
@@ -619,9 +617,9 @@ type fillBreach struct {
 //
 // The belt refuses that, correctly: the visitor is a premise, nobody knows them and they know nothing,
 // so they cannot also be a person with a life and a room. But the resolution is not to throw the world
-// away. detachVisitorFromCanon has already guaranteed no canon points at the visitor, which makes the
-// ARRIVAL the safe side to change — the cast member is embedded in history and hands, the visitor is
-// not attached to anything.
+// away. Canon is the record of what happened — append-only and immutable (D-1, I-1, I-2) — and the cast
+// are embedded in it, in hands and in rooms. The ARRIVAL is authored last and is attached to nothing,
+// so the arrival is the side that yields. The record is never edited to suit a later choice.
 //
 // So an alternative the seat already authored takes over: a candidate whose name is not in the cast,
 // keeping the room and the opening line the arrival was authored with. Nothing is invented.
@@ -634,23 +632,28 @@ func resolveArrivalCollision(doc *genesisDoc) {
 	if arrival == "" {
 		return
 	}
-	inCast := false
+	// A name is TAKEN if the world's own people hold it, or if CANON uses it. Canon is the record of
+	// what happened: append-only, immutable (D-1, I-1, I-2), authored before the arrival, and never
+	// edited to make a later choice fit. If the newcomer's name collides with the record, the NEWCOMER
+	// yields — nothing that happened becomes unhappened.
+	taken := make(map[string]bool, len(doc.Cast))
 	for _, a := range doc.Cast {
-		if strings.TrimSpace(a.CanonicalName) == arrival {
-			inCast = true
-			break
+		taken[strings.TrimSpace(a.CanonicalName)] = true
+	}
+	for _, h := range doc.History {
+		for _, w := range h.Who {
+			taken[strings.TrimSpace(w)] = true
+		}
+		for _, k := range h.Knowledge {
+			taken[strings.TrimSpace(k.Holder)] = true
 		}
 	}
-	if !inCast {
+	if !taken[arrival] {
 		return
-	}
-	cast := make(map[string]bool, len(doc.Cast))
-	for _, a := range doc.Cast {
-		cast[strings.TrimSpace(a.CanonicalName)] = true
 	}
 	for _, c := range doc.ArrivalCandidates {
 		name := strings.TrimSpace(c.CanonicalName)
-		if name == "" || cast[name] || strings.TrimSpace(c.Descriptor) == "" {
+		if name == "" || taken[name] || strings.TrimSpace(c.Descriptor) == "" {
 			continue
 		}
 		log.Printf("resolveArrivalCollision: the visitor %q is also one of the world's people; the arrival becomes %q, an alternative the seat authored", arrival, name)
@@ -778,56 +781,6 @@ func titleCasePersonName(name string) string {
 		}
 	}
 	return string(out)
-}
-
-// detachVisitorFromCanon removes the visitor from history that should never have named them.
-//
-// Product law, not preference: the visitor knows nothing except their own arrival and nobody in the
-// world knows them (design §"THE VISITOR KNOWS NOTHING"; the belt already refuses an event that hands
-// the player knowledge). An event listing them is mis-attributed rather than interesting, so the
-// attribution goes and the event stays — unless the visitor was its ONLY witness, in which case the
-// event cannot be true and it goes too.
-//
-// This runs before the belt so a premise violation costs an attribution, never the world.
-func detachVisitorFromCanon(doc *genesisDoc) {
-	visitor := strings.TrimSpace(doc.Arrival.CanonicalName)
-	if visitor == "" {
-		return
-	}
-	kept := make([]genesisEvent, 0, len(doc.History))
-	for i, h := range doc.History {
-		who := make([]string, 0, len(h.Who))
-		for _, w := range h.Who {
-			if strings.TrimSpace(w) == visitor {
-				log.Printf("detachVisitorFromCanon: history event %d listed the visitor %q as present — removing the attribution", i+1, visitor)
-				continue
-			}
-			who = append(who, w)
-		}
-		knowledge := make([]genesisKnowledge, 0, len(h.Knowledge))
-		for _, k := range h.Knowledge {
-			if strings.TrimSpace(k.Holder) == visitor {
-				log.Printf("detachVisitorFromCanon: history event %d gave the visitor %q knowledge — removing it", i+1, visitor)
-				continue
-			}
-			knowledge = append(knowledge, k)
-		}
-		if len(knowledge) == 0 {
-			// The belt requires at least one event, so emptying canon here trades one refusal for
-			// another. Only keep it when dropping would leave nothing at all.
-			if len(kept) == 0 && i == len(doc.History)-1 {
-				log.Printf("detachVisitorFromCanon: history event %d was known only to the visitor, but it is the only event this world has — keeping it for the belt to judge", i+1)
-				kept = append(kept, h)
-				continue
-			}
-			log.Printf("detachVisitorFromCanon: history event %d was known only to the visitor, which cannot be true — dropping the event", i+1)
-			continue
-		}
-		h.Who = who
-		h.Knowledge = knowledge
-		kept = append(kept, h)
-	}
-	doc.History = kept
 }
 
 func dropUnstorable(doc *genesisDoc) {
