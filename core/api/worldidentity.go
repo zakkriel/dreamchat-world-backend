@@ -183,16 +183,28 @@ func (id *worldIdentity) validate() error {
 	if len(id.Exclusions) == 0 {
 		return refuse("exclusions must be present — an empty list is not neutral, but omitting the slot is")
 	}
-	kinds := map[string]bool{"constraining": true, "generative": true, "prohibiting": true, "voicing": true}
+	// A rule's `kind` is DESCRIPTIVE and nothing reads it. Design §7 made rules the work plan — the
+	// scheduler dispatched on this field — but the founder's 2026-08-28 ordering ruling replaced that
+	// with six fixed batches, and scheduleWork now ignores the identity's rules entirely. The only code
+	// that ever read this field was the check that refused the build over it.
+	//
+	// Measured live 2026-08-28: a build was refused 48 seconds in for `kind: "happen"` — the model had
+	// reached for the EXCLUSION vocabulary (exist-kind / happen-kind), which is a reasonable slip and
+	// changes nothing downstream. Refusing a world over a label that drives no behaviour is exactly the
+	// constriction the founder called out. An unrecognised kind is logged so drift stays visible.
+	known := map[string]bool{"constraining": true, "generative": true, "prohibiting": true, "voicing": true}
 	seen := map[string]bool{}
 	for _, r := range id.Rules {
-		if !kinds[r.Kind] {
-			return refuse("rule %q has unknown kind %q", r.ID, r.Kind)
-		}
 		if strings.TrimSpace(r.ID) == "" || seen[r.ID] {
 			return refuse("rule ids must be unique and non-empty")
 		}
 		seen[r.ID] = true
+		if strings.TrimSpace(r.Kind) == "" {
+			return refuse("rule %q has no kind — say what sort of rule it is", r.ID)
+		}
+		if !known[r.Kind] {
+			log.Printf("identity: rule %q has kind %q, outside the described four — kept, nothing dispatches on it", r.ID, r.Kind)
+		}
 		if strings.TrimSpace(r.Therefore) == "" {
 			return refuse("rule %q has no therefore", r.ID)
 		}

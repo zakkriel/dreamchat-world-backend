@@ -141,6 +141,21 @@ rendering comes back.
 **Still unmeasured:** a build that SUCCEEDS. Every number above is from a run that refused at the
 belt, so commit and kickstart are still unmeasured, and fill quality has not been judged at all.
 
+### Design drift on the record: rules are no longer the work plan
+
+Design §7 makes the identity's rules the fill schedule — the scheduler dispatched on `rule.kind`, and
+constraining rules ran before generative ones. **The founder's 2026-08-28 ordering ruling replaced that**
+with six fixed batches (places → history → lives → objects → revise → sufficiency), so
+`scheduleWork()` ignores the identity's rules entirely and `rule.kind` is now descriptive metadata that
+nothing dispatches on.
+
+The rules still matter — they are law the fill prompt carries in full and must honour — but they are no
+longer the schedule. `identity.validate()` therefore requires a `kind` to be present and stops refusing
+a build over an unrecognised value; an unexpected one is logged instead. A live build was refused 48
+seconds in for `kind: "happen"`, which is the exclusion vocabulary and changes nothing downstream.
+
+Where this file and design §7 disagree on the fill mechanism, this file wins (`ADR-P026`, D-6).
+
 ## Product rulings 2026-08-28 (Q1–Q13)
 
 - Q2: Fast and Custom run the same understanding pass, same bar.
