@@ -9,6 +9,16 @@ holds what crosses its boundary.
 
 ---
 
+## Stage 2 — filling — is designed in full elsewhere
+
+**`docs/design/2026-08-28-the-filling-stage.md`** (`SPEC-044`) is the governing design for how a world
+gets its skeleton and meat once stage 1 has found its soul. It settles the product shape: lore is
+knowledge and has holders; each layer is authored from the layers above it; public lore is what everyone
+here knows and private lore is what makes a scene possible; people carry personality, a goal and what
+they would sacrifice for it, and example phrases in their own voice; and circumstance and disposition are
+authored separately so a person can have had the worst life and still be optimistic.
+
+
 ## What this domain is for
 
 **One job: turning a brief into a playable world.** Interview, genesis, kickstart, arrival, refresh,

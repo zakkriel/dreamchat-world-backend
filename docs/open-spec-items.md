@@ -1516,3 +1516,56 @@ to consequence rather than to vocabulary.
 4. **Does fill author concepts, and in which layer?** They sit naturally between factions and people: a
    school of thought exists before the apprentice who is wrong about it.
 
+
+---
+
+## SPEC-044 — The filling stage: layered loop, three axes, and what fill may author
+
+**Status, newest first.**
+
+**DESIGNED and founder-ruled 2026-08-28. Implementation in progress.** Governing document:
+`docs/design/2026-08-28-the-filling-stage.md` — read that; this entry exists so the design is citable and
+discoverable from the ledger.
+
+**What it settles.** World creation is stages, and stage 2 (filling) puts skeleton and meat on the soul
+stage 1 found. Fill authors *fiction* and writes nothing; transcription turns it into rows. Filling
+proceeds as a **layered loop** where each layer is authored from the layers above it — foundation →
+places → factions & groups → people → artifacts → arrival — with lore authored **with its layer** rather
+than in a separate history pass, and each layer prompted as **questions** rather than as an inventory.
+
+**The three axes that must not be conflated.** Canon is what happened, immutable. Perception is who knows
+it — flat and epistemic, carrying `confidence` and `distortion_level` and **no** salience or valence.
+Personality is who someone is, and it is the axis that carries weight, so trauma, belief and mantra belong
+there and not in perception. Modelling a trauma as a perception yields a fact someone knows with no
+expression of what it did to them.
+
+**The sequencing constraint, which is the operative rule for implementers.** Fill may author only what
+transcription can commit:
+
+- **factions and groups — author now.** `entity_kind IN ('faction','group')` has always been valid; only
+  the fill contract lacked a slot. That gap is why live runs crammed collectives into `cast` ("Two Guild
+  guards", "once familias", "supervivientes del brote"), producing descriptor-shaped names that tripped
+  the join-key guard. A missing entity class, not a naming bug.
+- **goals, example phrases, private personality — author as fiction, no engine home yet** (`SPEC-042`).
+- **unperceived canon — do not author yet.** Refused at genesis and unreachable in play (`SPEC-040`), so
+  keep at least one holder per event until that is built.
+- **concepts — do not author yet.** `entity_kind` is closed and has no `concept` (`SPEC-043`); authoring
+  them would produce documents that cannot commit.
+
+**Measured, and not negotiable by tuning.** `ms = 1349 + 15.84 × tokens_out` — 1.35 s fixed per call then
+~63 tokens/second, which predicted a 234 s build to within 1%. Wall clock is bought with output tokens,
+not call count; cost is ~$0.02 against a $0.25 budget. There is a hard 900-second ceiling on the streaming
+request that no tuning removes.
+
+### Still open
+
+1. **Per layer or per item for people?** Per-item is the only way a person's private lore genuinely
+   reasons about the specific rooms and factions that exist; per-layer is far cheaper in wall clock.
+   Founder leaned per-item for people. Unruled for the other layers.
+2. **Where do goals and example phrases land at transcription?** No home today.
+3. **Do factions hold institutional perceptions** — the published position, distinct from what members
+   believe? The engine allows it; deferred to avoid doubling the model.
+4. **Does a separate second pass survive the layered loop**, or does authoring lore with its layer remove
+   the need?
+5. **Concepts layer position** — between factions and people is the natural reading, pending `SPEC-043`.
+
