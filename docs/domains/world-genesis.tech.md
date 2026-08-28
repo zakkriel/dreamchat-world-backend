@@ -68,6 +68,19 @@ by `ADR-P026`). Its emissions and their slots are the design's §3; the fill mec
 §7 (rules are the work plan; the code schedules, the model interprets; tagging survives for scoped
 retraction — reviews, not gates, §7.3). **Built 2026-08-28, batches 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding` (same pass Fast and Custom). Fill is six sequential `world_fill` batches: places, history, lives, objects, revise, sufficiency. Then `world_fill_review` names breaches; tagged pieces retract; `genesisDoc.validate()`; one repair fill if needed. The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity`. Each fill fragment is `world_fill/1` with unknown fields rejected.
 
+## The filling stage is designed in full elsewhere
+
+**`docs/design/2026-08-28-the-filling-stage.md`** is the governing design for stage 2, founder-ruled
+2026-08-28, indexed as `SPEC-044`. Read it before changing fill. It settles the layered loop (foundation →
+places → factions & groups → people → artifacts → arrival), the three axes that must not be conflated
+(canon / perception / personality), question-template prompts per layer, and — the operative rule for
+implementers — **what fill may author, which is only what transcription can commit**: factions and groups
+now, concepts not until `SPEC-043`, unperceived canon not until `SPEC-040`.
+
+The flat six-batch schedule described below is **superseded** by that design. It is left here because the
+mechanisms it needed — the debt ledger, the in-context nudge, the closing passes — are still in the code
+until a build proves the layered loop makes them unnecessary.
+
 ## Fill product (founder 2026-08-28, this round)
 
 - **Stop / depth:** work each generative rule into several positions — not only lives: places, history (lore/canon), people, objects. Cost is not "maybe more"; see Q1 numbers below.
