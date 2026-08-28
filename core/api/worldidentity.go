@@ -337,6 +337,8 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 		retractBreaches(doc, breaches)
 	}
+	// Make the arrival offer coherent before the belt sees it. Bookkeeping, not authorship.
+	reconcileArrival(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
 			ID:        "repair",
@@ -348,6 +350,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			return nil, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
+		reconcileArrival(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2
 		}
@@ -577,6 +580,74 @@ type fillBreach struct {
 	Kind string `json:"kind"`
 	Name string `json:"name"`
 	Why  string `json:"why"`
+}
+
+// reconcileArrival makes the offered three coherent with the arrival instead of refusing the world for
+// their disagreement.
+//
+// The belt's rule (worldgenesis.go) is that when arrival_candidates are present there must be exactly
+// three, distinct, and exactly ONE of them must BE the arrival — the recommended default. Measured
+// live 2026-08-28: a 550-second build authored a good arrival and three good candidates, none of which
+// was the arrival, and the whole world was thrown away on the last check before commit.
+//
+// Nothing about that needed a refusal. The arrival IS the recommendation; the candidates are the
+// alternatives beside it. So the arrival takes a seat among them, replacing the weakest claim to one
+// (the first), and the rest stand. That is reconciliation, not invention — every string here was
+// authored by the seat. Founder 2026-08-28: a gap is worse than an invention that clicks, and throwing
+// away nine minutes of world over a bookkeeping mismatch is the worst gap of all.
+//
+// If the offer cannot be made coherent at exactly three distinct names, the LIST is dropped rather than
+// the world: an incomplete offer is no offer, and the arrival alone is a legitimate, playable world.
+func reconcileArrival(doc *genesisDoc) {
+	if len(doc.ArrivalCandidates) == 0 {
+		return
+	}
+	arrival := strings.TrimSpace(doc.Arrival.CanonicalName)
+	if arrival == "" {
+		doc.ArrivalCandidates = nil
+		return
+	}
+
+	matches := 0
+	for _, c := range doc.ArrivalCandidates {
+		if strings.TrimSpace(c.CanonicalName) == arrival {
+			matches++
+		}
+	}
+	if matches == 0 {
+		log.Printf("reconcileArrival: seating the arrival %q among its own candidates", arrival)
+		doc.ArrivalCandidates[0] = genesisCandidate{
+			Descriptor:    doc.Arrival.Descriptor,
+			CanonicalName: doc.Arrival.CanonicalName,
+			Why:           doc.Arrival.Why,
+		}
+	}
+
+	// Distinct, arrival first, then the alternatives in the order they were authored.
+	seen := map[string]bool{}
+	out := make([]genesisCandidate, 0, len(doc.ArrivalCandidates))
+	for _, c := range doc.ArrivalCandidates {
+		name := strings.TrimSpace(c.CanonicalName)
+		if name == "" || seen[name] || strings.TrimSpace(c.Descriptor) == "" || strings.TrimSpace(c.Why) == "" {
+			continue
+		}
+		seen[name] = true
+		if name == arrival {
+			out = append([]genesisCandidate{c}, out...)
+			continue
+		}
+		out = append(out, c)
+	}
+	if len(out) > 3 {
+		// Keep the arrival and the first two alternatives.
+		out = out[:3]
+	}
+	if len(out) != 3 || strings.TrimSpace(out[0].CanonicalName) != arrival {
+		log.Printf("reconcileArrival: offer cannot be made coherent (%d distinct); dropping the list and keeping the arrival", len(out))
+		doc.ArrivalCandidates = nil
+		return
+	}
+	doc.ArrivalCandidates = out
 }
 
 func reviewFill(ctx context.Context, seat Driver, id *worldIdentity, doc *genesisDoc) ([]fillBreach, error) {
