@@ -88,3 +88,4 @@
 20260825120000_object_relocated_perceptions.sql	perception
 20260825130000_object_relocated_witnesses.sql	perception
 20260825140000_witnesses_malformed_is_refusal.sql	perception
+20260828090000_world_identity.sql	world-genesis

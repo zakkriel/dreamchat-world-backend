@@ -52,7 +52,8 @@ each var's declaration) and is byte-identical to the const it replaced.
   (`worldactorprompt.go`), before the WORLD/CURRENT SCENE/DRAWN SIZE sections. World-omniscient,
   TRUTH-side (mirrors resolve.txt's licensing) — never perception-scoped.
 - `world_understanding.txt` — the understanding pass. Identity only; no places or people.
-- `world_fill.txt` — one scheduled work item of identity-governed fill.
+- `world_fill.txt` — one fill batch (places, history, lives, objects, revise, or sufficiency).
+- `world_fill_review.txt` — post-fill identity breach review; not the filler.
 - `system-anthropic.txt` — every call made through the anthropic driver. Injected as the `system`
   FIELD of the Messages API request body (`anthropic.go`), not a prompt prefix — it rides alongside
   whatever prompt the calling seat assembled. Still driver-owned (D-13 keeps provider shaping in the

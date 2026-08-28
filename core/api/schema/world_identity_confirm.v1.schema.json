@@ -1,0 +1,58 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_identity_confirm/1",
+  "title": "world_identity_confirm/1 — Custom-lane identity shown before fill (design §8). Voice, condition, bargain, departure, content demand, register. Not the twenty functions, not worked examples. identity is the full world_identity/1 to round-trip on POST /worlds/genesis so fill uses the same inference. Fast lane never sees this.",
+  "type": "object",
+  "required": ["schema_version", "condition", "bargain", "departure", "content_demand", "register", "voice", "identity"],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": { "const": "world_identity_confirm/1" },
+    "condition": {
+      "type": "object",
+      "required": ["text"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "enum": ["axiomatic", "contingent"] }
+      }
+    },
+    "bargain": {
+      "type": "object",
+      "required": ["text", "therefore"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "therefore": { "type": "string", "minLength": 1 }
+      }
+    },
+    "departure": {
+      "type": "object",
+      "required": ["neighbour", "how_not"],
+      "additionalProperties": false,
+      "properties": {
+        "neighbour": { "type": "string", "minLength": 1 },
+        "how_not": { "type": "string", "minLength": 1 }
+      }
+    },
+    "content_demand": {
+      "type": "object",
+      "required": ["text", "therefore"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "therefore": { "type": "string", "minLength": 1 }
+      }
+    },
+    "register": { "type": "string", "minLength": 1 },
+    "voice": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "identity": {
+      "type": "object",
+      "description": "Opaque world_identity/1. Render none of it except the fields above. POST it back on genesis."
+    }
+  }
+}

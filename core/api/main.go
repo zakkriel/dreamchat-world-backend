@@ -70,7 +70,8 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
 		NewWorldsHandler(pool, debug).(matcher),
 		// World creation (PRD: prd_world_creation.md). POST /worlds/interview asks the next question about
-		// a brief; POST /worlds/genesis authors a whole world and streams what lands. Neither sits under
+		// a brief; POST /worlds/identity shows the Custom lane the identity it is about to build under;
+		// POST /worlds/genesis authors a whole world and streams what lands. None of them sit under
 		// /worlds/{id} because there is no id yet — that is the point of them.
 		NewWorldGenesisHandler(pool, debug, bridge, images).(matcher),
 		// POST /worlds/{w}/refresh mints a successor world and archives the source. The old world is
@@ -127,7 +128,7 @@ func main() {
 	}
 	bridge, err := NewBridge(seatCfg, DefaultDriverFactory,
 		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor,
-		SeatWorldGenesis, SeatWorldUnderstanding, SeatWorldFill, SeatWorldInterview, SeatWorldKickstart)
+		SeatWorldGenesis, SeatWorldUnderstanding, SeatWorldFill, SeatWorldFillReview, SeatWorldInterview, SeatWorldKickstart)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -197,18 +198,19 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 		// fake-text reports no capabilities, so it errored on the narration/2 schema (of the day) and every
 		// hand-driven beat fell through to the belt-less plain prose fallback.
 		return SeatConfig{
-			"decompose":          {Provider: "fake-intent", Model: "dev"},
-			"narrate":            {Provider: "fake-narrate", Model: "dev"},
-			"resolve":            {Provider: "fake-resolve", Model: "dev"},
-			"cognition_batch":    {Provider: "fake-cognition", Model: "dev"},
-			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
-			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
-			"place_author":       {Provider: "fake-place-author", Model: "dev"},
-			"world_genesis":      {Provider: "fake-world-genesis", Model: "dev"},
-			"world_understanding":{Provider: "fake-world-understanding", Model: "dev"},
-			"world_fill":         {Provider: "fake-world-fill", Model: "dev"},
-			"world_interview":    {Provider: "fake-world-interview", Model: "dev"},
-			"world_kickstart":    {Provider: "fake-world-kickstart", Model: "dev"},
+			"decompose":           {Provider: "fake-intent", Model: "dev"},
+			"narrate":             {Provider: "fake-narrate", Model: "dev"},
+			"resolve":             {Provider: "fake-resolve", Model: "dev"},
+			"cognition_batch":     {Provider: "fake-cognition", Model: "dev"},
+			"cognition_isolated":  {Provider: "fake-cognition", Model: "dev"},
+			"world_actor":         {Provider: "fake-world-actor", Model: "dev"},
+			"place_author":        {Provider: "fake-place-author", Model: "dev"},
+			"world_genesis":       {Provider: "fake-world-genesis", Model: "dev"},
+			"world_understanding": {Provider: "fake-world-understanding", Model: "dev"},
+			"world_fill":          {Provider: "fake-world-fill", Model: "dev"},
+			"world_fill_review":   {Provider: "fake-world-fill-review", Model: "dev"},
+			"world_interview":     {Provider: "fake-world-interview", Model: "dev"},
+			"world_kickstart":     {Provider: "fake-world-kickstart", Model: "dev"},
 		}, nil
 	}
 	return seatConfigFromEnv(lookup)
