@@ -43,7 +43,7 @@ Prompts: `world_understanding.txt`, `world_fill.txt`, `world_interview.txt`, `wo
 `place_author.txt`, every one carrying the byte-identical latitude block
 (`ADR-P022`).
 
-Contracts: seat leashes `world_identity.v1`, `world_fill.v1`, `world_genesis.v1`, `world_interview.v1`, `world_kickstart.v1`,
+Contracts: seat leashes `world_identity.v1`, `world_fill.v1`, `world_fill_review.v1`, `world_genesis.v1`, `world_interview.v1`, `world_kickstart.v1`,
 `world_actor.v1`, `place_author.v1`; wire responses `world_genesis_frame.v3`,
 `world_interview_turn.v1`, `world_kickstart_turn.v2`, `world_created.v1`, `world_refreshed.v1`,
 `world_directory.v2`. Five are vendored by the frontend — see `seams.md`.
@@ -66,15 +66,30 @@ refused turn is a `422` with the stated reason and the world untouched.
 Step 2 of the five (`docs/design/2026-08-26-world-identity-and-the-understanding-pass.md`, restored
 by `ADR-P026`). Its emissions and their slots are the design's §3; the fill mechanism it governs is
 §7 (rules are the work plan; the code schedules, the model interprets; tagging survives for scoped
-retraction — reviews, not gates, §7.3). **Built 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding`, then fills under that identity on `world_fill` (one scheduled call per rule, then sufficiency). The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity` (Q5 for this slice). Filling stops after the scheduled rules plus one sufficiency pass (Q4). If the belt still refuses, one repair fill is allowed, then refuse. Each fill fragment is `world_fill/1` with unknown fields rejected. Q1 is sequential calls; the Fast-lane budget remains the PRD's.
+retraction — reviews, not gates, §7.3). **Built 2026-08-28, batches 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding` (same pass Fast and Custom). Fill is six sequential `world_fill` batches: places, history, lives, objects, revise, sufficiency. Then `world_fill_review` names breaches; tagged pieces retract; `genesisDoc.validate()`; one repair fill if needed. The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity`. Each fill fragment is `world_fill/1` with unknown fields rejected.
 
 ## Fill product (founder 2026-08-28, this round)
 
 - **Stop / depth:** work each generative rule into several positions — not only lives: places, history (lore/canon), people, objects. Cost is not "maybe more"; see Q1 numbers below.
-- **Order:** places first, then key history, then lives, then objects, then anything still needed or a second pass that revises the first. **Not yet the scheduler in code** (still rule-kind order: constraining → prohibiting → generative → voicing → sufficiency). Implementation follows this ruling in the next fill change.
+- **Order (now the scheduler):** places → key history → lives → objects → revise → sufficiency, then review + retract + belt.
 - **Custom identity confirmation:** built this round (`POST /worlds/identity`, design §8). Fast still skips it.
 
-Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat call. Understanding is 1 call. Fill is 1 call per identity rule + 1 sufficiency + at most 1 repair. The Andantes probe emitted 11 rules (3 generative). That is about **13 fill calls + 1 understanding ≈ 42 s and ≈ $0.11** before kickstart, interview, or extra depth. Extra depth on 3 generative rules at 2 further calls each is **+6 calls ≈ +18 s and +$0.05**. Fast-lane PRD is p50 ≤ 90 s and p50 ≤ $0.25 per world. Sequential fill can fit if calls stay near those figures; it misses if they do not.
+Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat call. Understanding 1 + fill batches 6 + review 1 = **8 calls ≈ 24 s and ≈ $0.064** before interview, kickstart, or repair. Repair is +1. Fast-lane PRD is p50 ≤ 90 s and p50 ≤ $0.25 per world. Batching is the product answer to Q1 (not one dump, not one call per rule).
+
+
+## Product rulings 2026-08-28 (Q1–Q13)
+
+- Q2: Fast and Custom run the same understanding pass, same bar.
+- Q3: a title is a clue, never a kit; departure names the neighbour.
+- Q4/Q1: a few batches in product order, then a second pass, then review.
+- Q5: identity beside the document.
+- Q6: Fast still builds from a thin brief.
+- Q7: implications a reasonable reader would take as the author's are stated.
+- Q9: three world-specific walk-in suggestions plus type-your-own when the brief is silent.
+- Q10: keep both sides of a stated contradiction; do not refuse Fast.
+- Q11: exactly these twenty functions until `world_identity` versions.
+- Q12: one review after fill; retract tagged breaches; belt; refuse only if unplayable.
+- Q13: one text box; lists inside it count.
 
 ## Technical decisions already made
 
@@ -103,9 +118,8 @@ Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat
    this document"*; the multiplier is now measured (11 rules, 3 generative — probe PR #126) but
    per-call cost is not. Founder's decision.
 5. **Re-adding any Fast-lane pre-build step.** Founder-ruled out (design §8.1).
-6. **The twenty functions list** — whether it is exactly twenty and whether it evolves (design §10).
-7. **What genesis does with a genre-reference brief** ("like Dune but underwater") — design Q3,
-   unresolved, arrives on day one.
+6. **The twenty functions list** — fixed until a `world_identity` version bump (founder 2026-08-28).
+7. **Genre-reference briefs** — clue, never a kit (founder 2026-08-28).
 
 ## Validation for this domain
 

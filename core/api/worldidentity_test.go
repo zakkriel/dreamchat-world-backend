@@ -8,15 +8,9 @@ import (
 	"testing"
 )
 
-func TestScheduleWork_ConstraintsBeforeGenerativeThenSufficiency(t *testing.T) {
-	id := &worldIdentity{}
-	id.Rules = []identityRule{
-		{ID: "g", Kind: "generative", Text: "g", Therefore: "t"},
-		{ID: "c", Kind: "constraining", Text: "c", Therefore: "t"},
-		{ID: "p", Kind: "prohibiting", Text: "p", Therefore: "t"},
-	}
-	got := scheduleWork(id)
-	want := []string{"c", "p", "g", "sufficiency"}
+func TestScheduleWork_PlacesThenHistoryThenLivesThenObjectsThenRevise(t *testing.T) {
+	got := scheduleWork(&worldIdentity{})
+	want := []string{"places", "history", "lives", "objects", "revise", "sufficiency"}
 	if len(got) != len(want) {
 		t.Fatalf("len=%d want %d", len(got), len(want))
 	}
@@ -31,7 +25,7 @@ func TestAuthorWorld_StoresIdentityBesideTheDocument(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
-	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, nil, nil)
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,8 +58,8 @@ func TestFillOne_RefusesUnknownFields(t *testing.T) {
 	}
 }
 
-func TestFillFromIdentity_ConstraintsStayEmptyAndPeopleHide(t *testing.T) {
-	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, nil, nil)
+func TestFillFromIdentity_PeopleHideAndBatchesCloseTheBelt(t *testing.T) {
+	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,9 +79,9 @@ func TestFillFromIdentity_ConstraintsStayEmptyAndPeopleHide(t *testing.T) {
 	}
 }
 
-func TestFakeFill_GenerativeIsAFillFragmentNotAGenesisDump(t *testing.T) {
+func TestFakeFill_LivesBatchIsAFillFragmentNotAGenesisDump(t *testing.T) {
 	raw, err := NewFakeWorldFillDriver().Generate(context.Background(), GenRequest{
-		Prompt: "\nid: r-ask\nkind: generative\n" + worldGenesisBriefMarker + "\n" + testBrief,
+		Prompt: "\nid: lives\nkind: batch\n" + worldGenesisBriefMarker + "\n" + testBrief,
 		Schema: json.RawMessage(worldFillSchemaJSON),
 	})
 	if err != nil {
@@ -100,7 +94,16 @@ func TestFakeFill_GenerativeIsAFillFragmentNotAGenesisDump(t *testing.T) {
 		t.Fatalf("fragment is not world_fill/1: %v\n%s", err, raw)
 	}
 	if frag.Empty || len(frag.Cast) == 0 {
-		t.Fatalf("generative should author lives, empty=%v cast=%d", frag.Empty, len(frag.Cast))
+		t.Fatalf("lives batch should author people, empty=%v cast=%d", frag.Empty, len(frag.Cast))
+	}
+}
+
+func TestRetractBreaches_DropsNamedObject(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Objects = []genesisObject{{CanonicalName: "The Yard Key"}, {CanonicalName: "The Ledger"}}
+	retractBreaches(doc, []fillBreach{{Kind: "object", Name: "The Yard Key", Why: "the neighbour's prop"}})
+	if len(doc.Objects) != 1 || doc.Objects[0].CanonicalName != "The Ledger" {
+		t.Fatalf("objects=%v", doc.Objects)
 	}
 }
 
@@ -122,7 +125,7 @@ func TestIdentityConfirm_RoundTripsIntoFill(t *testing.T) {
 		t.Fatal(err)
 	}
 	voice := []string{"The page is wet.", "The lamp is out.", "Someone still writes."}
-	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, json.RawMessage(raw), voice)
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, json.RawMessage(raw), voice)
 	if err != nil {
 		t.Fatal(err)
 	}

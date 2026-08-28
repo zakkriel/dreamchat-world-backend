@@ -127,7 +127,7 @@ func main() {
 	}
 	bridge, err := NewBridge(seatCfg, DefaultDriverFactory,
 		SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor,
-		SeatWorldGenesis, SeatWorldUnderstanding, SeatWorldFill, SeatWorldInterview, SeatWorldKickstart)
+		SeatWorldGenesis, SeatWorldUnderstanding, SeatWorldFill, SeatWorldFillReview, SeatWorldInterview, SeatWorldKickstart)
 	if err != nil {
 		log.Fatalf("bridge: %v", err)
 	}
@@ -197,18 +197,19 @@ func seatConfig(lookup func(string) string) (SeatConfig, error) {
 		// fake-text reports no capabilities, so it errored on the narration/2 schema (of the day) and every
 		// hand-driven beat fell through to the belt-less plain prose fallback.
 		return SeatConfig{
-			"decompose":          {Provider: "fake-intent", Model: "dev"},
-			"narrate":            {Provider: "fake-narrate", Model: "dev"},
-			"resolve":            {Provider: "fake-resolve", Model: "dev"},
-			"cognition_batch":    {Provider: "fake-cognition", Model: "dev"},
-			"cognition_isolated": {Provider: "fake-cognition", Model: "dev"},
-			"world_actor":        {Provider: "fake-world-actor", Model: "dev"},
-			"place_author":       {Provider: "fake-place-author", Model: "dev"},
-			"world_genesis":      {Provider: "fake-world-genesis", Model: "dev"},
-			"world_understanding":{Provider: "fake-world-understanding", Model: "dev"},
-			"world_fill":         {Provider: "fake-world-fill", Model: "dev"},
-			"world_interview":    {Provider: "fake-world-interview", Model: "dev"},
-			"world_kickstart":    {Provider: "fake-world-kickstart", Model: "dev"},
+			"decompose":           {Provider: "fake-intent", Model: "dev"},
+			"narrate":             {Provider: "fake-narrate", Model: "dev"},
+			"resolve":             {Provider: "fake-resolve", Model: "dev"},
+			"cognition_batch":     {Provider: "fake-cognition", Model: "dev"},
+			"cognition_isolated":  {Provider: "fake-cognition", Model: "dev"},
+			"world_actor":         {Provider: "fake-world-actor", Model: "dev"},
+			"place_author":        {Provider: "fake-place-author", Model: "dev"},
+			"world_genesis":       {Provider: "fake-world-genesis", Model: "dev"},
+			"world_understanding": {Provider: "fake-world-understanding", Model: "dev"},
+			"world_fill":          {Provider: "fake-world-fill", Model: "dev"},
+			"world_fill_review":   {Provider: "fake-world-fill-review", Model: "dev"},
+			"world_interview":     {Provider: "fake-world-interview", Model: "dev"},
+			"world_kickstart":     {Provider: "fake-world-kickstart", Model: "dev"},
 		}, nil
 	}
 	return seatConfigFromEnv(lookup)

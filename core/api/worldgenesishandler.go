@@ -291,7 +291,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// percentage or a stage. The heartbeats also keep an idle-sensitive proxy from closing the stream.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
 	stopHeartbeat := stillWriting(frames, start)
-	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), req.Brief, req.Answers, req.Identity, req.Voice)
+	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), h.bridge.Driver(SeatWorldFillReview.Name), req.Brief, req.Answers, req.Identity, req.Voice)
 	stopHeartbeat()
 	if err != nil {
 		h.fail(frames, err, "")

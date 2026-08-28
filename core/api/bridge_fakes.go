@@ -974,7 +974,6 @@ func sectionAfter(s, from, until string) string {
 	return rest
 }
 
-
 // FAKE: world_understanding. Emits a small identity with one rule of each kind so the fill
 // scheduler has real work, and twenty one-line function answers so the schema floor holds.
 type fakeWorldUnderstandingDriver struct{ name string }
@@ -1021,8 +1020,8 @@ func (f *fakeWorldUnderstandingDriver) Generate(_ context.Context, req GenReques
 			"neighbour": "a crime story about a cargo yard",
 			"how_not":   "the crime is the book itself, not the crates",
 		},
-		"scarce":            "a line in the ledger that is true",
-		"wrongly_abundant":  "crates nobody can admit exist",
+		"scarce":           "a line in the ledger that is true",
+		"wrongly_abundant": "crates nobody can admit exist",
 		"exclusions": []map[string]any{{
 			"never": "a person whose name is not in some book", "because": "unrecorded people cannot be owed or paid",
 			"kind": "exist",
@@ -1062,12 +1061,10 @@ func parseIdentityBrief(prompt string) string {
 	return strings.TrimSpace(rest)
 }
 
-// FAKE: world_fill. Emits world_fill/1 only (no extra genesis keys). Constraining /
-// prohibiting / voicing are empty. Generative authors the entailed lives and their rooms.
-// Sufficiency (and repair) authors world header, arrival, and history so the belt can close.
+// FAKE: world_fill. Emits world_fill/1 only. Each batch authors its stratum.
 type fakeWorldFillDriver struct{ name string }
 
-func NewFakeWorldFillDriver() Driver { return &fakeWorldFillDriver{name: "fake-world-fill"} }
+func NewFakeWorldFillDriver() Driver        { return &fakeWorldFillDriver{name: "fake-world-fill"} }
 func (f *fakeWorldFillDriver) Name() string { return f.name }
 func (f *fakeWorldFillDriver) Capabilities() CapabilitySet {
 	return CapabilitySet{CapStructuredOutput: true}
@@ -1076,11 +1073,6 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without a schema", f.name)
 	}
-	if strings.Contains(req.Prompt, "\nkind: constraining\n") ||
-		strings.Contains(req.Prompt, "\nkind: prohibiting\n") ||
-		strings.Contains(req.Prompt, "\nkind: voicing\n") {
-		return `{"empty":true,"why_empty":"this rule constrains what may exist; it does not demand a life"}`, nil
-	}
 	brief := parseGenesisBrief(req.Prompt)
 	if brief == "" {
 		brief = parseIdentityBrief(req.Prompt)
@@ -1088,21 +1080,30 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 	if brief == "" {
 		brief = "a cargo yard"
 	}
-	slug := briefSlug(brief)
-	if strings.Contains(req.Prompt, "\nid: sufficiency\n") || strings.Contains(req.Prompt, "\nid: repair\n") {
-		statedOpen := !strings.Contains(strings.ToLower(brief), "i am ")
-		doc := map[string]any{
+	id := fillBatchID(req.Prompt)
+	switch id {
+	case "places":
+		return string(mustJSON(map[string]any{
 			"empty": false,
-			"world": map[string]any{
-				"display_name": "A World From: " + slug,
-				"tagline":      "Somewhere someone owes something, and the ledger is open.",
-				"mood":         "overcast",
-				"ornament":     "plain",
-			},
-			"region": map[string]any{
-				"descriptor":   "the quarter under the water tower",
-				"extent_class": "medium",
-			},
+			"places": []map[string]any{{
+				"descriptor": "a low room with one lamp", "canonical_name": "The Counting Room",
+				"kind":        "back room",
+				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. The window is painted shut.",
+				"tension":     "tense", "extent_class": "intimate",
+			}, {
+				"descriptor": "a yard stacked with crates", "canonical_name": "The Loading Yard",
+				"kind":        "yard",
+				"description": "Crates stacked two high against the wall, a wet gate standing open on the street, and the water tower above it all.",
+				"tension":     "normal", "extent_class": "small",
+			}},
+			"ways": []map[string]any{{
+				"descriptor": "the door to the yard", "from_place": "The Counting Room",
+				"to_place": "The Loading Yard", "state": "open",
+			}},
+		})), nil
+	case "history":
+		return string(mustJSON(map[string]any{
+			"empty": false,
 			"history": []map[string]any{{
 				"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
 				"where":         "The Loading Yard",
@@ -1112,6 +1113,58 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 					{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
 				},
 			}},
+		})), nil
+	case "lives":
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"cast": []map[string]any{{
+				"descriptor": "the woman keeping the ledger", "canonical_name": "Adaeze",
+				"standing":      "keeps the book, and decides what goes in it",
+				"speech_manner": "short sentences; never repeats herself",
+				"traits": []map[string]any{
+					{"key": "guarded", "strength": "strong", "manner": "answers a question with the shortest true thing"},
+					{"key": "exact", "strength": "defining", "manner": "will not round a number to end a conversation"},
+				},
+				"hiding":       "the last two pages of the ledger are a different hand than hers",
+				"malleability": "faint", "starts_in": "The Counting Room",
+			}, {
+				"descriptor": "a man waiting by the crates", "canonical_name": "Ferro",
+				"standing":      "moves what the book says to move",
+				"speech_manner": "talks around a question until it goes away",
+				"traits": []map[string]any{
+					{"key": "watchful", "strength": "moderate", "manner": "tracks the gate more than the person talking to him"},
+				},
+				"hiding":       "he has already been paid for tonight, by someone who is not in the book",
+				"malleability": "moderate", "starts_in": "The Loading Yard",
+			}},
+		})), nil
+	case "objects":
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"objects": []map[string]any{{
+				"descriptor": "a ledger open at the current page", "canonical_name": "The Ledger",
+				"kind": "record", "where": map[string]any{"in_place": "The Counting Room"},
+			}, {
+				"descriptor": "a brass key worn smooth", "canonical_name": "The Yard Key",
+				"kind": "key", "where": map[string]any{"carried_by": "Adaeze"},
+			}},
+		})), nil
+	case "revise":
+		return `{"empty":true,"why_empty":"the first pass already held the neighbourhood"}`, nil
+	case "sufficiency", "repair":
+		statedOpen := !strings.Contains(strings.ToLower(brief), "i am ")
+		doc := map[string]any{
+			"empty": false,
+			"world": map[string]any{
+				"display_name": "A World From: " + briefSlug(brief),
+				"tagline":      "Somewhere someone owes something, and the ledger is open.",
+				"mood":         "overcast",
+				"ornament":     "plain",
+			},
+			"region": map[string]any{
+				"descriptor":   "the quarter under the water tower",
+				"extent_class": "medium",
+			},
 			"arrival": map[string]any{
 				"descriptor":     "a stranger with wet shoulders",
 				"canonical_name": "Wren",
@@ -1132,55 +1185,42 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"why": "come to the wrong address on somebody else's word",
 			}}
 		}
-		out, err := json.Marshal(doc)
-		return string(out), err
+		return string(mustJSON(doc)), nil
+	default:
+		return `{"empty":true,"why_empty":"this batch does not demand a fragment in the fake"}`, nil
 	}
-	// Generative: the two lives the bargain demands, and the rooms they occupy.
-	out, err := json.Marshal(map[string]any{
-		"empty": false,
-		"places": []map[string]any{{
-			"descriptor": "a low room with one lamp", "canonical_name": "The Counting Room",
-			"kind": "back room",
-			"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. The window is painted shut.",
-			"tension": "tense", "extent_class": "intimate",
-		}, {
-			"descriptor": "a yard stacked with crates", "canonical_name": "The Loading Yard",
-			"kind": "yard",
-			"description": "Crates stacked two high against the wall, a wet gate standing open on the street, and the water tower above it all.",
-			"tension": "normal", "extent_class": "small",
-		}},
-		"ways": []map[string]any{{
-			"descriptor": "the door to the yard", "from_place": "The Counting Room",
-			"to_place": "The Loading Yard", "state": "open",
-		}},
-		"cast": []map[string]any{{
-			"descriptor": "the woman keeping the ledger", "canonical_name": "Adaeze",
-			"standing": "keeps the book, and decides what goes in it",
-			"speech_manner": "short sentences; never repeats herself",
-			"traits": []map[string]any{
-				{"key": "guarded", "strength": "strong", "manner": "answers a question with the shortest true thing"},
-				{"key": "exact", "strength": "defining", "manner": "will not round a number to end a conversation"},
-			},
-			"hiding": "the last two pages of the ledger are a different hand than hers",
-			"malleability": "faint", "starts_in": "The Counting Room",
-		}, {
-			"descriptor": "a man waiting by the crates", "canonical_name": "Ferro",
-			"standing": "moves what the book says to move",
-			"speech_manner": "talks around a question until it goes away",
-			"traits": []map[string]any{
-				{"key": "watchful", "strength": "moderate", "manner": "tracks the gate more than the person talking to him"},
-			},
-			"hiding": "he has already been paid for tonight, by someone who is not in the book",
-			"malleability": "moderate", "starts_in": "The Loading Yard",
-		}},
-		"objects": []map[string]any{{
-			"descriptor": "a ledger open at the current page", "canonical_name": "The Ledger",
-			"kind": "record", "where": map[string]any{"in_place": "The Counting Room"},
-		}, {
-			"descriptor": "a brass key worn smooth", "canonical_name": "The Yard Key",
-			"kind": "key", "where": map[string]any{"carried_by": "Adaeze"},
-		}},
-	})
-	return string(out), err
 }
 
+func fillBatchID(prompt string) string {
+	for _, id := range []string{"places", "history", "lives", "objects", "revise", "sufficiency", "repair"} {
+		if strings.Contains(prompt, "\nid: "+id+"\n") {
+			return id
+		}
+	}
+	return ""
+}
+
+func mustJSON(v any) []byte {
+	out, err := json.Marshal(v)
+	if err != nil {
+		panic(err)
+	}
+	return out
+}
+
+// FAKE: world_fill_review. The live fake finds no breaches. Tests that need a named breach bind their own driver.
+type fakeWorldFillReviewDriver struct{ name string }
+
+func NewFakeWorldFillReviewDriver() Driver {
+	return &fakeWorldFillReviewDriver{name: "fake-world-fill-review"}
+}
+func (f *fakeWorldFillReviewDriver) Name() string { return f.name }
+func (f *fakeWorldFillReviewDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (f *fakeWorldFillReviewDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: used without a schema", f.name)
+	}
+	return `{"breaches":[]}`, nil
+}

@@ -128,6 +128,8 @@ var (
 	SeatWorldUnderstanding = Seat{Name: "world_understanding", Requires: []Capability{CapStructuredOutput}}
 	// world_fill: one scheduled work item (design step 4). REQUIRES structured output — world_fill/1.
 	SeatWorldFill = Seat{Name: "world_fill", Requires: []Capability{CapStructuredOutput}}
+	// world_fill_review: names identity breaches in a finished fill. MUST NOT be the filler.
+	SeatWorldFillReview = Seat{Name: "world_fill_review", Requires: []Capability{CapStructuredOutput}}
 	// world_interview: authors the NEXT question to ask about a brief, with its options — the Custom
 	// Creation lane. REQUIRES structured output: the surface renders exactly the options it is given.
 	SeatWorldInterview = Seat{Name: "world_interview", Requires: []Capability{CapStructuredOutput}}
@@ -335,6 +337,8 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 		return NewFakeWorldUnderstandingDriver(), nil
 	case "fake-world-fill":
 		return NewFakeWorldFillDriver(), nil
+	case "fake-world-fill-review":
+		return NewFakeWorldFillReviewDriver(), nil
 	case "fake-world-interview":
 		return NewFakeWorldInterviewDriver(), nil
 	case "fake-world-kickstart":

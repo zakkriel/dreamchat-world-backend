@@ -1,0 +1,24 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_fill_review/1",
+  "title": "world_fill_review/1 — breaches of identity in a finished fill. Reviewer is not the filler. Empty list means nothing named a breach.",
+  "type": "object",
+  "required": ["breaches"],
+  "additionalProperties": false,
+  "properties": {
+    "breaches": {
+      "type": "array",
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["kind", "name", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string", "enum": ["place", "cast", "object", "way", "history"] },
+          "name": { "type": "string", "minLength": 1 },
+          "why": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

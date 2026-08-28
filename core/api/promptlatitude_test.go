@@ -115,18 +115,19 @@ func extractLatitude(src string) string {
 // If you add a seat, add it here. A name missing from this map is a seat with no coverage at all.
 func TestEveryEmbeddedPromptCarriesTheLatitude(t *testing.T) {
 	embedded := map[string]string{
-		"narrate":         narrateSystemHeader,
-		"cognition":       cognitionSystemHeader,
-		"resolve":         resolveSystemHeader,
-		"world_actor":     worldActorSystemHeader,
-		"decompose":       decomposeSystemHeader,
-		"place_author":    placeAuthorSystemHeader,
-		"anthropic":       anthropicSystemHeader,
-		"world_genesis":        worldGenesisSystemHeader,
-		"world_understanding":  worldUnderstandingSystemHeader,
-		"world_fill":           worldFillSystemHeader,
-		"world_interview":      worldInterviewSystemHeader,
-		"world_kickstart":      worldKickstartPromptHeader,
+		"narrate":             narrateSystemHeader,
+		"cognition":           cognitionSystemHeader,
+		"resolve":             resolveSystemHeader,
+		"world_actor":         worldActorSystemHeader,
+		"decompose":           decomposeSystemHeader,
+		"place_author":        placeAuthorSystemHeader,
+		"anthropic":           anthropicSystemHeader,
+		"world_genesis":       worldGenesisSystemHeader,
+		"world_understanding": worldUnderstandingSystemHeader,
+		"world_fill":          worldFillSystemHeader,
+		"world_fill_review":   worldFillReviewSystemHeader,
+		"world_interview":     worldInterviewSystemHeader,
+		"world_kickstart":     worldKickstartPromptHeader,
 	}
 
 	// Every prompt FILE must have an entry here, or a seat could ship embedded-but-unchecked.

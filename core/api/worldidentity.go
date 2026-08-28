@@ -7,12 +7,10 @@ package main
 // by that understanding · emit the completed document. This file is steps 2 and 4. The old
 // single-shot world_genesis seat is not the live path.
 //
-// Code schedules; the model interprets (design §7). Constraining rules run before generative
-// ones (design §4). Tagging survives for scoped retraction; it is a review aid, not a gate (§7.3).
-// Identity is stored beside the genesis document (design Q5 — decided here for this slice: beside,
-// on world.world_identity, so play-loop minting can load it without changing world_genesis/1).
-// Filling stops after the identity rules plus one sufficiency pass (design Q4 — decided here:
-// one pass per rule, depth bounded by world_fill/1 array ceilings, then sufficiency if validate fails).
+// Code schedules; the model interprets (design §7). Founder 2026-08-28: fill is a few batches in
+// product order — places, key history, lives, objects, then a second pass — not one call per rule.
+// Identity rules stay in context as law. After sufficiency, one review seat (not the filler, no
+// generation context) names breaches; tagged pieces drop; the belt then runs; repair once if needed.
 
 import (
 	"bytes"
@@ -29,11 +27,16 @@ var worldUnderstandingFS embed.FS
 //go:embed prompts/world_fill.txt schema/world_fill.v1.schema.json
 var worldFillFS embed.FS
 
+//go:embed prompts/world_fill_review.txt schema/world_fill_review.v1.schema.json
+var worldFillReviewFS embed.FS
+
 var (
 	worldUnderstandingSystemHeader = mustReadUnderstandingFile("prompts/world_understanding.txt")
 	worldIdentitySchemaJSON        = mustReadUnderstandingFile("schema/world_identity.v1.schema.json")
 	worldFillSystemHeader          = mustReadFillFile("prompts/world_fill.txt")
 	worldFillSchemaJSON            = mustReadFillFile("schema/world_fill.v1.schema.json")
+	worldFillReviewSystemHeader    = mustReadFillReviewFile("prompts/world_fill_review.txt")
+	worldFillReviewSchemaJSON      = mustReadFillReviewFile("schema/world_fill_review.v1.schema.json")
 )
 
 func mustReadUnderstandingFile(name string) string {
@@ -52,12 +55,22 @@ func mustReadFillFile(name string) string {
 	return string(b)
 }
 
+func mustReadFillReviewFile(name string) string {
+	b, err := worldFillReviewFS.ReadFile(name)
+	if err != nil {
+		panic("worldfillreview: embed " + name + ": " + err.Error())
+	}
+	return string(b)
+}
+
 const (
-	worldIdentityBriefMarker   = "BRIEF (the user's own words — infer identity from this, invent no places or people):"
-	worldIdentityAnswersMarker = "ANSWERS (the user's replies — stated, outranking inference):"
-	worldFillIdentityMarker    = "IDENTITY (immutable for this genesis — every invention answers to it):"
-	worldFillWorkMarker        = "WORK ITEM (answer only this):"
-	worldFillAlreadyMarker     = "ALREADY AUTHORED (do not re-emit these names; deepen only if the work item demands a new position):"
+	worldIdentityBriefMarker        = "BRIEF (the user's own words — infer identity from this, invent no places or people):"
+	worldIdentityAnswersMarker      = "ANSWERS (the user's replies — stated, outranking inference):"
+	worldFillIdentityMarker         = "IDENTITY (immutable for this genesis — every invention answers to it):"
+	worldFillWorkMarker             = "WORK ITEM (answer only this):"
+	worldFillAlreadyMarker          = "ALREADY AUTHORED (do not re-emit these names; deepen only if the work item demands a new position):"
+	worldFillReviewExclusionsMarker = "EXCLUSIONS AND DEPARTURE (what this world is not):"
+	worldFillReviewNamesMarker      = "FINISHED NAMES (what fill authored):"
 )
 
 // worldIdentity is world_identity/1 decoded.
@@ -183,27 +196,19 @@ func (id *worldIdentity) validate() error {
 	return nil
 }
 
-func scheduleWork(id *worldIdentity) []workItem {
-	order := []string{"constraining", "prohibiting", "generative", "voicing"}
-	byKind := map[string][]workItem{}
-	for _, r := range id.Rules {
-		byKind[r.Kind] = append(byKind[r.Kind], workItem{ID: r.ID, Kind: r.Kind, Text: r.Text, Therefore: r.Therefore})
+func scheduleWork(_ *worldIdentity) []workItem {
+	return []workItem{
+		{ID: "places", Kind: "batch", Text: "Author the places this identity demands, and the ways between them.", Therefore: "geography exists before canon, lives, or objects."},
+		{ID: "history", Kind: "batch", Text: "Author the key history that already happened in those places.", Therefore: "canon exists before the lives who still carry it."},
+		{ID: "lives", Kind: "batch", Text: "Author the lives at a specific angle on the pressure, including anyone history named.", Therefore: "depth is a private cost, not a profession."},
+		{ID: "objects", Kind: "batch", Text: "Author the objects that belong in those rooms and hands.", Therefore: "a body has something to touch."},
+		{ID: "revise", Kind: "batch", Text: "Second pass: leftover positions and anything the first pass left thin.", Therefore: "depth is a second look, not a bigger first dump."},
+		{ID: "sufficiency", Kind: "batch", Text: "The arrival neighbourhood must be inhabited whether or not the bargain cares.", Therefore: "A visitor walks in on people, never into an empty room they must then search."},
 	}
-	var out []workItem
-	for _, k := range order {
-		out = append(out, byKind[k]...)
-	}
-	out = append(out, workItem{
-		ID:        "sufficiency",
-		Kind:      "generative",
-		Text:      "The arrival neighbourhood must be inhabited whether or not the bargain cares.",
-		Therefore: "A visitor walks in on people, never into an empty room they must then search.",
-	})
-	return out
 }
 
 // authorWorld infers identity, then fills under it, and returns a document that has passed every belt check.
-func authorWorld(ctx context.Context, understanding, fill Driver, brief string, answers []InterviewAnswer, confirmed json.RawMessage, voice []string) (*genesisDoc, *worldIdentity, error) {
+func authorWorld(ctx context.Context, understanding, fill, review Driver, brief string, answers []InterviewAnswer, confirmed json.RawMessage, voice []string) (*genesisDoc, *worldIdentity, error) {
 	var id *worldIdentity
 	var err error
 	if len(confirmed) > 0 && string(confirmed) != "null" {
@@ -232,7 +237,7 @@ func authorWorld(ctx context.Context, understanding, fill Driver, brief string, 
 			id.Voice = voice
 		}
 	}
-	doc, err := fillFromIdentity(ctx, fill, id, brief, answers)
+	doc, err := fillFromIdentity(ctx, fill, review, id, brief, answers)
 	if err != nil {
 		return nil, id, err
 	}
@@ -264,7 +269,7 @@ func inferIdentity(ctx context.Context, seat Driver, brief string, answers []Int
 	return &id, nil
 }
 
-func fillFromIdentity(ctx context.Context, seat Driver, id *worldIdentity, brief string, answers []InterviewAnswer) (*genesisDoc, error) {
+func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentity, brief string, answers []InterviewAnswer) (*genesisDoc, error) {
 	if seat == nil {
 		return nil, fmt.Errorf("fillFromIdentity: no world_fill seat bound")
 	}
@@ -277,10 +282,17 @@ func fillFromIdentity(ctx context.Context, seat Driver, id *worldIdentity, brief
 		}
 		mergeFill(doc, frag, item.ID, &tags)
 	}
+	if review != nil {
+		breaches, err := reviewFill(ctx, review, id, doc)
+		if err != nil {
+			return nil, err
+		}
+		retractBreaches(doc, breaches)
+	}
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
 			ID:        "repair",
-			Kind:      "generative",
+			Kind:      "batch",
 			Text:      "The belt refused the merged document: " + err.Error(),
 			Therefore: "emit only what the belt is missing; do not re-author names already listed",
 		}, brief, answers, doc)
@@ -433,6 +445,138 @@ func hasWay(d *genesisDoc, w genesisWay) bool {
 		}
 	}
 	return false
+}
+
+type fillBreach struct {
+	Kind string `json:"kind"`
+	Name string `json:"name"`
+	Why  string `json:"why"`
+}
+
+func reviewFill(ctx context.Context, seat Driver, id *worldIdentity, doc *genesisDoc) ([]fillBreach, error) {
+	raw, err := seat.Generate(ctx, GenRequest{
+		Prompt: buildWorldFillReviewPrompt(id, doc),
+		Schema: json.RawMessage(worldFillReviewSchemaJSON),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("reviewFill: Generate: %w", err)
+	}
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
+	var out struct {
+		Breaches []fillBreach `json:"breaches"`
+	}
+	if err := dec.Decode(&out); err != nil {
+		return nil, refuse("fill review came back malformed (%v)", err)
+	}
+	return out.Breaches, nil
+}
+
+func buildWorldFillReviewPrompt(id *worldIdentity, doc *genesisDoc) string {
+	var sb strings.Builder
+	sb.WriteString(worldFillReviewSystemHeader)
+	sb.WriteString("\n\n")
+	sb.WriteString(worldFillReviewExclusionsMarker)
+	sb.WriteString("\n")
+	sb.WriteString("neighbour: ")
+	sb.WriteString(id.Departure.Neighbour)
+	sb.WriteString("\nhow_not: ")
+	sb.WriteString(id.Departure.HowNot)
+	sb.WriteString("\n")
+	for _, e := range id.Exclusions {
+		sb.WriteString("- never ")
+		sb.WriteString(e.Never)
+		sb.WriteString(" because ")
+		sb.WriteString(e.Because)
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n")
+	sb.WriteString(worldFillReviewNamesMarker)
+	sb.WriteString("\n")
+	for _, p := range doc.Places {
+		sb.WriteString("- place ")
+		sb.WriteString(p.CanonicalName)
+		sb.WriteString("\n")
+	}
+	for _, a := range doc.Cast {
+		sb.WriteString("- person ")
+		sb.WriteString(a.CanonicalName)
+		sb.WriteString("\n")
+	}
+	for _, o := range doc.Objects {
+		sb.WriteString("- object ")
+		sb.WriteString(o.CanonicalName)
+		sb.WriteString("\n")
+	}
+	for _, w := range doc.Ways {
+		sb.WriteString("- way ")
+		sb.WriteString(w.Descriptor)
+		sb.WriteString("\n")
+	}
+	for _, h := range doc.History {
+		sb.WriteString("- history ")
+		sb.WriteString(h.WhatHappened)
+		sb.WriteString("\n")
+	}
+	return sb.String()
+}
+
+func retractBreaches(doc *genesisDoc, breaches []fillBreach) {
+	for _, b := range breaches {
+		name := strings.TrimSpace(b.Name)
+		if name == "" {
+			continue
+		}
+		switch b.Kind {
+		case "place":
+			var keep []genesisPlace
+			for _, p := range doc.Places {
+				if p.CanonicalName != name {
+					keep = append(keep, p)
+				}
+			}
+			doc.Places = keep
+			var ways []genesisWay
+			for _, w := range doc.Ways {
+				if w.FromPlace != name && w.ToPlace != name {
+					ways = append(ways, w)
+				}
+			}
+			doc.Ways = ways
+		case "cast":
+			var keep []genesisActor
+			for _, a := range doc.Cast {
+				if a.CanonicalName != name {
+					keep = append(keep, a)
+				}
+			}
+			doc.Cast = keep
+		case "object":
+			var keep []genesisObject
+			for _, o := range doc.Objects {
+				if o.CanonicalName != name {
+					keep = append(keep, o)
+				}
+			}
+			doc.Objects = keep
+		case "way":
+			var keep []genesisWay
+			for _, w := range doc.Ways {
+				if w.Descriptor != name {
+					keep = append(keep, w)
+				}
+			}
+			doc.Ways = keep
+		case "history":
+			var keep []genesisEvent
+			for _, h := range doc.History {
+				if h.WhatHappened != name {
+					keep = append(keep, h)
+				}
+			}
+			doc.History = keep
+		}
+	}
 }
 
 func buildWorldUnderstandingPrompt(brief string, answers []InterviewAnswer) string {
