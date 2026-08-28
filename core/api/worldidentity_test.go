@@ -733,3 +733,49 @@ func TestFillFragment_LeavesTheJoinKeyRuleToTheBeltAndTheNormaliser(t *testing.T
 		t.Fatal("a person with no hiding must still be refused at the batch")
 	}
 }
+
+// The arrival sharing a name with one of the world's own people, resolved from the seat's own authored
+// alternatives rather than by refusing the world. Live 2026-08-28: caused first by the closing pass and
+// then, 789 seconds in, by the repair pass — which is why it is resolved here rather than at each caller.
+func TestResolveArrivalCollision_TakesAnAuthoredAlternative(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "El Nuevo Aprendiz", Hiding: "he has not filed it", StartsIn: "El Lomo"},
+		{CanonicalName: "Petra", Hiding: "she signed for it", StartsIn: "El Lomo"},
+	}
+	doc.Arrival = genesisArrival{
+		Descriptor: "the new apprentice", CanonicalName: "El Nuevo Aprendiz",
+		Place: "El Lomo", Stated: "I came up the spine.", Why: "sent to listen",
+	}
+	doc.ArrivalCandidates = []genesisCandidate{
+		{Descriptor: "the new apprentice", CanonicalName: "El Nuevo Aprendiz", Why: "sent to listen"},
+		{Descriptor: "Petra", CanonicalName: "Petra", Why: "already here"},
+		{Descriptor: "a courier with wet boots", CanonicalName: "Ise", Why: "carrying an unlogged delivery"},
+	}
+	reconcileArrival(doc)
+
+	if doc.Arrival.CanonicalName != "Ise" {
+		t.Fatalf("the collision was not resolved onto a free authored alternative: %q", doc.Arrival.CanonicalName)
+	}
+	// The room and the opening line the arrival was authored with must survive the swap.
+	if doc.Arrival.Place != "El Lomo" || doc.Arrival.Stated != "I came up the spine." {
+		t.Fatalf("the arrival lost its room or its opening line: %+v", doc.Arrival)
+	}
+	if doc.Arrival.Descriptor != "a courier with wet boots" {
+		t.Fatalf("the new arrival kept the old descriptor: %q", doc.Arrival.Descriptor)
+	}
+	// The world's own person is untouched — they are the side embedded in canon.
+	if doc.Cast[0].CanonicalName != "El Nuevo Aprendiz" {
+		t.Fatal("the cast member was changed instead of the visitor")
+	}
+
+	// No free alternative: the world is left for the belt to judge, not silently mangled.
+	doc2 := &genesisDoc{}
+	doc2.Cast = []genesisActor{{CanonicalName: "Solo", Hiding: "h", StartsIn: "p"}}
+	doc2.Arrival = genesisArrival{Descriptor: "d", CanonicalName: "Solo", Place: "p", Stated: "s"}
+	doc2.ArrivalCandidates = []genesisCandidate{{Descriptor: "d", CanonicalName: "Solo", Why: "w"}}
+	resolveArrivalCollision(doc2)
+	if doc2.Arrival.CanonicalName != "Solo" {
+		t.Fatal("a name was invented where no authored alternative existed")
+	}
+}
