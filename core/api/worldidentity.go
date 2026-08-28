@@ -292,7 +292,43 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		if err != nil {
 			return nil, err
 		}
+		// An unpaid reference gets ONE nudge, in context, at the batch that made it — cheapest place to
+		// fix it. If the second answer still dangles we keep the better of the two anyway: the debt is
+		// carried forward and the closing pass authors it. A good invention is never discarded for
+		// arriving before its room.
+		if bad := frag.danglingRefs(doc); len(bad) > 0 {
+			log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", item.ID, len(bad), strings.Join(bad, "; "))
+			again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
+				"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
+			if aerr == nil && fillHasContent(again) {
+				frag = again
+			}
+		}
 		mergeFill(doc, frag, item.ID, &tags)
+	}
+	// Closing passes: pay what canon owes instead of refusing it. Two rounds, because authoring the
+	// owed places can itself name a person, and that person is then owed. Founder 2026-08-28: a gap is
+	// worse than an invention that clicks, so the pipeline's answer to an unpaid name is to write it.
+	for round := 0; round < 2; round++ {
+		people, places := fillDebts(doc)
+		if len(people) == 0 && len(places) == 0 {
+			break
+		}
+		log.Printf("closing pass %d: %d person and %d place reference(s) still unpaid", round+1, len(people), len(places))
+		frag, err := fillOne(ctx, seat, id, workItem{
+			ID:        "closing",
+			Kind:      "batch",
+			Text:      "Canon refers to things nobody has authored. Author every one of them, properly, not as stubs.",
+			Therefore: "a world whose canon points at nothing cannot be stored or walked into",
+		}, brief, answers, doc, "")
+		if err != nil {
+			log.Printf("closing pass %d could not answer: %v", round+1, err)
+			break
+		}
+		if !fillHasContent(frag) {
+			break
+		}
+		mergeFill(doc, frag, "closing", &tags)
 	}
 	if review != nil {
 		breaches, err := reviewFill(ctx, review, id, doc)
@@ -336,15 +372,10 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 	if err := frag.validate(); err != nil {
 		return nil, err
 	}
-	if bad := frag.danglingRefs(soFar); len(bad) > 0 {
-		// Constructive, not punitive. The invention is usually RIGHT — a life that needs a low-tail
-		// district on a walking creature has understood the brief better than a schedule that only
-		// authored rooms in batch one. What is wrong is leaving the reference unpaid, so the retry asks
-		// for the missing thing to be authored in the same fragment, never for the reference to be
-		// dropped. Founder 2026-08-28: a gap is worse than an invention that clicks.
-		return nil, refuse("fill for %s references things it did not author: %s — author them in this same fragment rather than removing the reference",
-			item.ID, strings.Join(bad, "; "))
-	}
+	// Dangling references are NOT an error here. The invention is usually right — a life that needs a
+	// low-tail district on a walking creature has understood the brief better than a schedule that
+	// only authored rooms in batch one. Unpaid references are work, so they are reported to the caller
+	// and paid by a retry or by the closing pass. Nothing is thrown away for making one.
 	return &frag, nil
 }
 
