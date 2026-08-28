@@ -69,6 +69,7 @@ const (
 	worldFillIdentityMarker         = "IDENTITY (immutable for this genesis — every invention answers to it):"
 	worldFillWorkMarker             = "WORK ITEM (answer only this):"
 	worldFillAlreadyMarker          = "ALREADY AUTHORED. Cross-reference these by the EXACT string inside the quotes and nothing else — never the descriptor, never the quotes, never the two joined. Do not re-emit these names; deepen only if the work item demands a new position:"
+	worldFillOwedMarker             = "STILL OWED. Canon already references these by name and the belt REFUSES the world until each one exists. If this batch is the one that authors them, it MUST author every one:"
 	worldFillReviewExclusionsMarker = "EXCLUSIONS AND DEPARTURE (what this world is not):"
 	worldFillReviewNamesMarker      = "FINISHED NAMES (what fill authored):"
 )
@@ -610,6 +611,64 @@ func buildWorldUnderstandingPrompt(brief string, answers []InterviewAnswer) stri
 	return sb.String()
 }
 
+// fillDebts reports what canon has already referenced but nothing has authored yet: people named by
+// history, and places named by history, cast or arrival.
+//
+// The founder's batch order is places -> key history -> lives -> objects, which means history NAMES
+// people the lives batch has not written yet. That forward reference is deliberate and correct — canon
+// comes before the lives who carry it — but the first version only ASKED the prompt to honour it, and
+// a prompt sentence is not a guarantee. Measured live 2026-08-28: history named "Auscultadora Mayor
+// Del Vas", lives never authored her, and genesisDoc.validate() refused the world 227 seconds later
+// with the one permitted repair unable to fix it (it answered in 59 tokens).
+//
+// So the debt is carried forward in code and restated on every subsequent call until it is paid. This
+// changes no ordering and removes no authority from the belt; it just stops the pipeline discovering
+// four minutes late what it already knew after batch two.
+func fillDebts(d *genesisDoc) (people []string, places []string) {
+	cast := make(map[string]bool, len(d.Cast))
+	for _, a := range d.Cast {
+		cast[strings.TrimSpace(a.CanonicalName)] = true
+	}
+	known := make(map[string]bool, len(d.Places))
+	for _, p := range d.Places {
+		known[strings.TrimSpace(p.CanonicalName)] = true
+	}
+	seenP, seenL := map[string]bool{}, map[string]bool{}
+	owePerson := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || cast[name] || seenP[name] {
+			return
+		}
+		seenP[name] = true
+		people = append(people, name)
+	}
+	owePlace := func(name string) {
+		name = strings.TrimSpace(name)
+		if name == "" || known[name] || seenL[name] {
+			return
+		}
+		seenL[name] = true
+		places = append(places, name)
+	}
+	for _, h := range d.History {
+		owePlace(h.Where)
+		for _, w := range h.Who {
+			owePerson(w)
+		}
+		for _, k := range h.Knowledge {
+			owePerson(k.Holder)
+		}
+	}
+	for _, a := range d.Cast {
+		owePlace(a.StartsIn)
+	}
+	for _, o := range d.Objects {
+		owePlace(o.Where.InPlace)
+	}
+	owePlace(d.Arrival.Place)
+	return people, places
+}
+
 func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc) string {
 	var sb strings.Builder
 	sb.WriteString(worldFillSystemHeader)
@@ -680,11 +739,26 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 		sb.WriteString("\n")
 	}
 	if strings.TrimSpace(soFar.Arrival.CanonicalName) != "" {
-		sb.WriteString("- arrival ")
+		sb.WriteString("- arrival \"")
 		sb.WriteString(soFar.Arrival.CanonicalName)
-		sb.WriteString(" in ")
+		sb.WriteString("\"\n    in place: \"")
 		sb.WriteString(soFar.Arrival.Place)
+		sb.WriteString("\"\n")
+	}
+	if people, places := fillDebts(soFar); len(people) > 0 || len(places) > 0 {
 		sb.WriteString("\n")
+		sb.WriteString(worldFillOwedMarker)
+		sb.WriteString("\n")
+		for _, n := range people {
+			sb.WriteString("  person \"")
+			sb.WriteString(n)
+			sb.WriteString("\"\n")
+		}
+		for _, n := range places {
+			sb.WriteString("  place \"")
+			sb.WriteString(n)
+			sb.WriteString("\"\n")
+		}
 	}
 	return sb.String()
 }

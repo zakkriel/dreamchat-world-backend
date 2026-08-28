@@ -248,3 +248,52 @@ func TestFillFragment_SelfContradictoryEmptyFlagIsNotARefusal(t *testing.T) {
 		t.Fatal("a person with no hiding must still be refused")
 	}
 }
+
+// The forward-reference refusal, 2026-08-28. history named "Auscultadora Mayor Del Vas", the lives
+// batch never authored her, and the belt refused the world 227 seconds later — the one repair call
+// answered in 59 tokens and could not fix it. The order (places -> history -> lives) is the founder's
+// and is right; what was missing is that the debt was only a sentence in the prompt. Now it is data.
+//
+// Note WHY no fake caught this: the fill fake is self-consistent by construction — its history names
+// exactly the two people its lives batch authors — so it can never produce a forward reference. A
+// stand-in that cannot express the failure cannot defend against it.
+func TestFillPrompt_CanonsUnpaidNamesAreCarriedForward(t *testing.T) {
+	soFar := &genesisDoc{}
+	soFar.Places = []genesisPlace{{CanonicalName: "El Lomo", Descriptor: "the back of the beast"}}
+	soFar.History = []genesisEvent{{
+		WhatHappened: "she heard the beast's heart stumble and wrote nothing down",
+		Where:        "El Lomo",
+		Who:          []string{"Auscultadora Mayor Del Vas"},
+		Knowledge: []genesisKnowledge{
+			{Holder: "Auscultadora Mayor Del Vas", Content: "the rhythm changed", EpistemicType: "direct"},
+			{Holder: "El Cartografo", Content: "she has stopped reporting", EpistemicType: "inference"},
+		},
+	}}
+
+	people, places := fillDebts(soFar)
+	if len(places) != 0 {
+		t.Fatalf("El Lomo is authored; nothing should be owed: %v", places)
+	}
+	if len(people) != 2 {
+		t.Fatalf("both named holders are owed, got %v", people)
+	}
+
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar)
+	if !strings.Contains(prompt, worldFillOwedMarker) {
+		t.Fatal("the lives batch is not told what canon already owes")
+	}
+	for _, want := range []string{`person "Auscultadora Mayor Del Vas"`, `person "El Cartografo"`} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("owed name missing from prompt: %s", want)
+		}
+	}
+
+	// Once authored, the debt disappears — the block must not nag about paid debts.
+	soFar.Cast = []genesisActor{
+		{CanonicalName: "Auscultadora Mayor Del Vas", Hiding: "she never filed it", StartsIn: "El Lomo"},
+		{CanonicalName: "El Cartografo", Hiding: "he has already redrawn the route", StartsIn: "El Lomo"},
+	}
+	if people, places := fillDebts(soFar); len(people) != 0 || len(places) != 0 {
+		t.Fatalf("debt survived being paid: people=%v places=%v", people, places)
+	}
+}
