@@ -652,3 +652,60 @@ func TestTickLadder_HasRoomForTheCanonFillCanAuthor(t *testing.T) {
 		t.Fatalf("40 authored events still do not fit before the world opens")
 	}
 }
+
+// The collision this pipeline manufactured for itself, 2026-08-28. History named the visitor as a
+// knowledge holder; fillDebts reported them unauthored; the closing pass authored the player INTO the
+// cast; the belt refused "the player is also in the cast" 614 seconds in.
+func TestVisitorIsNeverOwedAndNeverInCanon(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Arrival = genesisArrival{Descriptor: "a stranger", CanonicalName: "Elián", Place: "El Lomo", Stated: "I came aboard."}
+	doc.Cast = []genesisActor{{CanonicalName: "Adaeze", Hiding: "she never filed it", StartsIn: "El Lomo"}}
+	doc.Places = []genesisPlace{{CanonicalName: "El Lomo", Descriptor: "the living back"}}
+	doc.History = []genesisEvent{
+		{
+			WhatHappened: "the heart stumbled and two people heard it",
+			Where:        "El Lomo",
+			Who:          []string{"Adaeze", "Elián"},
+			Knowledge: []genesisKnowledge{
+				{Holder: "Adaeze", Content: "the rhythm changed", EpistemicType: "direct"},
+				{Holder: "Elián", Content: "I heard it too", EpistemicType: "direct"},
+			},
+		},
+		{
+			WhatHappened: "something only the newcomer could have seen",
+			Where:        "El Lomo",
+			Who:          []string{"Elián"},
+			Knowledge:    []genesisKnowledge{{Holder: "Elián", Content: "I saw it", EpistemicType: "direct"}},
+		},
+	}
+
+	// The visitor must never appear as a debt — that is what authored them into the cast.
+	if people, _ := fillDebts(doc); len(people) != 0 {
+		t.Fatalf("the visitor was reported as owed: %v", people)
+	}
+
+	detachVisitorFromCanon(doc)
+
+	// Event 1 survives, stripped of the visitor. Event 2 was known only to the visitor: it cannot be
+	// true, so it goes.
+	if len(doc.History) != 1 {
+		t.Fatalf("want one surviving event, got %d", len(doc.History))
+	}
+	h := doc.History[0]
+	for _, w := range h.Who {
+		if w == "Elián" {
+			t.Fatal("the visitor is still listed as present")
+		}
+	}
+	for _, k := range h.Knowledge {
+		if k.Holder == "Elián" {
+			t.Fatal("the visitor still holds knowledge")
+		}
+	}
+	if len(h.Who) != 1 || h.Who[0] != "Adaeze" {
+		t.Fatalf("the real witness was lost: %v", h.Who)
+	}
+	if len(h.Knowledge) != 1 {
+		t.Fatalf("real knowledge was lost: %v", h.Knowledge)
+	}
+}

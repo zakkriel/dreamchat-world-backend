@@ -362,6 +362,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	}
 	// Bookkeeping before the belt sees it, never authorship: drop what cannot be stored, and make the
 	// arrival offer coherent. Both cost a leaf at worst; neither costs the world.
+	detachVisitorFromCanon(doc)
 	dropUnstorable(doc)
 	normalisePersonNames(doc)
 	reconcileArrival(doc)
@@ -376,6 +377,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			return nil, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
+		detachVisitorFromCanon(doc)
 		dropUnstorable(doc)
 		normalisePersonNames(doc)
 		reconcileArrival(doc)
@@ -726,6 +728,49 @@ func titleCasePersonName(name string) string {
 	return string(out)
 }
 
+// detachVisitorFromCanon removes the visitor from history that should never have named them.
+//
+// Product law, not preference: the visitor knows nothing except their own arrival and nobody in the
+// world knows them (design §"THE VISITOR KNOWS NOTHING"; the belt already refuses an event that hands
+// the player knowledge). An event listing them is mis-attributed rather than interesting, so the
+// attribution goes and the event stays — unless the visitor was its ONLY witness, in which case the
+// event cannot be true and it goes too.
+//
+// This runs before the belt so a premise violation costs an attribution, never the world.
+func detachVisitorFromCanon(doc *genesisDoc) {
+	visitor := strings.TrimSpace(doc.Arrival.CanonicalName)
+	if visitor == "" {
+		return
+	}
+	kept := make([]genesisEvent, 0, len(doc.History))
+	for i, h := range doc.History {
+		who := make([]string, 0, len(h.Who))
+		for _, w := range h.Who {
+			if strings.TrimSpace(w) == visitor {
+				log.Printf("detachVisitorFromCanon: history event %d listed the visitor %q as present — removing the attribution", i+1, visitor)
+				continue
+			}
+			who = append(who, w)
+		}
+		knowledge := make([]genesisKnowledge, 0, len(h.Knowledge))
+		for _, k := range h.Knowledge {
+			if strings.TrimSpace(k.Holder) == visitor {
+				log.Printf("detachVisitorFromCanon: history event %d gave the visitor %q knowledge — removing it", i+1, visitor)
+				continue
+			}
+			knowledge = append(knowledge, k)
+		}
+		if len(knowledge) == 0 {
+			log.Printf("detachVisitorFromCanon: history event %d was known only to the visitor, which cannot be true — dropping the event", i+1)
+			continue
+		}
+		h.Who = who
+		h.Knowledge = knowledge
+		kept = append(kept, h)
+	}
+	doc.History = kept
+}
+
 func dropUnstorable(doc *genesisDoc) {
 	objects := make([]genesisObject, 0, len(doc.Objects))
 	for i, o := range doc.Objects {
@@ -974,10 +1019,17 @@ func fillDebts(d *genesisDoc) (people []string, places []string) {
 	for _, p := range d.Places {
 		known[strings.TrimSpace(p.CanonicalName)] = true
 	}
+	// The VISITOR is never owed. They are a premise, not one of the world's people: nobody knows them
+	// and they know nothing but their own arrival. Measured live 2026-08-28: history named the visitor
+	// as a knowledge holder, fillDebts reported them as an unauthored person, the closing pass
+	// dutifully authored them INTO the cast, and the belt then refused the world for "the player is
+	// also in the cast" — a collision this pipeline manufactured for itself, 614 seconds in.
+	visitor := strings.TrimSpace(d.Arrival.CanonicalName)
+
 	seenP, seenL := map[string]bool{}, map[string]bool{}
 	owePerson := func(name string) {
 		name = strings.TrimSpace(name)
-		if name == "" || cast[name] || seenP[name] {
+		if name == "" || cast[name] || seenP[name] || (visitor != "" && name == visitor) {
 			return
 		}
 		seenP[name] = true
