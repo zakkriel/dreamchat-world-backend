@@ -958,6 +958,65 @@ retires a category of per-entity model cost.
 **Does not block:** genesis, which may emit rules with an enforcement marker and no enforcement.
 
 
+## SPEC-039 — The production decompose seat mis-parses ordinary player input and commits the wrong canon
+
+**Status, newest first.**
+
+**OPEN, and it is live in production.** Measured 2026-08-28 against the exact production binding read
+from `railway variables`: `openrouter:deepseek/deepseek-v4-flash` (decompose is NOT named in
+`DREAMCHAT_SEATS`, so it takes `DREAMCHAT_SEAT_DEFAULT`), `JSON_MODE=json_schema`,
+`SEAT_TEMPERATURE_DECOMPOSE=0`, `REASONING={"effort":"none"}`, `MAX_TOKENS=2048`, and the full
+11-host routing allowlist with `require_parameters: true`. Every other seat faked, so the only live
+call per beat is the seat under test.
+
+**An explicit speech act is parsed as movement, and committed:**
+
+| Player typed | Parse produced | Result |
+|---|---|---|
+| `I say to Mara: 'Evening.'` | **`ActorMoved`** | committed — 3 of 3 runs |
+| `I greet Mara` | `ActorMoved` ×3, `Communicated` ×1, 1 call failure | committed when ActorMoved |
+| `asdfgh qwerty zxcvbn` | `ActorMoved` ×2, `QUERY` ×1 | **committed on the ActorMoved runs** |
+| `xyzzy plugh frotz` | `UNRESOLVED` (18 candidate ids) | no time spent — the honest outcome |
+| `I teleport to the moon` | `UNRESOLVED` (2 ids) | no time spent |
+
+**Three separate defects, in severity order:**
+
+1. **Well-formed input is mis-parsed and the wrong event reaches canon.** `I say to Mara: 'Evening.'`
+   is the exact shape `prompts/decompose.txt` spends a paragraph teaching ("a question put to a person
+   is also speech… it is a Communicated attempt with that person as listener_id"). It produced
+   `ActorMoved` every time. This is not an edge case and has nothing to do with unparseable input.
+2. **The AI authors canon the player never stated.** Keyboard mash produced a committed `ActorMoved`.
+   The deterministic gate accepts it because it is *structurally* valid — the gate cannot know the
+   player never said it. That is `D-1` ("nothing mutates canon directly — the AI proposes, the Core
+   decides") defeated in practice, and `decompose.txt`'s own "Add NOTHING the player did not state"
+   violated with nothing able to catch it.
+3. **Non-deterministic at temperature 0.** Identical input, identical config, different shapes across
+   runs. Some of this is the aggregator: `sort: latency` + `allow_fallbacks: true` means different
+   hosts serve different requests. That is production's own configuration, so the non-determinism is
+   production behaviour, not a test artifact.
+
+**The model matters more than anything else here.** The same sentence on the CI fake, on
+`claude-haiku-4.5`, and on the production model produced three different shapes. Haiku parsed
+`I greet Mara` correctly as `Communicated`; the production model did not. Any conclusion drawn from a
+substitute model says nothing about production — see root `AGENTS.md` contract rule 0c, which this
+entry is the receipt for.
+
+**Not diagnosed here (anti-drift).** Whether the cause is the model's capability, the prompt's shape,
+`json_schema` being served differently by different hosts, or the routing allowlist, is unmeasured.
+Candidate first probes, cheapest first: pin one host and re-run; try `deepseek-v4-pro` (already the
+binding for narrate/world_actor/place_author); measure how often the shape is wrong on a fixed corpus
+of unambiguous sentences before changing anything.
+
+**Instrumentation already exists.** `beat_derivation` (landed with SPEC-037, 2026-08-28) records the
+player's sentence and the shape the parse produced, for every beat. All thirteen probe beats above are
+rows in it. The measurement of how often production mis-parses is a query, not a new build.
+
+- **Owner:** founder — model choice and spend are commercial decisions, not engineering ones.
+- **Firing trigger:** already fired. Reachable on every beat by every player.
+- **Evidence:** this entry's table, reproduced from the wire against the real seat, 2026-08-28.
+
+---
+
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
 the viewer's perceived scene becomes earned — direct address and introduction included; overhearing
@@ -1031,7 +1090,47 @@ notices the world did not hear it.
 
 ---
 
-## SPEC-037 — A sentence the engine cannot bind is treated as a "continue" press, so it advances the journey the ruling says it should end
+## SPEC-037 — A sentence the engine could not bind was spent as a moment of stillness — **PARTLY LANDED 2026-08-28; the journey half is still open**
+
+**Status, newest first — read this before the history below.**
+
+**PARTLY LANDED (2026-08-28).** The general case is fixed and guarded. A typed sentence whose parse
+produced no actions now costs the player **nothing**: no clock advance, no world's turn, nothing
+committed, no journey touched. It halts `bounce`, and the surface says *"Nothing came of that. No time
+passed."* Founder ruling the same day: *"stop it, but the user needs to be informed that nothing
+happened."*
+
+- **Root cause removed.** The continue press is no longer "a beat with an empty chain". It has its own
+  entry point, `Orchestrator.RunContinuePress`; `RunBeat` is now the typed beat and nothing else. The
+  overload that made "the player passed" and "we could not read the player" the same value is gone.
+- **Measured instead of patched.** A new `beat_derivation` row is written for **every** beat — the
+  player's sentence and what the parse made of it, including the empty parse, which previously left no
+  record anywhere (the transcript writes nothing when a beat produced no prose; the debug trace builds
+  its element list from the chain and is never persisted). Retention 15 days, swept in the background.
+  A richer "this world cannot do that" vocabulary shape was **deliberately not built** — founder:
+  *"at best that is a try/catch, at worse a plaster that hides a need."* The missing verbs get chosen
+  from the data.
+- **Guards, each watched going red by reverting the fix** (`core/api/bounce_test.go`): typed-nothing
+  costs nothing and commits nothing; typed-nothing leaves an active journey untouched; a QUERY-only
+  beat still pays the instant floor (proves the change is narrow); the empty parse is recorded with the
+  sentence; a real parse records its types and bound ids.
+- **Corrections to the analysis below, both measured on 2026-08-28.** The original entry says handing
+  an object over is unbuilt — **wrong**: `ObjectRelocated` and `OwnershipAccessChanged` are both in the
+  vocabulary. That claim came from `bridge_fakes.go`, the offline stand-in parser used when no API keys
+  are present, and describes the test double rather than the product. And waiting was never the empty
+  chain: a deliberate wait is a real attempt carrying a `sustain` shape (`for` seconds / `until_at` /
+  `until_attr`), which is why waiting survives this change untouched.
+
+**STILL OPEN: the journey half.** On an active journey the continue press still advances a leg, so the
+symptom the original report caught is unchanged there. Left deliberately: the founder has ruled that
+journeys will run their own legs and stop only on interruption or arrival, which deletes the continue
+press and this branch entirely. Writing new logic there now would be writing code to be deleted. This
+entry closes when that lands.
+
+---
+
+**History — the original report, 2026-08-11. Superseded in the two places named above.**
+
 
 A player on an active journey has two moves. **Continue** advances one leg. Typing anything else is
 meant to stop the journey. The founder's ruling is quoted verbatim in the code that implements it
@@ -1198,3 +1297,81 @@ perception by presence alone, which contradicts the named-witness ruling. Founde
 `apply_ruled_event` should get the same treatment as `apply_event`; the *shape* of that fix now depends
 on this SPEC. **A handover committed through the resolve seat is currently invisible to everyone,
 including the new holder.**
+
+---
+
+## SPEC-040 — Canon with no perception is unauthorable at genesis and unreachable in play
+
+**Status, newest first.**
+
+**OPEN, HIGH PRIORITY. Founder-ruled 2026-08-28 and blocking the depth of every generated world.**
+
+A canon event with **zero perceptions is legitimate and necessary**. A faction keeps a record nobody
+alive has read. A man dies and takes the only account of a night with him. A sealed ledger states a debt
+no living person can cite. Founder, 2026-08-28:
+
+> a Faction might have canon that is not public or not known by anybody created at that moment. later in
+> the game might be that a new character appears (in game) and that character does have a perception for
+> a canon that was "not perceived" and that is a possibility. if we don't consider that we have a very
+> shallow world
+
+This is not currently possible, at either end.
+
+### 1. Genesis refuses it
+
+`genesisDoc.validate()` (`core/api/worldgenesis.go:439`) refuses any authored event whose knowledge list
+is empty:
+
+    return refuse("event %d left nobody knowing anything", i+1)
+
+And `validate`'s own doc comment (`:212-215`) lists **"a secret held by nobody"** among the things "the
+world cannot survive". So this is not an oversight to patch quietly — the belt states the opposite
+intent, deliberately, and the founder has now reversed it. **That reversal needs a superseding ADR**, not
+an edit: the engine contract set is frozen and a genuine problem produces a proposed ADR (canon_engine
+doc 02), and `D-9` binds a decision to the file that implements it.
+
+Note what does **not** change: the player still earns no perceptions at genesis (`:445`, the I-9 floor).
+"Nobody knows this" and "the player knows this" are different claims, and only the first is being
+allowed.
+
+### 2. Play cannot ever surface it
+
+Perceptions are written when an event is applied. Nothing grants a perception of an event that is
+already in the past: the play path only ever **reads** `perception_record` (`beathandler.go:182`,
+`scenehandler.go:209`), and the two writers are the genesis commit and the apply functions at the moment
+of the event.
+
+So an unperceived event authored today is **recorded and permanently unreachable** — it exists in canon,
+no projection can show it, and no beat can reveal it. Allowing genesis to author it without this half is
+honest depth on paper and inert in the product.
+
+The founder's own example is the missing mechanism: *someone learns a two-month-old fact by gossip, and
+that is a new perception of the same canonical event.* One canon event, many perceptions, arriving
+whenever (`SPEC-034` and the perception model already carry the 1:N shape; `epistemic_type` already has
+`told`, `overheard`, `rumor`, `public`, `inference` for exactly this).
+
+### What has to be decided
+
+1. **Who may mint a perception on historical canon, and through which gate?** Canon is written only
+   through `apply_event` / `apply_ruled_event` (`D-1`). A perception acquired later is not a new event —
+   the event already happened — so this is either a new gated operation or a documented extension of an
+   existing one. It must not become a second write path into perception state.
+2. **What `acquired_tick` does a late perception carry?** `I-9` is satisfied at genesis by construction
+   because `acquired_tick = valid_tick = the source event's tick`. A perception acquired two months later
+   has `valid_tick` = the event's tick and `acquired_tick` = now. **That is the whole point of having two
+   columns, and this would be the first path that uses them differently.** Confirm `I-9` holds under that
+   reading before anything is built.
+3. **What makes an unperceived event discoverable at all?** If nothing points at it, no gossip can start.
+   Candidates: an artifact that records it (the sealed ledger), a place that shows it, or a faction that
+   holds it. This is the difference between buried depth and dead rows.
+4. **Does the reviewer or the belt need a floor?** A world where *most* canon is unperceived is not deep,
+   it is empty. Whether a proportion floor belongs at genesis is unruled.
+
+### Interaction with the fill stage
+
+The fill stage authors canon as fiction, before transcription. Founder 2026-08-28 on the fill layers:
+each layer authors its own lore, and lore is knowledge — so most events will carry perceptions, and the
+unperceived ones are a deliberate authorial choice ("this is the record nobody has read"). Until this
+SPEC is built, fill must keep giving every event at least one holder, because the belt requires it and
+because an unperceived event would be dead weight rather than depth.
+
