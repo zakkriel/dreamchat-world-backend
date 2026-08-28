@@ -615,6 +615,55 @@ type fillBreach struct {
 	Why  string `json:"why"`
 }
 
+// resolveArrivalCollision handles the arrival sharing a name with one of the world's own people.
+//
+// The belt refuses that, correctly: the visitor is a premise, nobody knows them and they know nothing,
+// so they cannot also be a person with a life and a room. But the resolution is not to throw the world
+// away. detachVisitorFromCanon has already guaranteed no canon points at the visitor, which makes the
+// ARRIVAL the safe side to change — the cast member is embedded in history and hands, the visitor is
+// not attached to anything.
+//
+// So an alternative the seat already authored takes over: a candidate whose name is not in the cast,
+// keeping the room and the opening line the arrival was authored with. Nothing is invented.
+//
+// Measured live 2026-08-28, twice. First the closing pass authored the visitor into the cast (fixed by
+// never owing them); then the repair pass did the same thing 789 seconds in. Plugging one caller at a
+// time was the wrong shape — the collision resolves itself here, whoever caused it.
+func resolveArrivalCollision(doc *genesisDoc) {
+	arrival := strings.TrimSpace(doc.Arrival.CanonicalName)
+	if arrival == "" {
+		return
+	}
+	inCast := false
+	for _, a := range doc.Cast {
+		if strings.TrimSpace(a.CanonicalName) == arrival {
+			inCast = true
+			break
+		}
+	}
+	if !inCast {
+		return
+	}
+	cast := make(map[string]bool, len(doc.Cast))
+	for _, a := range doc.Cast {
+		cast[strings.TrimSpace(a.CanonicalName)] = true
+	}
+	for _, c := range doc.ArrivalCandidates {
+		name := strings.TrimSpace(c.CanonicalName)
+		if name == "" || cast[name] || strings.TrimSpace(c.Descriptor) == "" {
+			continue
+		}
+		log.Printf("resolveArrivalCollision: the visitor %q is also one of the world's people; the arrival becomes %q, an alternative the seat authored", arrival, name)
+		doc.Arrival.CanonicalName = c.CanonicalName
+		doc.Arrival.Descriptor = c.Descriptor
+		if strings.TrimSpace(c.Why) != "" {
+			doc.Arrival.Why = c.Why
+		}
+		return
+	}
+	log.Printf("resolveArrivalCollision: the visitor %q is also one of the world's people and no authored alternative is free — the belt will refuse", arrival)
+}
+
 // reconcileArrival makes the offered three coherent with the arrival instead of refusing the world for
 // their disagreement.
 //
@@ -797,6 +846,7 @@ func dropUnstorable(doc *genesisDoc) {
 }
 
 func reconcileArrival(doc *genesisDoc) {
+	resolveArrivalCollision(doc)
 	if len(doc.ArrivalCandidates) == 0 {
 		return
 	}
