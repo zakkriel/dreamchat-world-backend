@@ -291,6 +291,42 @@ eventually need the build detached from the request, the way the image platform 
 
 ---
 
+### 2.8 Places are nested, and at whatever scale the brief describes
+
+`extent_class` runs `intimate | small | medium | large | vast`, `kind` is free text, and `within` names
+the place that contains this one. The engine has always nested locations —
+`location_state.attrs->>'parent_location_id'` with a recursive walk (`core/db/schema.sql:1582-1599`) and a
+documented precedent of a parent quarter — and the fill contract simply had no way to say it.
+
+**This was a real defect and it was a vocabulary defect.** The fill prompt said "room" thirteen times and
+carried one world's shape as a worked example. That framing narrowed every possible world to interior
+spaces, and the day's builds duly returned small interiors for a brief describing something vast. No
+amount of belt tuning would have fixed a prompt that asked the wrong question.
+
+So the places layer reads the scale off the brief and authors the whole ladder, from the largest thing it
+describes down to the smallest place a body can stand in. And **`GA-2` is now the discipline stated in the
+prompt**: before naming a kind, a role or an institution, check the word would still make sense in a
+sci-fi thriller, a workplace drama and a horror story. Any world's shape is an example, never a template.
+
+### 2.9 The 900-second ceiling is on the response, not on the build
+
+Authoring used to run on `r.Context()`, so when the edge cut the connection the request context was
+cancelled and minutes of paid model time died with it — the `context canceled` in the logs of 2026-08-28,
+twice, at exactly 899,997 ms. **The ceiling is on the streamed response. The build had no business
+inheriting it.**
+
+The fix is one line: author under `context.WithoutCancel(r.Context())`. The build keeps its cost sink,
+loses the disconnect, and finishes and commits whether or not anyone is listening. Frames still go to the
+live socket while there is one. A client picks the world back up through the resume path the handler
+already has.
+
+**There is no architectural fork here.** Committing after the descent so a player can start sooner may
+still be desirable one day, but that is a product choice about when a world becomes visible — not a
+workaround for a timeout.
+
+What remains true: wall clock is bought with output tokens, not call count. A deep world takes as long as
+it takes, and costs about **$0.02** against a **$0.25** budget.
+
 ## 3. Open questions
 
 1. **Per layer or per item for people?** One call per layer is fast and averages over everyone. One call

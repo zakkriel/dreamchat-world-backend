@@ -227,7 +227,7 @@ func (id *worldIdentity) validate() error {
 func descentSchedule() []workItem {
 	return []workItem{
 		{ID: "places", Kind: "descent",
-			Text:      "What rooms does this world's condition force into existence, and what joins them? What does a stranger see first? Put each room's public lore INTO its description — what it is, what it was, what it is for. Do not author canon events yet: an event needs someone who knows it, and nobody exists yet.",
+			Text:      "What places does this world's condition force into existence, AT EVERY SCALE THE BRIEF IMPLIES, and what joins them? Read the scale off the brief: the largest thing it describes, then what sits inside that, down to the smallest place a body can stand in — and use `within` to say what contains what. What does a stranger see first? Put each place's public lore INTO its description — what it is, what it was, what it is for. Do not author canon events yet: an event needs someone who knows it, and nobody exists yet.",
 			Therefore: "geography exists before anyone stands in it"},
 		{ID: "factions", Kind: "descent",
 			Text:      "Who organises here? What do they control, what do they publish, and what do they bury? Which are organised bodies with a command structure (kind: faction) and which are bare collectives with none (kind: group)? Their lore goes in their own fields. Still no canon events — there is nobody to hold them.",
@@ -236,23 +236,23 @@ func descentSchedule() []workItem {
 			Text:      "What bodies of knowledge does this world argue over — schools of thought, doctrines, a trade's craft? What is each one actually, and what is contested about it? Which faction teaches or owns it? Still no canon events.",
 			Therefore: "a school of thought exists before the apprentice who is wrong about it"},
 		{ID: "people", Kind: "descent",
-			Text:      "Who lives in these rooms? For each: what they are to the room, how they speak, what they carry that they will not say, and which factions or groups they belong to. Name the roster fully; each person's inner life is authored separately later. THIS IS ALSO WHERE CANON STARTS: now that there are people, author what has already happened here, and for each event who was there and who KNOWS — and a knower need never have been present. Every event needs at least one holder who is one of these people.",
+			Text:      "Who is in these places? For each: what they are to the place they are in, how they speak, what they carry that they will not say, and which factions or groups they belong to. Name the roster fully; each person's inner life is authored separately later. THIS IS ALSO WHERE CANON STARTS: now that there are people, author what has already happened here, and for each event who was there and who KNOWS — and a knower need never have been present. Every event needs at least one holder who is one of these people.",
 			Therefore: "the world needs its people before it can have their secrets, and canon needs someone to carry it"},
 		{ID: "artifacts", Kind: "descent",
-			Text:      "What does a body touch here? What sits in these rooms and what is carried in these hands? Who knows where each one is, and who thinks it is somewhere else?",
+			Text:      "What does a body touch here? What sits in these places and what is carried in these hands? Who knows where each one is, and who thinks it is somewhere else?",
 			Therefore: "a world with nothing to pick up is a diorama"},
 	}
 }
 
 // ascentSchedule is the way back up: every layer revisited knowing everything BELOW it, which on the way
-// down it could not see (design §1.2.1). A room authored before anyone lived in it can finally be told who
-// sleeps there.
+// down it could not see (design §1.2.1). A place authored before anyone was in it can finally be told who
+// is there.
 //
 // Its job is connection and gap-filling. Creation is not forbidden, but a person invented here should
 // exist because a connection demanded them. Founder 2026-08-28: "there is no minimum or maximum".
 //
 // PEOPLE ARE PER-ITEM. One call per person, because a person's inner life has to reason about the specific
-// rooms, factions, concepts and other people that exist by name — a single call averaging over everyone is
+// places, factions, concepts and other people that exist by name — a single call averaging over everyone is
 // how you get twelve variations of the same person. This is the expensive part and it is deliberate.
 func ascentSchedule(doc *genesisDoc) []workItem {
 	items := []workItem{
@@ -285,18 +285,18 @@ func ascentSchedule(doc *genesisDoc) []workItem {
 			Text:      "Connect the institutions to the people who serve, resent, left, or were expelled from them. What does each faction know about the others? What did one of them do that its own members disagree about?",
 			Therefore: "an institution is its people's arguments about it"},
 		workItem{ID: "places-connect", Kind: "ascent",
-			Text:      "Return to the rooms knowing who lives in them, what happened in them, and what sits in them. What does each room now need that it lacked when nothing was in it? What happened here that the people here remember differently?",
-			Therefore: "a room is what happened in it"},
+			Text:      "Return to the places knowing who is in them, what happened in them, and what sits in them. What does each place now need that it lacked when nothing was in it? What happened here that the people here remember differently? If the brief implies a scale nobody has authored yet, author it now and say what it contains.",
+			Therefore: "a place is what happened in it"},
 	)
 	return items
 }
 
 // arrivalWork is the last layer: the world header, the region, and the way in. It runs after the ascent so
-// the visitor walks into a room that is already inhabited and already has a history.
+// the visitor arrives somewhere already inhabited that already has a history.
 func arrivalWork() workItem {
 	return workItem{ID: "arrival", Kind: "arrival",
-		Text:      "Name the world and the quarter it sits in, and bring a stranger into it. Which of these rooms do they walk into, what is the one sentence they know, and who is already there? THE ARRIVAL IS A STRANGER: a new name, appearing nowhere above, and never one of the world's own people.",
-		Therefore: "a visitor walks in on people, never into an empty room they must search"}
+		Text:      "Name the world and the region it sits in, and bring a stranger into it. Which of these places do they arrive in, what is the one sentence they know, and who is already there? THE ARRIVAL IS A STRANGER: a new name, appearing nowhere above, and never one of the world's own people.",
+		Therefore: "a visitor arrives among people, never into an empty place they must search"}
 }
 
 // authorWorld infers identity, then fills under it, and returns a document that has passed every belt check.
@@ -388,7 +388,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		// An unpaid reference gets ONE nudge, in context, at the batch that made it — cheapest place to
 		// fix it. If the second answer still dangles we keep the better of the two anyway: the debt is
 		// carried forward and the closing pass authors it. A good invention is never discarded for
-		// arriving before its room.
+		// arriving before the place it needs.
 		if bad := frag.danglingRefs(doc); len(bad) > 0 {
 			log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", item.ID, len(bad), strings.Join(bad, "; "))
 			again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
@@ -523,7 +523,7 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 	}
 	// Dangling references are NOT an error here. The invention is usually right — a life that needs a
 	// low-tail district on a walking creature has understood the brief better than a schedule that
-	// only authored rooms in batch one. Unpaid references are work, so they are reported to the caller
+	// only authored places in the first layer. Unpaid references are work, so they are reported to the caller
 	// and paid by a retry or by the closing pass. Nothing is thrown away for making one.
 	return &frag, nil
 }
@@ -569,7 +569,7 @@ func (f *fillFragment) validate() error {
 //
 // This is NOT a check on whether an invention is welcome. A batch that decides this world needs a
 // low-tail district is doing the job fill exists to do, and the prompt now tells lives and objects to
-// author the rooms they need. The only fault this reports is a reference left UNPAID — named by nobody,
+// author the places they need. The only fault this reports is a reference left UNPAID — named by nobody,
 // authored by nobody — which the engine cannot store and the retry is asked to fix by authoring it.
 //
 // PEOPLE named by history are exempt: history deliberately runs before lives and names the people lives
@@ -606,6 +606,9 @@ func (f *fillFragment) danglingRefs(doc *genesisDoc) []string {
 		bad = append(bad, fmt.Sprintf("%s names the person %q, who no batch has authored", what, name))
 	}
 
+	for _, pl := range f.Places {
+		place(pl.Within, fmt.Sprintf("the place %q", pl.CanonicalName))
+	}
 	for _, a := range f.Cast {
 		place(a.StartsIn, fmt.Sprintf("the person %q", a.CanonicalName))
 	}
@@ -743,7 +746,7 @@ func hasConcept(d *genesisDoc, name string) bool {
 // deepenActor fills in what a later pass learned about someone who already exists, and never overwrites
 // what an earlier pass already said. The ascent exists to connect and complete, not to rewrite: a person
 // authored on the way down keeps their hiding and their goal, and gains the beliefs, mantras, traumas and
-// phrases the way back up found room for.
+// phrases the way back up had space for.
 func deepenActor(have *genesisActor, add genesisActor) {
 	str := func(dst *string, src string) {
 		if strings.TrimSpace(*dst) == "" && strings.TrimSpace(src) != "" {
@@ -828,13 +831,13 @@ type fillBreach struct {
 // resolveArrivalCollision handles the arrival sharing a name with one of the world's own people.
 //
 // The belt refuses that, correctly: the visitor is a premise, nobody knows them and they know nothing,
-// so they cannot also be a person with a life and a room. But the resolution is not to throw the world
+// so they cannot also be a person with a life and a place. But the resolution is not to throw the world
 // away. Canon is the record of what happened — append-only and immutable (D-1, I-1, I-2) — and the cast
-// are embedded in it, in hands and in rooms. The ARRIVAL is authored last and is attached to nothing,
+// are embedded in it, in hands and in places. The ARRIVAL is authored last and is attached to nothing,
 // so the arrival is the side that yields. The record is never edited to suit a later choice.
 //
 // So an alternative the seat already authored takes over: a candidate whose name is not in the cast,
-// keeping the room and the opening line the arrival was authored with. Nothing is invented.
+// keeping the place and the opening line the arrival was authored with. Nothing is invented.
 //
 // Measured live 2026-08-28, twice. First the closing pass authored the visitor into the cast (fixed by
 // never owing them); then the repair pass did the same thing 789 seconds in. Plugging one caller at a

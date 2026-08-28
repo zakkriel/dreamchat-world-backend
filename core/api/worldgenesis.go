@@ -98,6 +98,11 @@ type genesisPlace struct {
 	Description   string `json:"description"`
 	Tension       string `json:"tension"`
 	ExtentClass   string `json:"extent_class"`
+	// Within names the place that contains this one. A world is nested, and the engine already is:
+	// location_state.attrs->>'parent_location_id' with a recursive walk (schema.sql:1582-1599). Flat
+	// places forced every world into one scale — which is how a brief describing something vast came
+	// back as a handful of small interiors.
+	Within string `json:"within,omitempty"`
 }
 
 type genesisWay struct {
