@@ -653,63 +653,6 @@ func TestTickLadder_HasRoomForTheCanonFillCanAuthor(t *testing.T) {
 	}
 }
 
-// The collision this pipeline manufactured for itself, 2026-08-28. History named the visitor as a
-// knowledge holder; fillDebts reported them unauthored; the closing pass authored the player INTO the
-// cast; the belt refused "the player is also in the cast" 614 seconds in.
-func TestVisitorIsNeverOwedAndNeverInCanon(t *testing.T) {
-	doc := &genesisDoc{}
-	doc.Arrival = genesisArrival{Descriptor: "a stranger", CanonicalName: "Elián", Place: "El Lomo", Stated: "I came aboard."}
-	doc.Cast = []genesisActor{{CanonicalName: "Adaeze", Hiding: "she never filed it", StartsIn: "El Lomo"}}
-	doc.Places = []genesisPlace{{CanonicalName: "El Lomo", Descriptor: "the living back"}}
-	doc.History = []genesisEvent{
-		{
-			WhatHappened: "the heart stumbled and two people heard it",
-			Where:        "El Lomo",
-			Who:          []string{"Adaeze", "Elián"},
-			Knowledge: []genesisKnowledge{
-				{Holder: "Adaeze", Content: "the rhythm changed", EpistemicType: "direct"},
-				{Holder: "Elián", Content: "I heard it too", EpistemicType: "direct"},
-			},
-		},
-		{
-			WhatHappened: "something only the newcomer could have seen",
-			Where:        "El Lomo",
-			Who:          []string{"Elián"},
-			Knowledge:    []genesisKnowledge{{Holder: "Elián", Content: "I saw it", EpistemicType: "direct"}},
-		},
-	}
-
-	// The visitor must never appear as a debt — that is what authored them into the cast.
-	if people, _ := fillDebts(doc); len(people) != 0 {
-		t.Fatalf("the visitor was reported as owed: %v", people)
-	}
-
-	detachVisitorFromCanon(doc)
-
-	// Event 1 survives, stripped of the visitor. Event 2 was known only to the visitor: it cannot be
-	// true, so it goes.
-	if len(doc.History) != 1 {
-		t.Fatalf("want one surviving event, got %d", len(doc.History))
-	}
-	h := doc.History[0]
-	for _, w := range h.Who {
-		if w == "Elián" {
-			t.Fatal("the visitor is still listed as present")
-		}
-	}
-	for _, k := range h.Knowledge {
-		if k.Holder == "Elián" {
-			t.Fatal("the visitor still holds knowledge")
-		}
-	}
-	if len(h.Who) != 1 || h.Who[0] != "Adaeze" {
-		t.Fatalf("the real witness was lost: %v", h.Who)
-	}
-	if len(h.Knowledge) != 1 {
-		t.Fatalf("real knowledge was lost: %v", h.Knowledge)
-	}
-}
-
 // An 803-second build was refused at the BATCH for the cast name "un aprendiz de 27 años" ("a
 // 27-year-old apprentice"), a rule the document-level normaliser would have satisfied a moment later.
 // A fragment-level copy of a document-level rule just means the repair never gets to run.
@@ -777,5 +720,59 @@ func TestResolveArrivalCollision_TakesAnAuthoredAlternative(t *testing.T) {
 	resolveArrivalCollision(doc2)
 	if doc2.Arrival.CanonicalName != "Solo" {
 		t.Fatal("a name was invented where no authored alternative existed")
+	}
+}
+
+// Canon decides the name; the newcomer yields. Canon is the record of what happened — append-only and
+// immutable (D-1, I-1, I-2) — authored before the arrival and never edited to make a later choice fit.
+// An earlier version of this pipeline stripped the visitor out of history instead. That was wrong: if
+// something happened it stays recorded, and it is the arrival that changes.
+func TestArrivalYieldsToCanon_HistoryIsNeverEdited(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "El Lomo", Descriptor: "the living back"}}
+	doc.Cast = []genesisActor{{CanonicalName: "Adaeze", Hiding: "she never filed it", StartsIn: "El Lomo"}}
+	doc.History = []genesisEvent{{
+		WhatHappened: "the heart stumbled and two people heard it",
+		Where:        "El Lomo",
+		Who:          []string{"Adaeze", "Elián"},
+		Knowledge: []genesisKnowledge{
+			{Holder: "Adaeze", Content: "the rhythm changed", EpistemicType: "direct"},
+			{Holder: "Elián", Content: "I heard it too", EpistemicType: "direct"},
+		},
+	}}
+	doc.Arrival = genesisArrival{
+		Descriptor: "a newcomer", CanonicalName: "Elián",
+		Place: "El Lomo", Stated: "I came up the spine.", Why: "sent to listen",
+	}
+	doc.ArrivalCandidates = []genesisCandidate{
+		{Descriptor: "a newcomer", CanonicalName: "Elián", Why: "sent to listen"},
+		{Descriptor: "Adaeze", CanonicalName: "Adaeze", Why: "already here"},
+		{Descriptor: "a courier with wet boots", CanonicalName: "Ise", Why: "carrying an unlogged delivery"},
+	}
+
+	before := len(doc.History[0].Who)
+	beforeKnowledge := len(doc.History[0].Knowledge)
+	reconcileArrival(doc)
+
+	// The arrival yielded to the record.
+	if doc.Arrival.CanonicalName != "Ise" {
+		t.Fatalf("the arrival did not yield to canon: %q", doc.Arrival.CanonicalName)
+	}
+	// And canon is exactly as authored — nothing detached, nothing unrecorded.
+	if len(doc.History) != 1 {
+		t.Fatalf("history was edited: %d events", len(doc.History))
+	}
+	if len(doc.History[0].Who) != before || len(doc.History[0].Knowledge) != beforeKnowledge {
+		t.Fatalf("witnesses or knowledge were stripped: who=%v knowledge=%d",
+			doc.History[0].Who, len(doc.History[0].Knowledge))
+	}
+	found := false
+	for _, w := range doc.History[0].Who {
+		if w == "Elián" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("Elián was removed from the record of an event they were part of")
 	}
 }
