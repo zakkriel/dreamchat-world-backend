@@ -1375,3 +1375,144 @@ unperceived ones are a deliberate authorial choice ("this is the record nobody h
 SPEC is built, fill must keep giving every event at least one holder, because the belt requires it and
 because an unperceived event would be dead weight rather than depth.
 
+
+---
+
+## SPEC-041 — A perception can be mutated in place, and nothing records what replaced what
+
+**Status, newest first.**
+
+**OPEN. Founder-raised 2026-08-28. Latent, not live: no code updates a perception today.**
+
+Founder:
+
+> perceptions are also never changed. they are just being replaced by a new perception. why it mattered
+> cause actions are based on perceptions, so if we update the perception content we cannot explain past
+> actions when the perception was another. so they are somehow versioned, or they should be
+
+That reading is right, and the engine implements half of it.
+
+**What is protected.** `trg_perception_record_no_delete BEFORE DELETE ON perception_record`
+(`core/db/schema.sql:4932`), and the same guard on `perception_subject` (:4939). A perception can never be
+removed.
+
+**What is not.** Those triggers are `BEFORE DELETE` only. There is **no UPDATE guard**, so `content`,
+`confidence`, `epistemic_type` or `distortion_level` can be rewritten in place. Compare `canon_event`,
+which has both a delete guard and an append-only suite (`core/db/tests/20_append_only*`). Perceptions
+have the first and not the second.
+
+**And there is no lineage.** `invalid_tick` records that a perception stopped being valid at a tick.
+Nothing records *which* perception replaced it. "She believed X, then learned Y" is two rows whose
+relationship exists only in the prose of their `content`.
+
+**Why it is load-bearing.** Every NPC decision is taken from what that holder knew at that tick. If
+content can move under a past decision, replay reads a belief the actor never held and the decision
+becomes unexplainable. `I-1` (replay) and `I-2` (provenance) protect canon exactly this way. Perceptions
+carry the same weight for behaviour and do not have the same protection.
+
+### What has to be decided
+
+1. **An UPDATE guard, or a documented column allowlist?** `dirty` is flipped by the projection machinery
+   and `expired_at` by expiry, so a blanket no-UPDATE trigger would break both. The guard has to separate
+   bookkeeping columns from the belief itself.
+2. **A `supersedes` pointer, or supersession derived from (holder, subject, tick)?** A column is explicit
+   and cheap. Deriving it means every reader re-implements the rule and they will disagree.
+3. **Does a superseded perception stay visible to projections?** A page should show the current belief; a
+   replay must still reach the old one. Those are different readers of the same rows.
+4. **`SPEC-040` interacts.** A late perception of old canon carries `valid_tick` at the event and
+   `acquired_tick` at now. Supersession must be expressible in that same two-column scheme without
+   breaking `I-9`.
+
+---
+
+## SPEC-042 — Personality traits are not connected to the perceptions that formed them
+
+**Status, newest first.**
+
+**OPEN. Founder-raised 2026-08-28. Depends on `SPEC-041`.**
+
+Founder, after ruling out modelling trauma as a perception:
+
+> perception has no "weight" cause is more oriented to knowledge (what you know) not so much on how you
+> feel about it ... so having personality traits like trauma or beliefs are much more meaningful at
+> defining each NPCs behaviour and speech
+
+> the spec is about connecting perceptions with personality traits. so if you have a trauma a perception
+> might (should) be connected to it, and what happens if the perception changes (evolves) in the future?
+> well the trauma should follow along, right?
+
+**The first point is confirmed by the schema.** `perception_record` carries `content`, `epistemic_type`,
+`sensory_mode`, `confidence` and `distortion_level`. Every weight there is epistemic — how sure, how
+garbled. There is no salience, intensity or valence. So learning to bake bread and witnessing a murder
+are the same kind of row. **Perception is a knowledge ledger; it cannot express what a fact did to
+someone.** Personality is the right axis for trauma, belief and mantra.
+
+**But the two cannot be linked today.** `personality_core (world_id, actor_id, traits jsonb,
+malleability)` holds who someone is, and nothing points from a trait to the knowledge that formed it. So
+a trauma is a free-floating adjective: unexplainable, unearnable during play, and unmoved when the belief
+beneath it changes.
+
+**A blocking constraint.** `personality_core`'s own header reads *"WHO THEY ARE IN THE ROOM. No secret
+ever lives here."* A private trauma therefore has **no home** in the persona table, by design. Either
+private persona needs its own home, or the link lives on the perception side. Unresolved.
+
+### What has to be decided
+
+1. **Where does private personality live?** `personality_core` forbids secrets. `actor_state.attrs` is
+   free-form and internal. Neither is obviously correct.
+2. **What does "the trauma follows along" mean mechanically?** If the forming perception is superseded,
+   does the trait weaken, invert, or simply record that its basis moved? A man who learns his brother was
+   never betrayed does not lose twenty years of distrust — so it is probably not "recompute the trait".
+3. **Can a trait be acquired during play?** Linking traits to perceptions makes acquiring the perception
+   the natural moment to acquire the trait. That is a real feature and a real risk: personality drifting
+   on every rumour.
+4. **What does the fill stage author?** Fill authors persona as fiction now. Whether it also authors the
+   link depends on this SPEC; until then it authors traits and knowledge side by side, unlinked.
+
+---
+
+## SPEC-043 — Intangible concepts cannot be entities, so nobody can hold a belief about one
+
+**Status, newest first.**
+
+**OPEN. Founder-raised 2026-08-28.**
+
+Founder:
+
+> I think we also need intangible concepts as entities. lets say a world has magic and that magic has
+> schools of thoughts like abjuration. how do we deal with it? so we create an entity and we can link
+> perception (knowledge) to that entity, so an NPC can have its own thought about something that is not
+> particularly an action
+
+**This is architecturally forced, not a preference.** A perception is *about* an entity —
+`perception_subject (perception_id, entity_id, world_id)` — and `entity_kind` is a closed set
+(`core/db/schema.sql:3936`):
+
+    CHECK (entity_kind = ANY (ARRAY['actor','location','artifact','faction','group']))
+
+There is no row an NPC's belief about abjuration can point at. The knowledge model cannot express what
+someone thinks about a school of magic at all — not badly, not at all.
+
+**The layer distinction that matters.** That magic exists and is taught in schools is **world identity**;
+the understanding pass already authors the condition, the bargain and the world's rules. A concept entity
+is a different thing: the **knowable object** people hold beliefs about, are wrong about, and act on. The
+identity says the world has abjuration. The entity is what an apprentice can be mistaken about.
+
+### The discipline this needs, or it swallows everything
+
+Without a test, every noun becomes an entity — honour, the weather, debt. Proposed for ruling: **a concept
+is an entity only if someone can be wrong about it in a way that changes what they do.** That ties the row
+to consequence rather than to vocabulary.
+
+### What has to be decided
+
+1. **A new `entity_kind`, or reuse `group`?** `group` is a collective of people; a school of thought is
+   not. Reusing it makes the two indistinguishable in every query that filters on kind.
+2. **A concept has no place, cannot be carried, and cannot act.** Engine code dispatches on `entity_kind`
+   (e.g. `schema.sql:434-440`, `IF m.entity_kind = 'actor' THEN ... ELSIF ... 'location'`). Each such
+   branch needs a concept case or a deliberate no-op, and `event_participant`'s kind check must admit it.
+3. **Does a concept appear in the compendium?** It is knowledge rather than a thing in a room, and the
+   existing page projections have nowhere to put it.
+4. **Does fill author concepts, and in which layer?** They sit naturally between factions and people: a
+   school of thought exists before the apprentice who is wrong about it.
+
