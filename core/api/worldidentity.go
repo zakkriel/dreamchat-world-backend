@@ -18,6 +18,7 @@ import (
 	"embed"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 )
 
@@ -69,6 +70,7 @@ const (
 	worldFillIdentityMarker         = "IDENTITY (immutable for this genesis — every invention answers to it):"
 	worldFillWorkMarker             = "WORK ITEM (answer only this):"
 	worldFillAlreadyMarker          = "ALREADY AUTHORED. Cross-reference these by the EXACT string inside the quotes and nothing else — never the descriptor, never the quotes, never the two joined. Do not re-emit these names; deepen only if the work item demands a new position:"
+	worldFillRejectedMarker         = "YOUR LAST ANSWER TO THIS WORK ITEM WAS REJECTED:"
 	worldFillOwedMarker             = "STILL OWED. Canon already references these by name and the belt REFUSES the world until each one exists. If this batch is the one that authors them, it MUST author every one:"
 	worldFillReviewExclusionsMarker = "EXCLUSIONS AND DEPARTURE (what this world is not):"
 	worldFillReviewNamesMarker      = "FINISHED NAMES (what fill authored):"
@@ -277,7 +279,16 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	doc := &genesisDoc{}
 	var tags []taggedName
 	for _, item := range scheduleWork(id) {
-		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc)
+		// One retry per batch, with the rejection fed back. A single malformed answer must not throw
+		// away every batch before it: measured live 2026-08-28, the revise batch spelled `places` as
+		// `place` and DisallowUnknownFields ended a 147-second build. The belt is NOT loosened — the
+		// fragment still has to parse and validate; it just gets told what was wrong and asked once
+		// more. Costs one call in the failure case and nothing in the happy path.
+		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+		if err != nil && IsGenesisRefusal(err) {
+			log.Printf("fill %s rejected, retrying once: %v", item.ID, err)
+			frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
+		}
 		if err != nil {
 			return nil, err
 		}
@@ -296,7 +307,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			Kind:      "batch",
 			Text:      "The belt refused the merged document: " + err.Error(),
 			Therefore: "emit only what the belt is missing; do not re-author names already listed",
-		}, brief, answers, doc)
+		}, brief, answers, doc, "")
 		if rerr != nil {
 			return nil, err
 		}
@@ -308,9 +319,9 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	return doc, nil
 }
 
-func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc) (*fillFragment, error) {
+func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc, priorError string) (*fillFragment, error) {
 	raw, err := seat.Generate(ctx, GenRequest{
-		Prompt: buildWorldFillPrompt(id, item, brief, answers, soFar),
+		Prompt: buildWorldFillPrompt(id, item, brief, answers, soFar, priorError),
 		Schema: json.RawMessage(worldFillSchemaJSON),
 	})
 	if err != nil {
@@ -669,7 +680,7 @@ func fillDebts(d *genesisDoc) (people []string, places []string) {
 	return people, places
 }
 
-func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc) string {
+func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc, priorError string) string {
 	var sb strings.Builder
 	sb.WriteString(worldFillSystemHeader)
 	sb.WriteString("\n\n")
@@ -744,6 +755,13 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 		sb.WriteString("\"\n    in place: \"")
 		sb.WriteString(soFar.Arrival.Place)
 		sb.WriteString("\"\n")
+	}
+	if strings.TrimSpace(priorError) != "" {
+		sb.WriteString("\n")
+		sb.WriteString(worldFillRejectedMarker)
+		sb.WriteString("\n")
+		sb.WriteString(strings.TrimSpace(priorError))
+		sb.WriteString("\nEmit ONLY the fields this schema names, spelled exactly as the schema spells them. Answer the same work item again.\n")
 	}
 	if people, places := fillDebts(soFar); len(people) > 0 || len(places) > 0 {
 		sb.WriteString("\n")

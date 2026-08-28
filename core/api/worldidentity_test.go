@@ -52,7 +52,7 @@ func TestAuthorWorld_StoresIdentityBesideTheDocument(t *testing.T) {
 
 func TestFillOne_RefusesUnknownFields(t *testing.T) {
 	seat := stubDriver{raw: `{"empty":false,"places":[],"not_a_field":true}`}
-	_, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "r", Kind: "generative", Text: "t", Therefore: "t"}, testBrief, nil, &genesisDoc{})
+	_, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "r", Kind: "generative", Text: "t", Therefore: "t"}, testBrief, nil, &genesisDoc{}, "")
 	if err == nil || !IsGenesisRefusal(err) {
 		t.Fatalf("want refusal for extra keys, got %v", err)
 	}
@@ -204,7 +204,7 @@ func TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor(t *testing.T) 
 	soFar.Places = []genesisPlace{{CanonicalName: name, Descriptor: desc}}
 	soFar.Cast = []genesisActor{{CanonicalName: "Auscultadora Mayor Del Vas", Hiding: "she already knows", StartsIn: name}}
 
-	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar)
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar, "")
 
 	// The exact string the model emitted must not be sitting in the prompt for it to copy.
 	if joined := name + " — " + desc; strings.Contains(prompt, joined) {
@@ -278,7 +278,7 @@ func TestFillPrompt_CanonsUnpaidNamesAreCarriedForward(t *testing.T) {
 		t.Fatalf("both named holders are owed, got %v", people)
 	}
 
-	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar)
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar, "")
 	if !strings.Contains(prompt, worldFillOwedMarker) {
 		t.Fatal("the lives batch is not told what canon already owes")
 	}
@@ -295,5 +295,50 @@ func TestFillPrompt_CanonsUnpaidNamesAreCarriedForward(t *testing.T) {
 	}
 	if people, places := fillDebts(soFar); len(people) != 0 || len(places) != 0 {
 		t.Fatalf("debt survived being paid: people=%v places=%v", people, places)
+	}
+}
+
+// flakyFillDriver rejects once, then behaves. Stands in for the live failure of 2026-08-28, where the
+// revise batch spelled `places` as `place` and DisallowUnknownFields ended a 147-second build.
+type flakyFillDriver struct {
+	real  Driver
+	calls int
+}
+
+func (f *flakyFillDriver) Name() string { return "flaky-fill" }
+func (f *flakyFillDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (f *flakyFillDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	f.calls++
+	if f.calls == 1 {
+		// A key the schema does not name — exactly what DisallowUnknownFields refuses.
+		return `{"empty":false,"place":[{"canonical_name":"The Counting Room"}]}`, nil
+	}
+	return f.real.Generate(ctx, req)
+}
+
+func TestFillFromIdentity_OneMalformedBatchIsRetriedNotFatal(t *testing.T) {
+	seat := &flakyFillDriver{real: NewFakeWorldFillDriver()}
+	id, err := inferIdentity(context.Background(), NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil)
+	if err != nil {
+		t.Fatalf("one malformed batch killed the build instead of being retried: %v", err)
+	}
+	if err := doc.validate(); err != nil {
+		t.Fatalf("the retried build is not playable: %v", err)
+	}
+	// 6 batches + 1 wasted first attempt. If this is 6, no retry happened and the test proves nothing.
+	if seat.calls < 7 {
+		t.Fatalf("expected a retry call, got %d generate calls", seat.calls)
+	}
+
+	// And the rejection must actually be quoted back to the seat, not silently retried.
+	prompt := buildWorldFillPrompt(id, workItem{ID: "revise", Kind: "batch"}, testBrief, nil, &genesisDoc{}, `json: unknown field "place"`)
+	if !strings.Contains(prompt, worldFillRejectedMarker) || !strings.Contains(prompt, `unknown field "place"`) {
+		t.Fatal("the retry does not tell the seat what was wrong")
 	}
 }
