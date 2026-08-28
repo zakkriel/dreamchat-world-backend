@@ -431,9 +431,12 @@ func (f *fillFragment) validate() error {
 		if strings.TrimSpace(a.Hiding) == "" {
 			return refuse("%q has no hiding — depth is the private cost", a.CanonicalName)
 		}
-		if identifierShapedName(strings.TrimSpace(a.CanonicalName)) {
-			return refuse("%q reads like a join key, not a person's name", a.CanonicalName)
-		}
+		// The join-key check is NOT repeated here. It lives at the belt, and normalisePersonNames runs
+		// before the belt to title-case a name that is merely uncapitalised — rewriting every reference
+		// to it as it goes. Checking here fired FIRST and harder: measured live 2026-08-28, an 803-second
+		// build was refused for the cast name "un aprendiz de 27 años" ("a 27-year-old apprentice"),
+		// which the document-level normaliser would have turned into a speakable name a moment later.
+		// A fragment-level copy of a document-level rule just means the repair never gets to run.
 	}
 	return nil
 }

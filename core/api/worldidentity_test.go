@@ -709,3 +709,27 @@ func TestVisitorIsNeverOwedAndNeverInCanon(t *testing.T) {
 		t.Fatalf("real knowledge was lost: %v", h.Knowledge)
 	}
 }
+
+// An 803-second build was refused at the BATCH for the cast name "un aprendiz de 27 años" ("a
+// 27-year-old apprentice"), a rule the document-level normaliser would have satisfied a moment later.
+// A fragment-level copy of a document-level rule just means the repair never gets to run.
+func TestFillFragment_LeavesTheJoinKeyRuleToTheBeltAndTheNormaliser(t *testing.T) {
+	frag := &fillFragment{}
+	frag.Cast = []genesisActor{{CanonicalName: "un aprendiz de 27 años", Hiding: "he has not told anyone", StartsIn: "El Lomo"}}
+	if err := frag.validate(); err != nil {
+		t.Fatalf("the fragment refused a name the normaliser fixes: %v", err)
+	}
+	// And the normaliser does fix it, into something the belt accepts.
+	doc := &genesisDoc{}
+	doc.Cast = frag.Cast
+	normalisePersonNames(doc)
+	if identifierShapedName(doc.Cast[0].CanonicalName) {
+		t.Fatalf("still join-key shaped after normalising: %q", doc.Cast[0].CanonicalName)
+	}
+	// Depth is still enforced at the fragment: a person with no private cost is still refused.
+	bad := &fillFragment{}
+	bad.Cast = []genesisActor{{CanonicalName: "Adaeze", Hiding: ""}}
+	if err := bad.validate(); err == nil {
+		t.Fatal("a person with no hiding must still be refused at the batch")
+	}
+}
