@@ -30,7 +30,7 @@
     },
     "places": {
       "type": "array",
-      "maxItems": 14,
+      "maxItems": 6,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "kind", "description", "tension", "extent_class"],
@@ -47,7 +47,7 @@
     },
     "ways": {
       "type": "array",
-      "maxItems": 30,
+      "maxItems": 10,
       "items": {
         "type": "object",
         "required": ["descriptor", "from_place", "to_place", "state"],
@@ -62,7 +62,7 @@
     },
     "cast": {
       "type": "array",
-      "maxItems": 26,
+      "maxItems": 8,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "standing", "speech_manner", "traits", "hiding", "starts_in"],
@@ -95,7 +95,7 @@
     },
     "objects": {
       "type": "array",
-      "maxItems": 14,
+      "maxItems": 8,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "kind", "where"],
@@ -118,7 +118,7 @@
     },
     "history": {
       "type": "array",
-      "maxItems": 10,
+      "maxItems": 6,
       "items": {
         "type": "object",
         "required": ["what_happened", "where", "who", "knowledge"],

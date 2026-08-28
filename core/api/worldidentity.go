@@ -813,6 +813,13 @@ func detachVisitorFromCanon(doc *genesisDoc) {
 			knowledge = append(knowledge, k)
 		}
 		if len(knowledge) == 0 {
+			// The belt requires at least one event, so emptying canon here trades one refusal for
+			// another. Only keep it when dropping would leave nothing at all.
+			if len(kept) == 0 && i == len(doc.History)-1 {
+				log.Printf("detachVisitorFromCanon: history event %d was known only to the visitor, but it is the only event this world has — keeping it for the belt to judge", i+1)
+				kept = append(kept, h)
+				continue
+			}
 			log.Printf("detachVisitorFromCanon: history event %d was known only to the visitor, which cannot be true — dropping the event", i+1)
 			continue
 		}
