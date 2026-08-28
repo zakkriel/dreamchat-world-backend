@@ -36,6 +36,7 @@ package main
 // reason and the world untouched — the expensive part can no longer be destroyed by the cheap part.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -257,7 +258,18 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// Every provider call this build makes bills into this sink. Installed before the seat is touched: the
 	// existing sink is scoped to the beat handler, so a genesis path without its own would report
 	// cost_usd=0.000000 and roll up nowhere.
-	ctx, costs := withCostSink(r.Context())
+	//
+	// THE BUILD DOES NOT DIE WITH THE CONNECTION. Authoring used to run on r.Context(), so when the client
+	// went away the whole build was cancelled mid-flight: measured 2026-08-28, an edge timeout at exactly
+	// 899,997 ms killed two builds that had already spent minutes of model time, logging "context
+	// canceled" from a seat call. A streamed response has a ceiling; a build has no business inheriting
+	// it. WithoutCancel keeps the deadline-free lineage and the cost sink while dropping the
+	// disconnect, so the work finishes and commits whether or not anyone is still listening — and the
+	// existing resume path is how a client picks the world back up.
+	//
+	// Frames are still written to the live response: newFrameWriter is a no-op once the socket is gone,
+	// so a disconnected build simply narrates to nobody.
+	ctx, costs := withCostSink(context.WithoutCancel(r.Context()))
 	start := time.Now()
 	worldID := "(none)"
 	// This log covers only THIS request's own spend — authoring, and (when the brief already states

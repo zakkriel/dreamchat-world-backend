@@ -117,6 +117,11 @@
               "large",
               "vast"
             ]
+          },
+          "within": {
+            "type": "string",
+            "minLength": 1,
+            "description": "canonical_name of the place that contains this one. A world is nested: the largest thing the brief describes contains the next, down to the smallest place a body can stand in. Omit only for the outermost place."
           }
         }
       }
