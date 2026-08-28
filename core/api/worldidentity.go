@@ -316,12 +316,22 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			break
 		}
 		log.Printf("closing pass %d: %d person and %d place reference(s) still unpaid", round+1, len(people), len(places))
-		frag, err := fillOne(ctx, seat, id, workItem{
-			ID:        "closing",
-			Kind:      "batch",
-			Text:      "Canon refers to things nobody has authored. Author every one of them, properly, not as stubs.",
+		item := workItem{
+			ID:   "closing",
+			Kind: "batch",
+			Text: fmt.Sprintf("Author exactly these and nothing else: %d owed person(s) and %d owed place(s), listed under STILL OWED.",
+				len(people), len(places)),
 			Therefore: "a world whose canon points at nothing cannot be stored or walked into",
-		}, brief, answers, doc, "")
+		}
+		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+		// Truncation is the failure mode here — measured live 2026-08-28, an unfocused closing pass ran
+		// to the 16384-token ceiling and came back as unexpected EOF. One retry, told what went wrong,
+		// costs far less than the build.
+		if err != nil && IsGenesisRefusal(err) {
+			log.Printf("closing pass %d rejected, asking once more: %v", round+1, err)
+			frag, err = fillOne(ctx, seat, id, item, brief, answers, doc,
+				err.Error()+" — emit ONLY the owed names, nothing else; a long answer is what broke the last one")
+		}
 		if err != nil {
 			log.Printf("closing pass %d could not answer: %v", round+1, err)
 			break
