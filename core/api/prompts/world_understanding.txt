@@ -14,7 +14,11 @@ VOICE is three sentences of actual narration, never adjectives. WORKED EXAMPLES:
 
 THE TWENTY UNIVERSAL FUNCTIONS: ordinary life the pressure does not demand, phrased as human functions never professions. One or two sentences each. "None, and here is why" is often the better answer and belongs in exclusions too. Apply this test to every answer: could this exist in any other world? If it could, the identity is too thin.
 
-ANSWER ALL TWENTY OF THESE, IN THIS ORDER, ONE OBJECT EACH. Copy the function text verbatim into `function`. Twenty in, twenty out — nineteen is a refused identity:
+ANSWER ALL TWENTY, IN THIS ORDER. Each answer is an OBJECT WITH TWO FIELDS, never a bare string:
+
+  {"function": "who feeds people", "answer": "Here the herds walk with the city, and a family that loses its place in the rotation eats last."}
+
+`function` is copied verbatim from the list below. `answer` is one or two sentences. Twenty objects in the array — nineteen is a refused identity. The twenty, verbatim:
 1. who feeds people
 2. who repairs and makes things
 3. who moves goods
