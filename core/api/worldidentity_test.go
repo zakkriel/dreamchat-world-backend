@@ -471,3 +471,61 @@ func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string,
 	}
 	return o.real.Generate(ctx, req)
 }
+
+// The last-check refusal, 2026-08-28. A 550-second build authored a good arrival and three good
+// candidates, none of which was the arrival, and the belt threw the whole world away on the final
+// rule before commit. The arrival IS the recommendation; it takes a seat among its own alternatives.
+func TestReconcileArrival_SeatsTheArrivalAmongItsCandidates(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Arrival = genesisArrival{
+		Descriptor: "a stranger off the tail", CanonicalName: "Wren",
+		Place: "El Lomo", Stated: "I came up the spine.", Why: "sent to read a heart nobody will discuss",
+	}
+	doc.ArrivalCandidates = []genesisCandidate{
+		{Descriptor: "a courier", CanonicalName: "Petra", Why: "carrying a delivery the ledger has no line for"},
+		{Descriptor: "a man in a borrowed coat", CanonicalName: "Osei", Why: "came to the wrong address"},
+		{Descriptor: "a girl with a listening horn", CanonicalName: "Ise", Why: "apprenticed to a trade nobody wants"},
+	}
+	reconcileArrival(doc)
+
+	if len(doc.ArrivalCandidates) != 3 {
+		t.Fatalf("want exactly three candidates, got %d", len(doc.ArrivalCandidates))
+	}
+	if doc.ArrivalCandidates[0].CanonicalName != "Wren" {
+		t.Fatalf("the arrival is not the recommended default: %q", doc.ArrivalCandidates[0].CanonicalName)
+	}
+	// Two of the seat's own alternatives must survive — we reconcile, we do not replace its work.
+	kept := map[string]bool{}
+	for _, c := range doc.ArrivalCandidates {
+		kept[c.CanonicalName] = true
+	}
+	if !kept["Osei"] || !kept["Ise"] {
+		t.Fatalf("the seat's alternatives were discarded: %v", kept)
+	}
+
+	// A coherent offer is left exactly as authored.
+	doc2 := &genesisDoc{}
+	doc2.Arrival = genesisArrival{Descriptor: "d", CanonicalName: "Wren", Place: "p", Stated: "s", Why: "w"}
+	doc2.ArrivalCandidates = []genesisCandidate{
+		{Descriptor: "d", CanonicalName: "Wren", Why: "w"},
+		{Descriptor: "d", CanonicalName: "Petra", Why: "w"},
+		{Descriptor: "d", CanonicalName: "Osei", Why: "w"},
+	}
+	before := append([]genesisCandidate(nil), doc2.ArrivalCandidates...)
+	reconcileArrival(doc2)
+	if len(doc2.ArrivalCandidates) != 3 || doc2.ArrivalCandidates[0].CanonicalName != before[0].CanonicalName {
+		t.Fatal("a coherent offer was disturbed")
+	}
+
+	// An offer that cannot be made coherent costs the LIST, never the world.
+	doc3 := &genesisDoc{}
+	doc3.Arrival = genesisArrival{Descriptor: "d", CanonicalName: "Wren", Place: "p", Stated: "s"}
+	doc3.ArrivalCandidates = []genesisCandidate{{Descriptor: "d", CanonicalName: "Petra", Why: "w"}}
+	reconcileArrival(doc3)
+	if doc3.ArrivalCandidates != nil {
+		t.Fatalf("an incomplete offer should be dropped, got %v", doc3.ArrivalCandidates)
+	}
+	if doc3.Arrival.CanonicalName != "Wren" {
+		t.Fatal("the arrival itself must survive")
+	}
+}
