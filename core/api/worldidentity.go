@@ -337,7 +337,13 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 		return nil, err
 	}
 	if bad := frag.danglingRefs(soFar); len(bad) > 0 {
-		return nil, refuse("fill for %s points at things that do not exist: %s", item.ID, strings.Join(bad, "; "))
+		// Constructive, not punitive. The invention is usually RIGHT — a life that needs a low-tail
+		// district on a walking creature has understood the brief better than a schedule that only
+		// authored rooms in batch one. What is wrong is leaving the reference unpaid, so the retry asks
+		// for the missing thing to be authored in the same fragment, never for the reference to be
+		// dropped. Founder 2026-08-28: a gap is worse than an invention that clicks.
+		return nil, refuse("fill for %s references things it did not author: %s — author them in this same fragment rather than removing the reference",
+			item.ID, strings.Join(bad, "; "))
 	}
 	return &frag, nil
 }
@@ -378,9 +384,13 @@ func (f *fillFragment) validate() error {
 // the batch asked to fix it, twenty seconds later, with the offending name quoted — and the existing
 // one-shot retry does the asking.
 //
-// PLACES must resolve immediately: the founder's order authors places first, so anything standing in a
-// place can name one. PEOPLE named by history may NOT be required to resolve — history deliberately
-// runs before lives and names the people lives will author. That forward debt is fillDebts()' job.
+// This is NOT a check on whether an invention is welcome. A batch that decides this world needs a
+// low-tail district is doing the job fill exists to do, and the prompt now tells lives and objects to
+// author the rooms they need. The only fault this reports is a reference left UNPAID — named by nobody,
+// authored by nobody — which the engine cannot store and the retry is asked to fix by authoring it.
+//
+// PEOPLE named by history are exempt: history deliberately runs before lives and names the people lives
+// will author. That forward debt is fillDebts()' job, not an error.
 func (f *fillFragment) danglingRefs(doc *genesisDoc) []string {
 	places := map[string]bool{}
 	for _, p := range doc.Places {
