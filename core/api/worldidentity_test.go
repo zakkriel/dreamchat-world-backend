@@ -220,3 +220,31 @@ func TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor(t *testing.T) 
 		t.Fatal("the person's canonical_name is not quoted on its own")
 	}
 }
+
+// The revise refusal, 2026-08-28. A live build died at 168s because the revise batch answered
+// {"empty":false} with no entities, and the fragment validator called that a refusal. `empty` is a
+// self-report; the content is the fact. A second pass with nothing to add is a legitimate answer.
+func TestFillFragment_SelfContradictoryEmptyFlagIsNotARefusal(t *testing.T) {
+	// Says non-empty, carries nothing — the exact live shape.
+	nothing := &fillFragment{}
+	if err := nothing.validate(); err != nil {
+		t.Fatalf("a fragment with nothing in it must not refuse the build: %v", err)
+	}
+
+	// Says empty, carries places — the content must still land, not be dropped on the flag.
+	frag := &fillFragment{Empty: true, WhyEmpty: "nothing to add"}
+	frag.Places = []genesisPlace{{CanonicalName: "The Counting Room", Descriptor: "one lamp"}}
+	doc := &genesisDoc{}
+	var tags []taggedName
+	mergeFill(doc, frag, "revise", &tags)
+	if len(doc.Places) != 1 {
+		t.Fatalf("content was dropped because the flag said empty; places=%d", len(doc.Places))
+	}
+
+	// Content that IS present is still held to the real standard.
+	bad := &fillFragment{}
+	bad.Cast = []genesisActor{{CanonicalName: "Adaeze", Hiding: ""}}
+	if err := bad.validate(); err == nil {
+		t.Fatal("a person with no hiding must still be refused")
+	}
+}

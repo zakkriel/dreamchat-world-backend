@@ -327,18 +327,20 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 	return &frag, nil
 }
 
+// validate checks the content a fragment actually carries. It deliberately does NOT police the
+// model's `empty` flag against that content.
+//
+// `empty` is a SELF-REPORT, and self-reports contradict themselves. Measured live 2026-08-28: the
+// revise batch answered `{"empty":false}` with 34 tokens and no entities, and the old code refused
+// the whole build — 168 seconds and $0.0066 thrown away over a boolean, when the honest reading of
+// that answer is "I had nothing to add", which is exactly what a second pass over an already
+// sufficient world should say. The CONTENT is the fact; the flag is commentary.
+//
+// Nothing is weakened by this. The real guard is genesisDoc.validate() on the merged document, which
+// is what refuses a world that is actually missing something, and it still runs.
 func (f *fillFragment) validate() error {
-	if f.Empty {
-		if strings.TrimSpace(f.WhyEmpty) == "" {
-			return refuse("an empty fill must say why")
-		}
-		if fillHasContent(f) {
-			return refuse("empty fill also carried entities")
-		}
-		return nil
-	}
 	if !fillHasContent(f) {
-		return refuse("a non-empty fill invented nothing")
+		return nil
 	}
 	for _, a := range f.Cast {
 		if strings.TrimSpace(a.Hiding) == "" {
@@ -361,7 +363,10 @@ func docWorldEmpty(d *genesisDoc) bool {
 }
 
 func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]taggedName) {
-	if frag == nil || frag.Empty {
+	// Gated on CONTENT, not on the model's `empty` flag — same reason validate() ignores it. A
+	// fragment that says empty:true and then hands over three places has authored three places, and
+	// dropping them because of its own mislabelling would lose real work silently.
+	if frag == nil || !fillHasContent(frag) {
 		return
 	}
 	if len(frag.WorldRaw) > 0 && docWorldEmpty(doc) {
