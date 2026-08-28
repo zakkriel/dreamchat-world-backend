@@ -68,7 +68,7 @@ const (
 	worldIdentityAnswersMarker      = "ANSWERS (the user's replies — stated, outranking inference):"
 	worldFillIdentityMarker         = "IDENTITY (immutable for this genesis — every invention answers to it):"
 	worldFillWorkMarker             = "WORK ITEM (answer only this):"
-	worldFillAlreadyMarker          = "ALREADY AUTHORED (do not re-emit these names; deepen only if the work item demands a new position):"
+	worldFillAlreadyMarker          = "ALREADY AUTHORED. Cross-reference these by the EXACT string inside the quotes and nothing else — never the descriptor, never the quotes, never the two joined. Do not re-emit these names; deepen only if the work item demands a new position:"
 	worldFillReviewExclusionsMarker = "EXCLUSIONS AND DEPARTURE (what this world is not):"
 	worldFillReviewNamesMarker      = "FINISHED NAMES (what fill authored):"
 )
@@ -647,21 +647,27 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	sb.WriteString("\n\n")
 	sb.WriteString(worldFillAlreadyMarker)
 	sb.WriteString("\n")
+	// Quote the canonical_name and put every other field on its own labelled line. The first version
+	// rendered `- place <name> — <descriptor>`, and a live Andantes build (2026-08-28) came back with
+	// starts_in set to the ENTIRE line: "Colegio de Auscultadores — Sede del Colegio de
+	// Auscultadores, en la cima del distrito". The belt refused it 234 seconds in. The em-dash cannot
+	// be a boundary when the names in a world legitimately contain dashes and commas — so the name
+	// gets quotes, and nothing shares its line.
 	for _, p := range soFar.Places {
-		sb.WriteString("- place ")
+		sb.WriteString("- place \"")
 		sb.WriteString(p.CanonicalName)
-		sb.WriteString(" — ")
+		sb.WriteString("\"\n    looks like: ")
 		sb.WriteString(p.Descriptor)
 		sb.WriteString("\n")
 	}
 	for _, a := range soFar.Cast {
-		sb.WriteString("- person ")
+		sb.WriteString("- person \"")
 		sb.WriteString(a.CanonicalName)
-		sb.WriteString(" hiding: ")
+		sb.WriteString("\"\n    hiding: ")
 		sb.WriteString(a.Hiding)
-		sb.WriteString(" starts_in: ")
+		sb.WriteString("\n    starts_in: \"")
 		sb.WriteString(a.StartsIn)
-		sb.WriteString("\n")
+		sb.WriteString("\"\n")
 	}
 	if !docWorldEmpty(soFar) {
 		sb.WriteString("- world named ")

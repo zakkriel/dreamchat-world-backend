@@ -74,8 +74,72 @@ retraction — reviews, not gates, §7.3). **Built 2026-08-28, batches 2026-08-2
 - **Order (now the scheduler):** places → key history → lives → objects → revise → sufficiency, then review + retract + belt.
 - **Custom identity confirmation:** built this round (`POST /worlds/identity`, design §8). Fast still skips it.
 
-Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat call. Understanding 1 + fill batches 6 + review 1 = **8 calls ≈ 24 s and ≈ $0.064** before interview, kickstart, or repair. Repair is +1. Fast-lane PRD is p50 ≤ 90 s and p50 ≤ $0.25 per world. Batching is the product answer to Q1 (not one dump, not one call per rule).
+### Q1, MEASURED in production 2026-08-28 — the constraint is latency, not money
 
+A full Fast-lane build against production, on the real Los Andantes tier-1 world description
+(4007 bytes, `docs/design/2026-08-27-understanding-pass-probe/INPUT_andantes_tier1.md`),
+`openrouter:deepseek/deepseek-v4-flash`, `json_object`, `max_tokens` 8192.
+
+**It refused.** 9 calls, 234 seconds, $0.0107, no world committed. Cause and fix below.
+
+| # | stage | ms | tok_out | cost |
+|---|---|---|---|---|
+| 1 | understanding | 66,415 | 3,901 | $0.001619 |
+| 2 | fill · places | 24,828 | 1,468 | $0.001518 |
+| 3 | fill · history | 10,947 | 629 | $0.001307 |
+| 4 | fill · lives | 37,178 | 2,182 | $0.001205 |
+| 5 | fill · objects | 13,101 | 761 | $0.000875 |
+| 6 | fill · revise | 19,359 | 1,337 | $0.001574 |
+| 7 | fill · sufficiency | 45,333 | 2,672 | $0.001417 |
+| 8 | review | 10,874 | 498 | $0.000406 |
+| 9 | fill · repair | 5,933 | 414 | $0.000787 |
+| | **total** | **233,975** | **13,862** | **$0.010707** |
+
+Input was 64,118 tokens of which **30,720 cached** — prompt caching is working.
+
+#### The latency law
+
+Two calibration points (interview: 318 tok/6.39 s; understanding: 2219 tok/36.51 s) give
+
+    ms = 1349 + 15.84 x tokens_out          i.e. 1.35 s fixed per call, then 63 tokens/second
+
+That model predicted **232 s** for this build. Actual **234 s** — within 1%. Use it instead of guessing.
+
+**What follows from it, and it kills the obvious ideas:**
+
+- **Parallelising buys almost nothing.** Fixed cost is 1.35 s per call. The stages also genuinely feed
+  each other — `history.where` must be an existing place, `history.who` must exist in cast,
+  `objects.carried_by` must be a real person — so only **objects ∥ sufficiency** are unordered. One
+  pair out of six, and the saving is their overlap, not their sum.
+- **Clustering into fewer, bigger calls buys ~1.35 s per call removed.** Six batches into three saves
+  about 4 seconds. Irrelevant.
+- **The only levers are tokens/second and total tokens emitted.** A faster provider, or asking for
+  less. Understanding alone is 3,901 of the 13,862 output tokens (28%) — the twenty functions are the
+  single largest block of text in a build, and founder 2026-08-28 fixed them at exactly twenty.
+
+#### Against the budget
+
+- **Time: 234 s** vs Fast-lane PRD p50 <= 90 s and p95 <= 180 s. **Misses both** — p50 by 2.6x.
+- **Cost: $0.0107** vs $0.25 per world. **23x under.** Money is not the constraint and never was.
+
+The design's Q1 listed the escapes: *"either the calls batch, or they parallelise, or the budget moves,
+or §7's mechanism does."* Batching shipped; parallelising is near-worthless per the law above. That
+leaves **move the budget** or **emit less**. Founder decision (`ADR-P026`), not an engineering one.
+
+#### Why it refused, and what changed
+
+Fill set `starts_in` to `"Colegio de Auscultadores — Sede del Colegio de Auscultadores, en la cima del
+distrito"`. That is the whole ALREADY AUTHORED line: `buildWorldFillPrompt` joined `canonical_name`
+and `descriptor` with an em-dash, and in this world the place names themselves contain dashes and
+commas, so the separator was never a boundary the model could locate. The belt caught it, the one
+permitted repair fired and could not fix it, and the build refused.
+
+Names are quoted now, nothing shares their line, and the marker says to copy the quoted string and
+nothing else. `TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor` fails if the old
+rendering comes back.
+
+**Still unmeasured:** a build that SUCCEEDS. Every number above is from a run that refused at the
+belt, so commit and kickstart are still unmeasured, and fill quality has not been judged at all.
 
 ## Product rulings 2026-08-28 (Q1–Q13)
 
