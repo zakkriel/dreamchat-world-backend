@@ -14,6 +14,7 @@ boundary.
 ```
 POST /worlds                    directory row + operating defaults, authors NO entities → playable:false
 POST /worlds/interview          one JSON turn: the next question, or nothing left to ask
+POST /worlds/identity           Custom confirmation: identity shown before fill (design §8)
 POST /worlds/genesis            SSE stream of world_genesis_frame/3, ending in a `choice` frame
                                 carrying the id of the world it ALREADY committed
 POST /worlds/genesis/kickstart  one JSON turn per answer; the LAST answer is the arrival transaction
@@ -66,6 +67,14 @@ Step 2 of the five (`docs/design/2026-08-26-world-identity-and-the-understanding
 by `ADR-P026`). Its emissions and their slots are the design's §3; the fill mechanism it governs is
 §7 (rules are the work plan; the code schedules, the model interprets; tagging survives for scoped
 retraction — reviews, not gates, §7.3). **Built 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding`, then fills under that identity on `world_fill` (one scheduled call per rule, then sufficiency). The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity` (Q5 for this slice). Filling stops after the scheduled rules plus one sufficiency pass (Q4). If the belt still refuses, one repair fill is allowed, then refuse. Each fill fragment is `world_fill/1` with unknown fields rejected. Q1 is sequential calls; the Fast-lane budget remains the PRD's.
+
+## Fill product (founder 2026-08-28, this round)
+
+- **Stop / depth:** work each generative rule into several positions — not only lives: places, history (lore/canon), people, objects. Cost is not "maybe more"; see Q1 numbers below.
+- **Order:** places first, then key history, then lives, then objects, then anything still needed or a second pass that revises the first. **Not yet the scheduler in code** (still rule-kind order: constraining → prohibiting → generative → voicing → sufficiency). Implementation follows this ruling in the next fill change.
+- **Custom identity confirmation:** built this round (`POST /worlds/identity`, design §8). Fast still skips it.
+
+Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat call. Understanding is 1 call. Fill is 1 call per identity rule + 1 sufficiency + at most 1 repair. The Andantes probe emitted 11 rules (3 generative). That is about **13 fill calls + 1 understanding ≈ 42 s and ≈ $0.11** before kickstart, interview, or extra depth. Extra depth on 3 generative rules at 2 further calls each is **+6 calls ≈ +18 s and +$0.05**. Fast-lane PRD is p50 ≤ 90 s and p50 ≤ $0.25 per world. Sequential fill can fit if calls stay near those figures; it misses if they do not.
 
 ## Technical decisions already made
 

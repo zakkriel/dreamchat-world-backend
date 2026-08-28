@@ -65,11 +65,19 @@ func TestGenSeatContractPayloads(t *testing.T) {
 
 	understanding := &recordingDriver{Driver: NewFakeWorldUnderstandingDriver()}
 	fill := &recordingDriver{Driver: NewFakeWorldFillDriver()}
-	doc, _, err := authorWorld(ctx, understanding, fill, testBrief, nil)
+	doc, _, err := authorWorld(ctx, understanding, fill, testBrief, nil, nil, nil)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
 	writePayload(t, dir, "world_identity_1.json", []byte(understanding.last))
+	h := NewWorldGenesisHandler(nil, false, mustBridgeForIdentityPayload(t), nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, jsonPost("/worlds/identity", `{"brief":"`+testBrief+`"}`))
+	if rec.Code != 200 {
+		t.Fatalf("identity confirm: %d %s", rec.Code, rec.Body.String())
+	}
+	writePayload(t, dir, "world_identity_confirm_1.json", rec.Body.Bytes())
+
 	writePayload(t, dir, "world_fill_1.json", []byte(fill.last))
 	genesis := &recordingDriver{Driver: NewFakeWorldGenesisDriver()}
 	if _, err := genesis.Generate(ctx, GenRequest{Prompt: buildWorldGenesisPrompt(testBrief, nil), Schema: json.RawMessage(worldGenesisSchemaJSON)}); err != nil {
@@ -288,4 +296,15 @@ func sseFrames(t *testing.T, body string) [][]byte {
 		t.Fatalf("no frames in stream body: %q", body)
 	}
 	return out
+}
+
+func mustBridgeForIdentityPayload(t *testing.T) *Bridge {
+	t.Helper()
+	b, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatWorldUnderstanding.Name: NewFakeWorldUnderstandingDriver(),
+	}, SeatWorldUnderstanding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
 }

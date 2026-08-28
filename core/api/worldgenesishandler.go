@@ -71,6 +71,7 @@ const defaultGenesisCostCeilingUSD = 0.50
 var (
 	worldGenesisRoute     = regexp.MustCompile(`^/worlds/genesis$`)
 	worldInterviewRoute   = regexp.MustCompile(`^/worlds/interview$`)
+	worldIdentityRoute    = regexp.MustCompile(`^/worlds/identity$`)
 	genesisKickstartRoute = regexp.MustCompile(`^/worlds/genesis/kickstart$`)
 )
 
@@ -106,12 +107,18 @@ type genesisRequest struct {
 	// house look, which is what every world made before the picker existed still uses.
 	ArtStyle string            `json:"art_style,omitempty"`
 	Answers  []InterviewAnswer `json:"answers,omitempty"`
+	// Identity is the Custom confirmation round-trip: the world_identity/1 the user just saw.
+	// Fast omits it; genesis infers. Voice, when three sentences, is the author rewrite (§8).
+	Identity json.RawMessage `json:"identity,omitempty"`
+	Voice    []string        `json:"voice,omitempty"`
 }
 
 func (h *worldGenesisHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case worldInterviewRoute.MatchString(r.URL.Path):
 		h.interview(w, r)
+	case worldIdentityRoute.MatchString(r.URL.Path):
+		h.identity(w, r)
 	case genesisKickstartRoute.MatchString(r.URL.Path):
 		h.kickstart(w, r)
 	case worldGenesisRoute.MatchString(r.URL.Path):
@@ -135,6 +142,56 @@ func readBrief(w http.ResponseWriter, r *http.Request) (genesisRequest, bool) {
 		return req, false
 	}
 	return req, true
+}
+
+const worldIdentityConfirmSchemaVersion = "world_identity_confirm/1"
+
+// identity infers world_identity/1 and returns the Custom confirmation view (design §8). Stateless:
+// the client sends brief + answers, same as interview. Fast never calls this.
+func (h *worldGenesisHandler) identity(w http.ResponseWriter, r *http.Request) {
+	req, ok := readBrief(w, r)
+	if !ok {
+		return
+	}
+	ctx, costs := withCostSink(r.Context())
+	start := time.Now()
+	ident, err := inferIdentity(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), req.Brief, req.Answers)
+	usd, tokIn, tokOut, cached, calls := costs.snapshot()
+	log.Printf("world identity timing: ms=%d answers=%d calls=%d tok_in=%d cached=%d tok_out=%d cost_usd=%.6f",
+		time.Since(start).Milliseconds(), len(req.Answers), calls, tokIn, cached, tokOut, usd)
+	if err != nil {
+		if IsGenesisRefusal(err) {
+			writeJSONError(w, http.StatusUnprocessableEntity, err.Error())
+			return
+		}
+		log.Printf("world identity: %v", err)
+		writeJSONError(w, http.StatusInternalServerError, "the identity could not be inferred")
+		return
+	}
+	raw, err := json.Marshal(ident)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "the identity could not be encoded")
+		return
+	}
+	var identObj any
+	_ = json.Unmarshal(raw, &identObj)
+	cond := map[string]any{"text": ident.Condition.Text}
+	if ident.Condition.Origin == "axiomatic" || ident.Condition.Origin == "contingent" {
+		cond["origin"] = ident.Condition.Origin
+	}
+	body := map[string]any{
+		"schema_version": worldIdentityConfirmSchemaVersion,
+		"condition":      cond,
+		"bargain":        map[string]any{"text": ident.Bargain.Text, "therefore": ident.Bargain.Therefore},
+		"departure":      map[string]any{"neighbour": ident.Departure.Neighbour, "how_not": ident.Departure.HowNot},
+		"content_demand": map[string]any{"text": ident.ContentDemand.Text, "therefore": ident.ContentDemand.Therefore},
+		"register":       ident.Register,
+		"voice":          ident.Voice,
+		"identity":       identObj,
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // interview answers with the next question or with "nothing more to ask". Stateless: the client sends the
@@ -234,7 +291,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// percentage or a stage. The heartbeats also keep an idle-sensitive proxy from closing the stream.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
 	stopHeartbeat := stillWriting(frames, start)
-	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), req.Brief, req.Answers)
+	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), req.Brief, req.Answers, req.Identity, req.Voice)
 	stopHeartbeat()
 	if err != nil {
 		h.fail(frames, err, "")

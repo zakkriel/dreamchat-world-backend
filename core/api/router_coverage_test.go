@@ -73,6 +73,7 @@ var routeTable = []struct {
 	{http.MethodPost, "/worlds", "world creation"},
 
 	{http.MethodPost, "/worlds/interview", "world creation asks the next question"},
+	{http.MethodPost, "/worlds/identity", "world creation shows identity for Custom confirmation"},
 	{http.MethodPost, "/worlds/genesis", "world creation authors a world"},
 
 	{http.MethodPost, "/worlds/" + w1 + "/refresh", "mint a successor world, archive the source"},

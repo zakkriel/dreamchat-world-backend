@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -30,7 +31,7 @@ func TestAuthorWorld_StoresIdentityBesideTheDocument(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
-	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,7 +56,6 @@ func TestAuthorWorld_StoresIdentityBesideTheDocument(t *testing.T) {
 	}
 }
 
-
 func TestFillOne_RefusesUnknownFields(t *testing.T) {
 	seat := stubDriver{raw: `{"empty":false,"places":[],"not_a_field":true}`}
 	_, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "r", Kind: "generative", Text: "t", Therefore: "t"}, testBrief, nil, &genesisDoc{})
@@ -65,7 +65,7 @@ func TestFillOne_RefusesUnknownFields(t *testing.T) {
 }
 
 func TestFillFromIdentity_ConstraintsStayEmptyAndPeopleHide(t *testing.T) {
-	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
+	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,8 +106,61 @@ func TestFakeFill_GenerativeIsAFillFragmentNotAGenesisDump(t *testing.T) {
 
 type stubDriver struct{ raw string }
 
-func (s stubDriver) Name() string                 { return "stub-fill" }
-func (s stubDriver) Capabilities() CapabilitySet  { return CapabilitySet{CapStructuredOutput: true} }
+func (s stubDriver) Name() string                { return "stub-fill" }
+func (s stubDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
 func (s stubDriver) Generate(context.Context, GenRequest) (string, error) {
 	return s.raw, nil
+}
+
+func TestIdentityConfirm_RoundTripsIntoFill(t *testing.T) {
+	ctx := context.Background()
+	raw, err := NewFakeWorldUnderstandingDriver().Generate(ctx, GenRequest{
+		Prompt: worldIdentityBriefMarker + "\n" + testBrief,
+		Schema: json.RawMessage(worldIdentitySchemaJSON),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	voice := []string{"The page is wet.", "The lamp is out.", "Someone still writes."}
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, json.RawMessage(raw), voice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ident.Voice[0] != voice[0] || ident.Voice[2] != voice[2] {
+		t.Fatalf("voice rewrite lost: %#v", ident.Voice)
+	}
+	if strings.TrimSpace(doc.World.DisplayName) == "" {
+		t.Fatal("fill did not run after confirmed identity")
+	}
+}
+
+func TestIdentityHandler_OmitsTheTwenty(t *testing.T) {
+	bridge, err := NewBridgeWithDrivers(map[string]Driver{
+		SeatWorldUnderstanding.Name: NewFakeWorldUnderstandingDriver(),
+	}, SeatWorldUnderstanding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := NewWorldGenesisHandler(nil, false, bridge, nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, jsonPost("/worlds/identity", `{"brief":"`+testBrief+`"}`))
+	if rec.Code != 200 {
+		t.Fatalf("status %d body %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if body["schema_version"] != "world_identity_confirm/1" {
+		t.Fatalf("schema %v", body["schema_version"])
+	}
+	if _, ok := body["functions"]; ok {
+		t.Fatal("confirmation leaked the twenty functions")
+	}
+	if _, ok := body["identity"]; !ok {
+		t.Fatal("identity round-trip missing")
+	}
+	if body["register"] == "" {
+		t.Fatal("register missing")
+	}
 }

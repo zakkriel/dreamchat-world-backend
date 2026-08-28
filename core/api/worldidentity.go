@@ -79,9 +79,9 @@ type worldIdentity struct {
 		Neighbour string `json:"neighbour"`
 		HowNot    string `json:"how_not"`
 	} `json:"departure"`
-	Scarce           string `json:"scarce,omitempty"`
-	WronglyAbundant  string `json:"wrongly_abundant,omitempty"`
-	Consequence      *struct {
+	Scarce          string `json:"scarce,omitempty"`
+	WronglyAbundant string `json:"wrongly_abundant,omitempty"`
+	Consequence     *struct {
 		What string `json:"what"`
 		Who  string `json:"who"`
 	} `json:"consequence,omitempty"`
@@ -203,10 +203,34 @@ func scheduleWork(id *worldIdentity) []workItem {
 }
 
 // authorWorld infers identity, then fills under it, and returns a document that has passed every belt check.
-func authorWorld(ctx context.Context, understanding, fill Driver, brief string, answers []InterviewAnswer) (*genesisDoc, *worldIdentity, error) {
-	id, err := inferIdentity(ctx, understanding, brief, answers)
-	if err != nil {
-		return nil, nil, err
+func authorWorld(ctx context.Context, understanding, fill Driver, brief string, answers []InterviewAnswer, confirmed json.RawMessage, voice []string) (*genesisDoc, *worldIdentity, error) {
+	var id *worldIdentity
+	var err error
+	if len(confirmed) > 0 && string(confirmed) != "null" {
+		id = &worldIdentity{}
+		if err = json.Unmarshal(confirmed, id); err != nil {
+			return nil, nil, refuse("the confirmed identity came back malformed (%v)", err)
+		}
+		if err = id.validate(); err != nil {
+			return nil, nil, err
+		}
+	} else {
+		id, err = inferIdentity(ctx, understanding, brief, answers)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+	if len(voice) == 3 {
+		ok := true
+		for i := range voice {
+			voice[i] = strings.TrimSpace(voice[i])
+			if voice[i] == "" {
+				ok = false
+			}
+		}
+		if ok {
+			id.Voice = voice
+		}
 	}
 	doc, err := fillFromIdentity(ctx, fill, id, brief, answers)
 	if err != nil {
