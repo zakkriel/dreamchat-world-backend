@@ -15,6 +15,7 @@ package main
 // one pass per rule, depth bounded by world_fill/1 array ceilings, then sufficiency if validate fails).
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"encoding/json"
@@ -253,7 +254,19 @@ func fillFromIdentity(ctx context.Context, seat Driver, id *worldIdentity, brief
 		mergeFill(doc, frag, item.ID, &tags)
 	}
 	if err := doc.validate(); err != nil {
-		return nil, err
+		frag, rerr := fillOne(ctx, seat, id, workItem{
+			ID:        "repair",
+			Kind:      "generative",
+			Text:      "The belt refused the merged document: " + err.Error(),
+			Therefore: "emit only what the belt is missing; do not re-author names already listed",
+		}, brief, answers, doc)
+		if rerr != nil {
+			return nil, err
+		}
+		mergeFill(doc, frag, "repair", &tags)
+		if err2 := doc.validate(); err2 != nil {
+			return nil, err2
+		}
 	}
 	return doc, nil
 }
@@ -266,30 +279,45 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 	if err != nil {
 		return nil, fmt.Errorf("fillOne %s: Generate: %w", item.ID, err)
 	}
+	dec := json.NewDecoder(bytes.NewReader([]byte(raw)))
+	dec.DisallowUnknownFields()
 	var frag fillFragment
-	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+	if err := dec.Decode(&frag); err != nil {
 		return nil, refuse("fill for %s came back malformed (%v)", item.ID, err)
 	}
-	if len(frag.WorldRaw) > 0 {
-		var w struct {
-			DisplayName string `json:"display_name"`
-			Tagline     string `json:"tagline"`
-			Mood        string `json:"mood"`
-			Ornament    string `json:"ornament"`
-		}
-		if err := json.Unmarshal(frag.WorldRaw, &w); err == nil {
-			if docWorldEmpty(soFar) {
-				soFar.World.DisplayName = w.DisplayName
-				soFar.World.Tagline = w.Tagline
-				soFar.World.Mood = w.Mood
-				soFar.World.Ornament = w.Ornament
-			}
-		}
-	}
-	if len(frag.RegionRaw) > 0 && strings.TrimSpace(soFar.Region.Descriptor) == "" {
-		_ = json.Unmarshal(frag.RegionRaw, &soFar.Region)
+	if err := frag.validate(); err != nil {
+		return nil, err
 	}
 	return &frag, nil
+}
+
+func (f *fillFragment) validate() error {
+	if f.Empty {
+		if strings.TrimSpace(f.WhyEmpty) == "" {
+			return refuse("an empty fill must say why")
+		}
+		if fillHasContent(f) {
+			return refuse("empty fill also carried entities")
+		}
+		return nil
+	}
+	if !fillHasContent(f) {
+		return refuse("a non-empty fill invented nothing")
+	}
+	for _, a := range f.Cast {
+		if strings.TrimSpace(a.Hiding) == "" {
+			return refuse("%q has no hiding — depth is the private cost", a.CanonicalName)
+		}
+		if identifierShapedName(strings.TrimSpace(a.CanonicalName)) {
+			return refuse("%q reads like a join key, not a person's name", a.CanonicalName)
+		}
+	}
+	return nil
+}
+
+func fillHasContent(f *fillFragment) bool {
+	return len(f.WorldRaw) > 0 || len(f.RegionRaw) > 0 || len(f.Places) > 0 || len(f.Ways) > 0 ||
+		len(f.Cast) > 0 || len(f.Objects) > 0 || len(f.History) > 0 || f.Arrival != nil || len(f.ArrivalCandidates) > 0
 }
 
 func docWorldEmpty(d *genesisDoc) bool {
@@ -299,6 +327,23 @@ func docWorldEmpty(d *genesisDoc) bool {
 func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]taggedName) {
 	if frag == nil || frag.Empty {
 		return
+	}
+	if len(frag.WorldRaw) > 0 && docWorldEmpty(doc) {
+		var w struct {
+			DisplayName string `json:"display_name"`
+			Tagline     string `json:"tagline"`
+			Mood        string `json:"mood"`
+			Ornament    string `json:"ornament"`
+		}
+		if json.Unmarshal(frag.WorldRaw, &w) == nil {
+			doc.World.DisplayName = w.DisplayName
+			doc.World.Tagline = w.Tagline
+			doc.World.Mood = w.Mood
+			doc.World.Ornament = w.Ornament
+		}
+	}
+	if len(frag.RegionRaw) > 0 && strings.TrimSpace(doc.Region.Descriptor) == "" {
+		_ = json.Unmarshal(frag.RegionRaw, &doc.Region)
 	}
 	for _, p := range frag.Places {
 		if !hasPlace(doc, p.CanonicalName) {
@@ -437,11 +482,29 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	for _, p := range soFar.Places {
 		sb.WriteString("- place ")
 		sb.WriteString(p.CanonicalName)
+		sb.WriteString(" — ")
+		sb.WriteString(p.Descriptor)
 		sb.WriteString("\n")
 	}
 	for _, a := range soFar.Cast {
 		sb.WriteString("- person ")
 		sb.WriteString(a.CanonicalName)
+		sb.WriteString(" hiding: ")
+		sb.WriteString(a.Hiding)
+		sb.WriteString(" starts_in: ")
+		sb.WriteString(a.StartsIn)
+		sb.WriteString("\n")
+	}
+	if !docWorldEmpty(soFar) {
+		sb.WriteString("- world named ")
+		sb.WriteString(soFar.World.DisplayName)
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(soFar.Arrival.CanonicalName) != "" {
+		sb.WriteString("- arrival ")
+		sb.WriteString(soFar.Arrival.CanonicalName)
+		sb.WriteString(" in ")
+		sb.WriteString(soFar.Arrival.Place)
 		sb.WriteString("\n")
 	}
 	return sb.String()

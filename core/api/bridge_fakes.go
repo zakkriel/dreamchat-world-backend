@@ -1062,8 +1062,9 @@ func parseIdentityBrief(prompt string) string {
 	return strings.TrimSpace(rest)
 }
 
-// FAKE: world_fill. Constraining/prohibiting/voicing emit empty. Generative and sufficiency emit
-// the same complete miniature world the old genesis fake used, so CI still walks a playable world.
+// FAKE: world_fill. Emits world_fill/1 only (no extra genesis keys). Constraining /
+// prohibiting / voicing are empty. Generative authors the entailed lives and their rooms.
+// Sufficiency (and repair) authors world header, arrival, and history so the belt can close.
 type fakeWorldFillDriver struct{ name string }
 
 func NewFakeWorldFillDriver() Driver { return &fakeWorldFillDriver{name: "fake-world-fill"} }
@@ -1075,36 +1076,111 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without a schema", f.name)
 	}
-	kind := fillKindFromPrompt(req.Prompt)
-	if kind == "constraining" || kind == "prohibiting" || kind == "voicing" {
-		return `{"empty":true,"why_empty":"constraint — no entity"}`, nil
+	if strings.Contains(req.Prompt, "\nkind: constraining\n") ||
+		strings.Contains(req.Prompt, "\nkind: prohibiting\n") ||
+		strings.Contains(req.Prompt, "\nkind: voicing\n") {
+		return `{"empty":true,"why_empty":"this rule constrains what may exist; it does not demand a life"}`, nil
 	}
 	brief := parseGenesisBrief(req.Prompt)
 	if brief == "" {
+		brief = parseIdentityBrief(req.Prompt)
+	}
+	if brief == "" {
 		brief = "a cargo yard"
 	}
-	// Reuse the genesis fake's complete world as one fill fragment.
-	raw, err := NewFakeWorldGenesisDriver().Generate(context.Background(), GenRequest{
-		Prompt: worldGenesisBriefMarker + "\n" + brief,
-		Schema: json.RawMessage(`{}`),
+	slug := briefSlug(brief)
+	if strings.Contains(req.Prompt, "\nid: sufficiency\n") || strings.Contains(req.Prompt, "\nid: repair\n") {
+		statedOpen := !strings.Contains(strings.ToLower(brief), "i am ")
+		doc := map[string]any{
+			"empty": false,
+			"world": map[string]any{
+				"display_name": "A World From: " + slug,
+				"tagline":      "Somewhere someone owes something, and the ledger is open.",
+				"mood":         "overcast",
+				"ornament":     "plain",
+			},
+			"region": map[string]any{
+				"descriptor":   "the quarter under the water tower",
+				"extent_class": "medium",
+			},
+			"history": []map[string]any{{
+				"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
+				"where":         "The Loading Yard",
+				"who":           []string{"Adaeze", "Ferro"},
+				"knowledge": []map[string]any{
+					{"holder": "Adaeze", "content": "a crate went into my yard tonight that nobody entered in the book", "epistemic_type": "direct"},
+					{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
+				},
+			}},
+			"arrival": map[string]any{
+				"descriptor":     "a stranger with wet shoulders",
+				"canonical_name": "Wren",
+				"place":          "The Counting Room",
+				"stated":         "I stepped into the counting room.",
+				"why":            "sent to collect on a line in somebody else's book",
+			},
+		}
+		if statedOpen {
+			doc["arrival_candidates"] = []map[string]any{{
+				"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren",
+				"why": "sent to collect on a line in somebody else's book",
+			}, {
+				"descriptor": "a courier stamping mud off her boots by the gate", "canonical_name": "Petra",
+				"why": "carrying a delivery the ledger has no line for",
+			}, {
+				"descriptor": "a man in a borrowed coat, checking the number over the door", "canonical_name": "Osei",
+				"why": "come to the wrong address on somebody else's word",
+			}}
+		}
+		out, err := json.Marshal(doc)
+		return string(out), err
+	}
+	// Generative: the two lives the bargain demands, and the rooms they occupy.
+	out, err := json.Marshal(map[string]any{
+		"empty": false,
+		"places": []map[string]any{{
+			"descriptor": "a low room with one lamp", "canonical_name": "The Counting Room",
+			"kind": "back room",
+			"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. The window is painted shut.",
+			"tension": "tense", "extent_class": "intimate",
+		}, {
+			"descriptor": "a yard stacked with crates", "canonical_name": "The Loading Yard",
+			"kind": "yard",
+			"description": "Crates stacked two high against the wall, a wet gate standing open on the street, and the water tower above it all.",
+			"tension": "normal", "extent_class": "small",
+		}},
+		"ways": []map[string]any{{
+			"descriptor": "the door to the yard", "from_place": "The Counting Room",
+			"to_place": "The Loading Yard", "state": "open",
+		}},
+		"cast": []map[string]any{{
+			"descriptor": "the woman keeping the ledger", "canonical_name": "Adaeze",
+			"standing": "keeps the book, and decides what goes in it",
+			"speech_manner": "short sentences; never repeats herself",
+			"traits": []map[string]any{
+				{"key": "guarded", "strength": "strong", "manner": "answers a question with the shortest true thing"},
+				{"key": "exact", "strength": "defining", "manner": "will not round a number to end a conversation"},
+			},
+			"hiding": "the last two pages of the ledger are a different hand than hers",
+			"malleability": "faint", "starts_in": "The Counting Room",
+		}, {
+			"descriptor": "a man waiting by the crates", "canonical_name": "Ferro",
+			"standing": "moves what the book says to move",
+			"speech_manner": "talks around a question until it goes away",
+			"traits": []map[string]any{
+				{"key": "watchful", "strength": "moderate", "manner": "tracks the gate more than the person talking to him"},
+			},
+			"hiding": "he has already been paid for tonight, by someone who is not in the book",
+			"malleability": "moderate", "starts_in": "The Loading Yard",
+		}},
+		"objects": []map[string]any{{
+			"descriptor": "a ledger open at the current page", "canonical_name": "The Ledger",
+			"kind": "record", "where": map[string]any{"in_place": "The Counting Room"},
+		}, {
+			"descriptor": "a brass key worn smooth", "canonical_name": "The Yard Key",
+			"kind": "key", "where": map[string]any{"carried_by": "Adaeze"},
+		}},
 	})
-	if err != nil {
-		return "", err
-	}
-	var doc map[string]any
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		return "", err
-	}
-	doc["empty"] = false
-	out, err := json.Marshal(doc)
 	return string(out), err
 }
 
-func fillKindFromPrompt(prompt string) string {
-	for _, k := range []string{"constraining", "prohibiting", "voicing", "generative"} {
-		if strings.Contains(prompt, "\nkind: "+k+"\n") {
-			return k
-		}
-	}
-	return "generative"
-}

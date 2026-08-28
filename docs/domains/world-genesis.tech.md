@@ -65,7 +65,7 @@ refused turn is a `422` with the stated reason and the world untouched.
 Step 2 of the five (`docs/design/2026-08-26-world-identity-and-the-understanding-pass.md`, restored
 by `ADR-P026`). Its emissions and their slots are the design's §3; the fill mechanism it governs is
 §7 (rules are the work plan; the code schedules, the model interprets; tagging survives for scoped
-retraction — reviews, not gates, §7.3). **Built 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding`, then fills under that identity on `world_fill` (one scheduled call per rule, then sufficiency). The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity` (Q5 for this slice). Filling stops after the scheduled rules plus one sufficiency pass (Q4 for this slice). Q1 is accepted as sequential calls; the Fast-lane budget remains the PRD's, to be measured in production rather than by collapsing the loop.
+retraction — reviews, not gates, §7.3). **Built 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding`, then fills under that identity on `world_fill` (one scheduled call per rule, then sufficiency). The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity` (Q5 for this slice). Filling stops after the scheduled rules plus one sufficiency pass (Q4). If the belt still refuses, one repair fill is allowed, then refuse. Each fill fragment is `world_fill/1` with unknown fields rejected. Q1 is sequential calls; the Fast-lane budget remains the PRD's.
 
 ## Technical decisions already made
 
