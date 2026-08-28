@@ -20,19 +20,25 @@ world-genesis
   core/api/placeauthor*
   core/api/prompts/place_author.txt
   core/api/prompts/world_actor.txt
+  core/api/prompts/world_fill.txt
+  core/api/prompts/world_fill_review.txt
   core/api/prompts/world_genesis.txt
   core/api/prompts/world_interview.txt
   core/api/prompts/world_kickstart.txt
+  core/api/prompts/world_understanding.txt
   core/api/schema/place_author*
   core/api/schema/world_actor*
   core/api/schema/world_created*
   core/api/schema/world_directory*
+  core/api/schema/world_fill*
   core/api/schema/world_genesis*
+  core/api/schema/world_identity*
   core/api/schema/world_interview*
   core/api/schema/world_kickstart*
   core/api/schema/world_refreshed*
   core/api/worldactor*
   core/api/worldgenesis*
+  core/api/worldidentity*
   core/api/worldinterview*
   core/api/worldkickstart*
   core/api/worldrefresh*
