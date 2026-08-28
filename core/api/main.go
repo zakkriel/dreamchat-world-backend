@@ -70,7 +70,8 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
 		NewWorldsHandler(pool, debug).(matcher),
 		// World creation (PRD: prd_world_creation.md). POST /worlds/interview asks the next question about
-		// a brief; POST /worlds/genesis authors a whole world and streams what lands. Neither sits under
+		// a brief; POST /worlds/identity shows the Custom lane the identity it is about to build under;
+		// POST /worlds/genesis authors a whole world and streams what lands. None of them sit under
 		// /worlds/{id} because there is no id yet — that is the point of them.
 		NewWorldGenesisHandler(pool, debug, bridge, images).(matcher),
 		// POST /worlds/{w}/refresh mints a successor world and archives the source. The old world is

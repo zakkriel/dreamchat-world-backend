@@ -107,6 +107,30 @@ func TestRetractBreaches_DropsNamedObject(t *testing.T) {
 	}
 }
 
+// The review seat must actually be CONSULTED, and its verdict must actually land. Without this the
+// whole `if review != nil` block in fillFromIdentity is deletable: the live fake finds no breaches,
+// so every other test passes with the review wired to nothing. Revert the block and watch this fail.
+func TestFillFromIdentity_ReviewRetractsTheBreachItNames(t *testing.T) {
+	review := stubDriver{raw: `{"breaches":[{"kind":"object","name":"The Yard Key","why":"a prop the departure ruled out"}]}`}
+	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), review, testBrief, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, o := range doc.Objects {
+		if o.CanonicalName == "The Yard Key" {
+			t.Fatal("the review named The Yard Key a breach and it survived into the committed world")
+		}
+	}
+	// Retraction is scoped, never a purge: what the review did NOT name has to still be there, and the
+	// belt has to still pass — a review that empties the world is not a review, it is a refusal.
+	if len(doc.Objects) == 0 {
+		t.Fatal("retraction took every object with it")
+	}
+	if err := doc.validate(); err != nil {
+		t.Fatalf("the world stopped being playable after retraction: %v", err)
+	}
+}
+
 type stubDriver struct{ raw string }
 
 func (s stubDriver) Name() string                { return "stub-fill" }

@@ -95,7 +95,7 @@ func NewWorldGenesisHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge, imag
 func (h *worldGenesisHandler) Match(r *http.Request) bool {
 	return r.Method == http.MethodPost &&
 		(worldGenesisRoute.MatchString(r.URL.Path) || worldInterviewRoute.MatchString(r.URL.Path) ||
-			genesisKickstartRoute.MatchString(r.URL.Path))
+			worldIdentityRoute.MatchString(r.URL.Path) || genesisKickstartRoute.MatchString(r.URL.Path))
 }
 
 // genesisRequest is the whole input surface of both routes: the brief, and whatever has been asked and
