@@ -3782,6 +3782,47 @@ CREATE TABLE public.artifact_state (
 
 
 --
+-- Name: beat_derivation; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.beat_derivation (
+    derivation_id bigint NOT NULL,
+    world_id uuid NOT NULL,
+    viewer_id uuid NOT NULL,
+    in_world_tick bigint NOT NULL,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    stated text,
+    elements jsonb DEFAULT '[]'::jsonb NOT NULL
+);
+
+
+--
+-- Name: TABLE beat_derivation; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.beat_derivation IS 'Operational telemetry: what the decompose stage made of each player sentence, including the empty parse. Retention 15 days (founder ruling 2026-08-28). Never a player surface; no projection reads it; not canon.';
+
+
+--
+-- Name: beat_derivation_derivation_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.beat_derivation_derivation_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: beat_derivation_derivation_id_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.beat_derivation_derivation_id_seq OWNED BY public.beat_derivation.derivation_id;
+
+
+--
 -- Name: canon_event; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -4322,6 +4363,13 @@ CREATE TABLE public.world_pressure (
 
 
 --
+-- Name: beat_derivation derivation_id; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.beat_derivation ALTER COLUMN derivation_id SET DEFAULT nextval('public.beat_derivation_derivation_id_seq'::regclass);
+
+
+--
 -- Name: actor_state actor_state_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -4335,6 +4383,14 @@ ALTER TABLE ONLY public.actor_state
 
 ALTER TABLE ONLY public.artifact_state
     ADD CONSTRAINT artifact_state_pkey PRIMARY KEY (entity_id);
+
+
+--
+-- Name: beat_derivation beat_derivation_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.beat_derivation
+    ADD CONSTRAINT beat_derivation_pkey PRIMARY KEY (derivation_id);
 
 
 --
@@ -4599,6 +4655,20 @@ ALTER TABLE ONLY public.world
 
 ALTER TABLE ONLY public.world_pressure
     ADD CONSTRAINT world_pressure_pkey PRIMARY KEY (world_id, tier);
+
+
+--
+-- Name: beat_derivation_recorded_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX beat_derivation_recorded_at_idx ON public.beat_derivation USING btree (recorded_at);
+
+
+--
+-- Name: beat_derivation_world_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX beat_derivation_world_idx ON public.beat_derivation USING btree (world_id, recorded_at DESC);
 
 
 --
@@ -5085,4 +5155,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260825120000'),
     ('20260825130000'),
     ('20260825140000'),
-    ('20260828090000');
+    ('20260828090000'),
+    ('20260828120000');

@@ -149,11 +149,17 @@ func TestRunBeat_NonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	if out.HaltReason != "journey_leg" {
-		t.Fatalf("HaltReason = %q, want journey_leg (a 300s non-move that doesn't fit a tense scene's 30s budget now starts a journey instead of bouncing)", out.HaltReason)
+	if out.HaltReason == "turn_budget" {
+		t.Fatalf("HaltReason = turn_budget — a 300s non-move that does not fit a tense scene's 30s budget must become a vigil, never bounce")
 	}
-	if out.TicksAdvanced != 60 {
-		t.Fatalf("TicksAdvanced = %d, want 60 (the journey's first leg: ceil(300/5 legs))", out.TicksAdvanced)
+	if out.HaltReason != "journey_arrived" {
+		t.Fatalf("HaltReason = %q, want journey_arrived — the vigil runs its legs back to back inside the beat (2026-08-28) and completes on a quiet scene", out.HaltReason)
+	}
+	// The WHOLE vigil now runs inside the beat, so the clock advances by its full span rather than by
+	// one leg's slice (2026-08-28, runJourneyToCompletion). The leg structure is unchanged underneath
+	// — five legs, five world's turns, five interruption rolls — only the clicking is gone.
+	if out.TicksAdvanced != 300 {
+		t.Fatalf("TicksAdvanced = %d, want 300 (the vigil's whole span, run leg by leg inside the beat)", out.TicksAdvanced)
 	}
 	if len(out.Committed) != 0 {
 		t.Fatalf("Committed = %v, want empty — starting a journey and running a leg commits nothing to canon (only arrival does, and this leg didn't reach the threshold)", out.Committed)
@@ -163,22 +169,32 @@ func TestRunBeat_NonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 		`SELECT status FROM journey WHERE world_id=$1 AND actor_id=$2`, dlWorldID, dlKadeID).Scan(&status); err != nil {
 		t.Fatalf("journey row: %v", err)
 	}
-	if status != "active" {
-		t.Fatalf("journey status = %q, want active — the leg did not meet the threshold, so the journey stays open", status)
+	if status == "active" {
+		t.Fatalf("journey status = active — the vigil must not be left waiting to be clicked through")
 	}
 }
 
-// TestRunBeat_EmptyBeatAdvancesByInstantFloor is the Step-5 floor: a beat with no clock-advancing
-// attempt at all (an empty "I watch" beat — nothing in the chain, so the loop body never runs) still
-// costs the instant floor (2 s, the seeded fallback), not 0 — stillness ticks too. This only applies
-// on the completed path (asserted here); a halted beat keeps its own halt semantics untouched.
+// TestRunBeat_QueryOnlyBeatAdvancesByInstantFloor is the Step-5 floor: a beat with no
+// clock-advancing attempt still costs the instant floor (2 s, the seeded fallback), not 0 — stillness
+// ticks too. This only applies on the completed path (asserted here); a halted beat keeps its own halt
+// semantics untouched.
+//
+// It is driven by a QUERY-only chain. It used to be driven by an EMPTY chain, which was possible when
+// an empty chain and the continue press were the same value — SPEC-037, fixed 2026-08-28. An empty
+// chain now means "the parse produced nothing" and deliberately costs no time, so it can no longer
+// reach the floor. QUERY is the honest remaining route: a question is a real element that never ticks
+// the clock itself (RULINGS-2026-07-23 §3).
+//
+// This test therefore does DOUBLE duty and must not be deleted for being redundant: it guards the
+// floor, AND it proves the bounce branch is narrow — if bounce were ever widened from "nothing parsed"
+// to "nothing committed", a questions-only beat would stop costing its moment and this goes red.
 //
 // Deferral C (Task 3): the floor crossing now runs its own world's turn, which would otherwise roll
 // the pressure tiers for dlWorldID on every run of this test. This test is about the TICK COUNT, not
 // about rolls, so pressure is disabled the same way TestRunBeat_FloorWindowStillRunsTheWorldsTurn
 // disables it — an undisabled roll here could fire and leave a world_eruption row that breaks
 // pressure_test.go's TestRollTier_FiredMatchesRollLessThanChance (hardcodes lastEruption=0).
-func TestRunBeat_EmptyBeatAdvancesByInstantFloor(t *testing.T) {
+func TestRunBeat_QueryOnlyBeatAdvancesByInstantFloor(t *testing.T) {
 	pool := testPool(t)
 	// t.Cleanup (not defer) — LIFO with wtDisableWorldActor's own restore Cleanup below, so the
 	// restore runs BEFORE the pool closes (mirrors TestRunBeat_NonMoveCostsWorldTime's documented
@@ -191,7 +207,8 @@ func TestRunBeat_EmptyBeatAdvancesByInstantFloor(t *testing.T) {
 	orc := wtOrchestrator(pool)
 	baseTick := wtBaseTick(t, ctx, pool)
 
-	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, baseTick, nil)
+	queryOnly := []Attempt{{Type: "QUERY", Stated: "who is here?", QueryTargetIDs: []string{wtMaraID}}}
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, queryOnly, baseTick, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
@@ -199,7 +216,7 @@ func TestRunBeat_EmptyBeatAdvancesByInstantFloor(t *testing.T) {
 		t.Fatalf("HaltReason = %q, want completed", out.HaltReason)
 	}
 	if out.TicksAdvanced != 2 {
-		t.Fatalf("TicksAdvanced = %d, want 2 (the instant floor — an empty beat still costs stillness)", out.TicksAdvanced)
+		t.Fatalf("TicksAdvanced = %d, want 2 (the instant floor — asking is not acting, but it still costs a moment)", out.TicksAdvanced)
 	}
 }
 
@@ -310,14 +327,17 @@ func TestRunBeat_AdjudicatedNonMoveOverBudgetHaltsTurnBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want journey_leg (a 300s adjudicated non-move that doesn't fit a tense scene's 30s budget now starts a journey instead of bouncing)", outcome.HaltReason)
+	if outcome.HaltReason == "turn_budget" {
+		t.Fatalf("halt_reason = turn_budget — a 300s adjudicated non-move must become a vigil, never bounce")
+	}
+	if outcome.HaltReason != "journey_arrived" {
+		t.Fatalf("halt_reason = %q, want journey_arrived — the vigil runs to completion inside the beat (2026-08-28)", outcome.HaltReason)
 	}
 	if len(outcome.Committed) != 0 {
 		t.Fatalf("committed = %v, want empty — starting a journey and running a leg commits nothing to canon", outcome.Committed)
 	}
-	if outcome.TicksAdvanced != 60 {
-		t.Fatalf("ticks_advanced = %d, want 60 (the journey's first leg: ceil(300/5 legs))", outcome.TicksAdvanced)
+	if outcome.TicksAdvanced != 300 {
+		t.Fatalf("ticks_advanced = %d, want 300 (the vigil's whole span — it runs to completion inside the beat)", outcome.TicksAdvanced)
 	}
 	if driver.callCount != 0 {
 		t.Fatalf("resolve driver called %d times, want 0 — the budget gate must fire BEFORE adjudicate() ever consults the referee", driver.callCount)
@@ -356,8 +376,10 @@ func TestRunBeat_FloorWindowStillRunsTheWorldsTurn(t *testing.T) {
 		}
 	})
 
-	// An EMPTY chain: nothing advances the clock except the floor.
-	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, nil, baseTick, nil)
+	// A QUERY-only chain: nothing advances the clock except the floor. (Was an empty chain until
+	// SPEC-037 landed 2026-08-28 — an empty chain now costs no time at all and never reaches the floor.)
+	queryOnly := []Attempt{{Type: "QUERY", Stated: "who is here?", QueryTargetIDs: []string{wtMaraID}}}
+	out, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, queryOnly, baseTick, nil)
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}

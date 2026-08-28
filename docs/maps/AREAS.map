@@ -149,9 +149,11 @@ play-loop
   core/api/anthropic*
   core/api/batchpath_test.go
   core/api/beat*
+  core/api/bounce_test.go
   core/api/bridge*
   core/api/cognition*
   core/api/costsink*
+  core/api/derivation*
   core/api/narrat*
   core/api/openaicompat*
   core/api/orchestrator*

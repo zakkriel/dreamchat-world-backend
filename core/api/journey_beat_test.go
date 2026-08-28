@@ -35,10 +35,13 @@ func jbOrchestrator(pool *pgxpool.Pool) *Orchestrator {
 
 // TestRunBeat_OverBudgetMoveBecomesAJourney is the founding ruling, end to end: a tense scene (30 s
 // budget) and a target far enough that the walk cannot fit (tenA→tenD, 35 s of real physics —
-// seedTensionGeometry's own worked derivation). The beat must NOT bounce: HaltReason is "journey_leg"
-// (not "turn_budget"), an active journey row exists for the actor, and the actor has NOT teleported to
-// the goal — starting a journey commits nothing to canon; only arrival would, and this beat's first
-// leg does not reach the threshold (span 35 s, leg 1 of a 5-leg journey covers ceil(35/5) = 7 s).
+// seedTensionGeometry's own worked derivation). **The beat must NOT bounce to turn_budget** — that is
+// the ruling, and it is what this test has always guarded.
+//
+// The journey now runs its legs back to back inside this one beat (2026-08-28: the player does not
+// click through the world's dice — runJourneyToCompletion), so a QUIET road ends "journey_arrived"
+// here rather than "journey_leg" with an active row waiting for presses. What did not change: the
+// world still gets one turn, and one interruption roll, per leg; over-budget is still never a reject.
 func TestRunBeat_OverBudgetMoveBecomesAJourney(t *testing.T) {
 	pool := testPool(t)
 	// t.Cleanup (not defer) — LIFO with the journey delete below, so it runs BEFORE the pool closes.
@@ -68,11 +71,11 @@ func TestRunBeat_OverBudgetMoveBecomesAJourney(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat: %v", err)
 	}
-	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want journey_leg — a move that overflows the beat budget must begin a journey, not bounce (RULINGS-2026-07-30 §2)", outcome.HaltReason)
+	if outcome.HaltReason == "turn_budget" {
+		t.Fatalf("halt_reason = turn_budget — a move that overflows the beat budget must become a journey, never bounce (RULINGS-2026-07-30 §2)")
 	}
-	if len(outcome.Committed) != 0 {
-		t.Fatalf("committed = %v, want empty — starting a journey and running one leg commits nothing to canon", outcome.Committed)
+	if outcome.HaltReason != "journey_arrived" {
+		t.Fatalf("halt_reason = %q, want journey_arrived — a quiet road runs its legs to the end in one beat", outcome.HaltReason)
 	}
 
 	var status string
@@ -82,26 +85,28 @@ func TestRunBeat_OverBudgetMoveBecomesAJourney(t *testing.T) {
 	// unrelated leftover row (any prior test's own journey, ended by an unrelated later beat) instead
 	// of the one THIS test just created.
 	if err := pool.QueryRow(ctx,
-		`SELECT status, legs_total, legs_done FROM journey WHERE world_id=$1 AND actor_id=$2 AND status='active'`,
+		`SELECT status, legs_total, legs_done FROM journey
+		   WHERE world_id=$1 AND actor_id=$2 ORDER BY started_tick DESC LIMIT 1`,
 		worldID, playerID).Scan(&status, &legsTotal, &legsDone); err != nil {
-		t.Fatalf("active journey row: %v", err)
+		t.Fatalf("journey row: %v", err)
 	}
-	if status != "active" {
-		t.Fatalf("journey status = %q, want active — the founding ruling gives the world MULTIPLE chances across legs, not one", status)
-	}
-	if legsDone != 1 {
-		t.Fatalf("legs_done = %d, want 1 (exactly one leg ran this beat)", legsDone)
+	if status == "active" {
+		t.Fatalf("journey status = active — the beat must not return with a journey still waiting to be clicked through")
 	}
 	if legsTotal < 5 || legsTotal > 10 {
-		t.Fatalf("legs_total = %d, want in [5,10] (R7's bounded-press band)", legsTotal)
+		t.Fatalf("legs_total = %d, want in [5,10] (R7's bounded band)", legsTotal)
+	}
+	// THE WORLD KEPT ITS CHANCES. Every leg ran, which is every interruption roll the founding ruling
+	// promises — the clicking went, the danger did not.
+	if legsDone != legsTotal {
+		t.Fatalf("legs_done = %d, want all %d — the world must get its roll on EVERY leg, not just the first", legsDone, legsTotal)
 	}
 
-	// The actor has NOT teleported to the goal: only the journey's own arrival commit may move them,
-	// and this leg did not reach the threshold.
+	// Arrival is the ONLY thing that may move the actor, and it commits through the ordinary path.
 	if loc, err := orc.actorLocation(ctx, worldID, playerID); err != nil {
 		t.Fatalf("actorLocation: %v", err)
-	} else if loc != tenA {
-		t.Fatalf("player location = %s, want tenA (%s) — starting a journey must not teleport the actor to the goal", loc, tenA)
+	} else if loc != tenD {
+		t.Fatalf("player location = %s, want tenD (%s) — a completed quiet journey arrives", loc, tenD)
 	}
 }
 

@@ -59,12 +59,12 @@ func newRouter(pool *pgxpool.Pool, debug bool, bridge *Bridge, images *imageClie
 		NewTranscriptHandler(pool, debug).(matcher),
 		// GET /worlds/{w}/scene/current — where you are, who is present, what matters now (design §4.8).
 		NewSceneHandler(pool, debug).(matcher),
-		// POST /worlds/{w}/beats and POST /worlds/{w}/beats/continue — the only write path; everything
-		// it commits goes through apply_event (D-1). The singular POST /worlds/{w}/beat endpoint is
-		// GONE (rung3 Task 5, founder-approved clean cutover — no alias, no deprecation shim; the only
-		// caller was the founder's own throwaway test page). beatsStreamHandler serves both routes,
-		// delivering the beat as a stream of validated frames (design §4.8, rung3 Task 3); continue
-		// skips decompose entirely — an empty chain against an active journey IS the continue press.
+		// POST /worlds/{w}/beats — the only write path; everything it commits goes through apply_event
+		// (D-1). Two sibling endpoints are GONE, both founder-approved clean cutovers with no alias and
+		// no deprecation shim: the singular POST /worlds/{w}/beat (rung3 Task 5) and
+		// POST /worlds/{w}/beats/continue (2026-08-28 — journeys run their own legs now, so a continue
+		// press had nothing to advance). beatsStreamHandler delivers the beat as a stream of validated
+		// frames (design §4.8, rung3 Task 3).
 		NewBeatsStreamHandler(pool, debug, bridge).(matcher),
 		// SPEC-028: GET /worlds (the directory) and POST /worlds (creation). The one route not under
 		// /worlds/{id}, because it is what you call when you do not have an id yet.
@@ -141,6 +141,10 @@ func main() {
 	// to remember to ask for a picture — the sweep looks for anything unillustrated and fills it.
 	// Inert without an image platform configured.
 	runArtReconciler(pool, images)
+
+	// Parse records expire on their own. beat_derivation grows one row per beat forever otherwise,
+	// and nothing else prunes it (founder ruling 2026-08-28: fifteen days).
+	runDerivationRetention(pool)
 
 	mux := http.NewServeMux()
 	mux.Handle("/worlds/", rt)

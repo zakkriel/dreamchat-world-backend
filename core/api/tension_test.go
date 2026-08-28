@@ -177,13 +177,15 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RunBeat (cumulative): %v", err)
 	}
-	// Task 6 / design §4.7: the third move no longer bounces — over-budget hands it to the journey
-	// and runs its first leg (still without committing the move itself, so the prefix still stands
-	// exactly as before). tenC→tenD is 12 s of real physics (recomputed identically inside
-	// startJourney); worldID's fn_journey_legs(12) is 5 (no per-world override), so the first leg is
-	// ceil(12/5) = 3 s.
-	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want %q (third 12 s move overflows the 30 s tense budget, so it becomes a journey instead of bouncing)", outcome.HaltReason, "journey_leg")
+	// Task 6 / design §4.7: the third move no longer bounces — over-budget hands it to the journey.
+	// Since 2026-08-28 the journey then runs its legs back to back inside this beat instead of
+	// waiting to be clicked through, so on a quiet road it ARRIVES here. The prefix still stands and
+	// the move itself is still never committed by the beat: only the journey's own arrival commits.
+	if outcome.HaltReason == "turn_budget" {
+		t.Fatalf("halt_reason = turn_budget — the third 12 s move overflows the 30 s tense budget and must become a journey, never bounce")
+	}
+	if outcome.HaltReason != "journey_arrived" {
+		t.Fatalf("halt_reason = %q, want journey_arrived — the journey runs to completion inside the beat", outcome.HaltReason)
 	}
 	// Task 7 (R6): the SECOND RunBeat call below (the "none" section, same actor/world) is exactly
 	// "changing your mind" — it ends this journey outright before it runs, so by the time this
@@ -195,18 +197,23 @@ func TestRunBeat_TensionBudgetCumulative(t *testing.T) {
 			t.Errorf("cleanup journey: %v", err)
 		}
 	})
-	if len(outcome.Committed) != 2 {
-		t.Fatalf("committed = %d (%v), want exactly 2 (12+12=24 ≤ 30; the third 12 s move becomes a journey instead of committing, prefix stands)",
+	// Three, not two, since 2026-08-28. The first two moves commit inline (12+12 = 24 s ≤ 30 s); the
+	// third overflows and becomes a journey — and the journey now runs to completion inside the beat,
+	// so its ARRIVAL commits the third move through the ordinary apply path. The prefix rule itself is
+	// unchanged: the beat never commits an over-budget move directly; only the journey's arrival does,
+	// and only after the world has had its roll on every leg.
+	if len(outcome.Committed) != 3 {
+		t.Fatalf("committed = %d (%v), want exactly 3 — two inline moves plus the journey's own arrival commit",
 			len(outcome.Committed), outcome.Committed)
 	}
-	if outcome.TicksAdvanced != 27 {
-		t.Fatalf("ticks_advanced = %d, want 27 (two 12 s moves committed, then the over-budget journey's first 3 s leg)", outcome.TicksAdvanced)
+	if outcome.TicksAdvanced != 36 {
+		t.Fatalf("ticks_advanced = %d, want 36 (two 12 s moves, then the journey's whole 12 s span run leg by leg)", outcome.TicksAdvanced)
 	}
-	// The prefix stood: the player advanced A→B→C, and the rejected C→D never committed.
+	// The journey carried the player the last hop: A→B→C inline, then C→D via the arrival commit.
 	if loc, err := orc.actorLocation(ctx, worldID, playerID); err != nil {
 		t.Fatalf("actorLocation after cumulative beat: %v", err)
-	} else if loc != tenC {
-		t.Fatalf("player location = %s, want tenC (%s) — the over-budget move must not commit", loc, tenC)
+	} else if loc != tenD {
+		t.Fatalf("player location = %s, want tenD (%s) — the journey completed and its arrival moved the player", loc, tenD)
 	}
 	// Exactly two committed ActorMoved canon rows for the player in this beat's tick span. The
 	// orchestrator commits passthrough moves with p_legacy_types=false, so event_type is 'ActorMoved'

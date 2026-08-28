@@ -89,3 +89,4 @@
 20260825130000_object_relocated_witnesses.sql	perception
 20260825140000_witnesses_malformed_is_refusal.sql	perception
 20260828090000_world_identity.sql	world-genesis
+20260828120000_beat_derivation.sql	play-loop

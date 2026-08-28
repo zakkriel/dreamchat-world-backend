@@ -958,64 +958,97 @@ retires a category of per-entity model cost.
 **Does not block:** genesis, which may emit rules with an enforcement marker and no enforcement.
 
 
-## SPEC-039 — The production decompose seat mis-parses ordinary player input and commits the wrong canon
+## SPEC-039 — One host in the production routing allowlist mis-parses beats. Same model, same bytes, wrong answer.
 
 **Status, newest first.**
 
-**OPEN, and it is live in production.** Measured 2026-08-28 against the exact production binding read
-from `railway variables`: `openrouter:deepseek/deepseek-v4-flash` (decompose is NOT named in
-`DREAMCHAT_SEATS`, so it takes `DREAMCHAT_SEAT_DEFAULT`), `JSON_MODE=json_schema`,
-`SEAT_TEMPERATURE_DECOMPOSE=0`, `REASONING={"effort":"none"}`, `MAX_TOKENS=2048`, and the full
-11-host routing allowlist with `require_parameters: true`. Every other seat faked, so the only live
-call per beat is the seat under test.
+**ACTION TAKEN 2026-08-28: `venice` removed from `DREAMCHAT_PROVIDER_OPENROUTER_ROUTING.only`**
+(set with `--skip-deploys`, so it is staged and takes effect on the NEXT deploy — seat config is read
+at boot). Removed from `only` rather than added to `ignore` so the two lists cannot contradict each
+other. Nothing else in the policy changed.
 
-**An explicit speech act is parsed as movement, and committed:**
+**CENSORSHIP: no host is censoring. Checked, because uncensored adult content is a product
+requirement (`backend:ADR-P016`, `E-2`), not a preference.** The real narrate rulebook (which carries
+the UNCENSORED / EXPLICIT IS THE EXPECTATION blocks) was driven with two adult scenes — explicit
+violence and explicit sex — against each host, scoring refusal / disclaimer / fade-to-black, all three
+of which the rulebook forbids:
 
-| Player typed | Parse produced | Result |
+| host | v4-flash | v4-pro |
 |---|---|---|
-| `I say to Mara: 'Evening.'` | **`ActorMoved`** | committed — 3 of 3 runs |
-| `I greet Mara` | `ActorMoved` ×3, `Communicated` ×1, 1 call failure | committed when ActorMoved |
-| `asdfgh qwerty zxcvbn` | `ActorMoved` ×2, `QUERY` ×1 | **committed on the ActorMoved runs** |
-| `xyzzy plugh frotz` | `UNRESOLVED` (18 candidate ids) | no time spent — the honest outcome |
-| `I teleport to the moon` | `UNRESOLVED` (2 ids) | no time spent |
+| deepinfra | complied 4/4 | rate-limited (429), untested |
+| coreweave | complied 4/4 | rate-limited (429), untested |
+| parasail | 3/4 complied, 1 fade | complied |
+| venice | complied 4/4 | complied |
+| ionstream | — | complied |
 
-**Three separate defects, in severity order:**
+The single fade is one sample on a keyword heuristic, not evidence of policy. **Refusing to serve adult
+content is not what is wrong with venice** — its fault is structured-output correctness, and it is the
+only allowed host whose quantization OpenRouter reports as `unknown`.
 
-1. **Well-formed input is mis-parsed and the wrong event reaches canon.** `I say to Mara: 'Evening.'`
-   is the exact shape `prompts/decompose.txt` spends a paragraph teaching ("a question put to a person
-   is also speech… it is a Communicated attempt with that person as listener_id"). It produced
-   `ActorMoved` every time. This is not an edge case and has nothing to do with unparseable input.
-2. **The AI authors canon the player never stated.** Keyboard mash produced a committed `ActorMoved`.
-   The deterministic gate accepts it because it is *structurally* valid — the gate cannot know the
-   player never said it. That is `D-1` ("nothing mutates canon directly — the AI proposes, the Core
-   decides") defeated in practice, and `decompose.txt`'s own "Add NOTHING the player did not state"
-   violated with nothing able to catch it.
-3. **Non-deterministic at temperature 0.** Identical input, identical config, different shapes across
-   runs. Some of this is the aggregator: `sort: latency` + `allow_fallbacks: true` means different
-   hosts serve different requests. That is production's own configuration, so the non-determinism is
-   production behaviour, not a test artifact.
+**Three more allowlist problems found in the same survey, NOT acted on (no evidence of harm yet):**
 
-**The model matters more than anything else here.** The same sentence on the CI fake, on
-`claude-haiku-4.5`, and on the production model produced three different shapes. Haiku parsed
-`I greet Mara` correctly as `Communicated`; the production model did not. Any conclusion drawn from a
-substitute model says nothing about production — see root `AGENTS.md` contract rule 0c, which this
-entry is the receipt for.
+- **`novita` reports `structured_outputs: false`** for both production models. `require_parameters:
+  true` should already exclude it from schema'd seats, which is the policy working — but it sits in
+  `only` looking like a valid choice for seats that need a schema.
+- **`ionstream` serves v4-pro at `fp4`** — the heaviest quantization in the list. Venice's failure
+  suggests quantization is where structured-output correctness goes; ionstream is untested for parse
+  accuracy and is a candidate for the same fault.
+- **`fireworks`, `morph`, `sail-research`, `together` return 404** for v4-flash, and `phala` returns
+  400. Five of eleven allowlisted hosts cannot serve the decompose seat at all. Harmless but
+  misleading: the allowlist reads as capacity it does not have.
 
-**Not diagnosed here (anti-drift).** Whether the cause is the model's capability, the prompt's shape,
-`json_schema` being served differently by different hosts, or the routing allowlist, is unmeasured.
-Candidate first probes, cheapest first: pin one host and re-run; try `deepseek-v4-pro` (already the
-binding for narrate/world_actor/place_author); measure how often the shape is wrong on a fixed corpus
-of unambiguous sentences before changing anything.
+**Also observed:** `deepinfra` and `coreweave` were persistently 429 (rate-limited upstream) on
+**v4-pro** across four retries — the narrate seat's production model. Narrowing the allowlist further
+would have removed real capacity, which is why only the proven-bad host was removed.
 
-**Instrumentation already exists.** `beat_derivation` (landed with SPEC-037, 2026-08-28) records the
-player's sentence and the shape the parse produced, for every beat. All thirteen probe beats above are
-rows in it. The measurement of how often production mis-parses is a query, not a new build.
+**CAUSE ISOLATED 2026-08-28. It is a HOST, not the model, not the prompt, not the schema.**
 
-- **Owner:** founder — model choice and spend are commercial decisions, not engineering ones.
-- **Firing trigger:** already fired. Reachable on every beat by every player.
-- **Evidence:** this entry's table, reproduced from the wire against the real seat, 2026-08-28.
+Production routes `deepseek/deepseek-v4-flash` through OpenRouter with an eleven-host allowlist,
+`sort: latency`, `allow_fallbacks: true` (`DREAMCHAT_PROVIDER_OPENROUTER_ROUTING`). **The model name is
+not what serves the request** — whichever host wins the latency sort does, and those hosts run
+different inference stacks. Pinned to one host at a time, byte-identical request:
 
----
+| host | 4 sentences × 3 runs | latency |
+|---|---|---|
+| **venice** | **5 of 12 WRONG** — collapses to `ActorMoved`, one reply unparseable | 3.2–3.6 s |
+| deepinfra | 12/12 correct | 1.5–2.2 s |
+| coreweave | 12/12 correct | 2.6–2.9 s |
+| parasail | correct on the sample taken | 2.2–2.4 s |
+| fireworks · together · novita · ionstream · morph · sail-research | **404 — do not serve this model at all** | — |
+| phala | 400 | — |
+
+Venice substitutes `ActorMoved` — `items.oneOf[0]`, the FIRST branch of the schema — for speech and for
+questions. That is the signature of a structured-output implementation that collapses to the first
+branch instead of honouring the discriminator, and `require_parameters: true` does not exclude it.
+
+**The fix is one environment variable and it is FREE — the broken host is also the slowest of the
+three that work.** Add `venice` to the routing `ignore` list, or narrow `only` to the hosts that
+actually serve this model correctly (`deepinfra`, `coreweave`, `parasail`). Six of the eleven allowed
+hosts 404 on this model anyway, so the allowlist is mostly decoration.
+
+**Why this was hard to see, recorded so the next person does not repeat it.** The same request answered
+correctly ~9 times in a row unpinned (the router happened to be sending everything to one host that
+minute), then wrong repeatedly in an earlier session, then 108/108 correct in an off-server harness.
+Three earlier explanations were proposed and all three were wrong: the model (`v4-flash` vs `v4-pro` vs
+`claude-haiku-4.5` — all four "failed" because all four go through the same router), the prompt, and
+scene contamination. **Nothing was reproducible until the request bytes were dumped from the running
+driver and replayed against one pinned host at a time.**
+
+- **Owner:** operations — a routing variable, no code change, no deploy.
+- **Firing trigger:** already fired. Reachable on every beat whenever the router picks the bad host.
+- **Evidence:** request bytes captured from `openaicompat.go`'s `post()` on a live beat, replayed
+  per-host. Method: dump the real request, replay it, vary ONE thing.
+- **Guard it will need:** a per-host conformance probe over a fixed corpus, run when the allowlist
+  changes. A model name is not a contract; the host behind it is what answers.
+
+**Not claimed here:** that the parser is otherwise defective. On a correct host it is 36/36 over a
+corpus covering every branch (movement, speech, speech-to-a-person, three question forms, object
+handover, sustained act), p50 2.6 s, ~$0.0005 per call. **Do not "improve" the decompose prompt on the
+strength of this entry** — the prompt is not what is broken.
+
+**Smaller finding, unrelated and not urgent.** 27% of the decompose header (2,454 of 9,037 bytes) is
+content-policy prose about writing explicit fiction, carried by a seat that emits typed slots and never
+writes narration. Removing it: 36/36 unchanged, p50 2640→2484 ms, p95 4713→3969 ms, cost −2%.
 
 ## SPEC-033 — Learning a name by earshot
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
@@ -1090,7 +1123,7 @@ notices the world did not hear it.
 
 ---
 
-## SPEC-037 — A sentence the engine could not bind was spent as a moment of stillness — **PARTLY LANDED 2026-08-28; the journey half is still open**
+## SPEC-037 — A sentence the engine could not bind was spent as a moment of stillness — **LANDED 2026-08-28**
 
 **Status, newest first — read this before the history below.**
 
@@ -1100,9 +1133,10 @@ committed, no journey touched. It halts `bounce`, and the surface says *"Nothing
 passed."* Founder ruling the same day: *"stop it, but the user needs to be informed that nothing
 happened."*
 
-- **Root cause removed.** The continue press is no longer "a beat with an empty chain". It has its own
-  entry point, `Orchestrator.RunContinuePress`; `RunBeat` is now the typed beat and nothing else. The
-  overload that made "the player passed" and "we could not read the player" the same value is gone.
+- **Root cause removed.** The continue press was no longer "a beat with an empty chain": it got its own
+  entry point, `RunBeat` became the typed beat and nothing else, and the overload that made "the player
+  passed" and "we could not read the player" the same value was gone. Later the same day the press
+  itself was deleted (see below), so `RunBeat` is now the only way a player spends a turn at all.
 - **Measured instead of patched.** A new `beat_derivation` row is written for **every** beat — the
   player's sentence and what the parse made of it, including the empty parse, which previously left no
   record anywhere (the transcript writes nothing when a beat produced no prose; the debug trace builds
@@ -1121,11 +1155,47 @@ happened."*
   chain: a deliberate wait is a real attempt carrying a `sustain` shape (`for` seconds / `until_at` /
   `until_attr`), which is why waiting survives this change untouched.
 
-**STILL OPEN: the journey half.** On an active journey the continue press still advances a leg, so the
-symptom the original report caught is unchanged there. Left deliberately: the founder has ruled that
-journeys will run their own legs and stop only on interruption or arrival, which deletes the continue
-press and this branch entirely. Writing new logic there now would be writing code to be deleted. This
-entry closes when that lands.
+**THE JOURNEY HALF IS CLOSED TOO** — corrected 2026-08-28, later the same day. An earlier revision of
+this entry said the journey symptom was "unchanged"; that was written before the split landed and it
+was wrong. `RunBeat` now returns `bounce` and returns **before it ever reads the journey**, so a typed
+sentence that bound nothing leaves an active journey untouched: no leg, no tick, no world's turn.
+Guarded by `TestRunBeat_TypedNothingLeavesAnActiveJourneyUntouched`, watched going red.
+
+The three journey paths now each do one thing, and only one:
+
+| input | behaviour |
+|---|---|
+| a typed sentence that **parsed** | the journey ends and the beat runs where you stand (R6, unchanged) |
+| a typed sentence that **bound nothing** | nothing happens at all — `bounce`, journey intact |
+| the **continue press** | deleted the same day — see below |
+
+**This entry is CLOSED, including the piece it deferred.** It closed saying that *journeys should run
+their own legs* was "a feature, not this bug" and belonged elsewhere. The founder disagreed —
+*"we were not fixing a bug, we were building a feature, why didn't you do it? saying it out loud
+doesn't exempt you from doing it"* — and it was built the same day.
+
+**Journeys now run their own legs** (`Orchestrator.runJourneyToCompletion`, `core/api/journey.go`). One
+sentence starts a trip and the trip finishes inside that beat: every leg runs, the world takes its turn
+and rolls for an interruption on each one exactly as before, and the beat returns `journey_arrived`,
+`journey_interrupted`, `journey_barred` or `journey_unresolved`. What was removed is the clicking, not
+the danger — *"a leg boundary asks the player nothing"*, and the only thing that can change the outcome
+is the world's own roll.
+
+Because nothing is ever left mid-trip, **the continue press is gone entirely** — a clean cutover, no
+alias, no shim: `RunContinuePress`, `POST /worlds/{w}/beats/continue`, the frontend's Continue button,
+its `Press` union and bodyless request path, and the `journey_leg` / `nothing_to_continue` halt copy.
+The `beat_derivation` table lost its `press` column with them (every beat carries a sentence now).
+
+Two new error paths came with it, both guarded: a gate-refused **arrival** ends the journey
+`journey_barred` instead of surfacing a 500 (that branch was effectively unreachable while a journey
+advanced one leg per press), and the leg loop is bounded by `legs_total` so a threshold bug cannot spin.
+
+**Verified against the production seat, not a stand-in** (contract rule 0c, added the same day):
+`openrouter:deepseek/deepseek-v4-flash` with production's own routing policy, JSON mode, temperature
+and token ceiling, driven over real HTTP. One sentence — *"I walk out to the Long Wharf"* — produced a
+five-leg journey that ran all five legs and arrived (`journey_arrived`, 143 ticks, one commit: the
+arrival). With the world actor live, the same walk ran four legs and the world cut in
+(`journey_interrupted`) — no second request either time.
 
 ---
 
