@@ -336,6 +336,9 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 	if err := frag.validate(); err != nil {
 		return nil, err
 	}
+	if bad := frag.danglingRefs(soFar); len(bad) > 0 {
+		return nil, refuse("fill for %s points at things that do not exist: %s", item.ID, strings.Join(bad, "; "))
+	}
 	return &frag, nil
 }
 
@@ -363,6 +366,71 @@ func (f *fillFragment) validate() error {
 		}
 	}
 	return nil
+}
+
+// danglingRefs reports references this fragment makes that resolve NOWHERE — neither in the document
+// so far nor inside the fragment itself.
+//
+// Why this exists at the batch instead of only at the belt. Seven of the eight live refusals on
+// 2026-08-28 were one class of fault: a cross-batch reference that did not resolve. Every one was
+// discovered by genesisDoc.validate() two to four minutes in, naming one bad reference at a time,
+// with the batch that made it long finished. Checking here means the batch that wrote the reference is
+// the batch asked to fix it, twenty seconds later, with the offending name quoted — and the existing
+// one-shot retry does the asking.
+//
+// PLACES must resolve immediately: the founder's order authors places first, so anything standing in a
+// place can name one. PEOPLE named by history may NOT be required to resolve — history deliberately
+// runs before lives and names the people lives will author. That forward debt is fillDebts()' job.
+func (f *fillFragment) danglingRefs(doc *genesisDoc) []string {
+	places := map[string]bool{}
+	for _, p := range doc.Places {
+		places[strings.TrimSpace(p.CanonicalName)] = true
+	}
+	for _, p := range f.Places {
+		places[strings.TrimSpace(p.CanonicalName)] = true
+	}
+	people := map[string]bool{}
+	for _, a := range doc.Cast {
+		people[strings.TrimSpace(a.CanonicalName)] = true
+	}
+	for _, a := range f.Cast {
+		people[strings.TrimSpace(a.CanonicalName)] = true
+	}
+
+	var bad []string
+	place := func(name, what string) {
+		name = strings.TrimSpace(name)
+		if name == "" || places[name] {
+			return
+		}
+		bad = append(bad, fmt.Sprintf("%s names the place %q, which no batch has authored", what, name))
+	}
+	person := func(name, what string) {
+		name = strings.TrimSpace(name)
+		if name == "" || people[name] {
+			return
+		}
+		bad = append(bad, fmt.Sprintf("%s names the person %q, who no batch has authored", what, name))
+	}
+
+	for _, a := range f.Cast {
+		place(a.StartsIn, fmt.Sprintf("the person %q", a.CanonicalName))
+	}
+	for _, o := range f.Objects {
+		place(o.Where.InPlace, fmt.Sprintf("the object %q", o.CanonicalName))
+		person(o.Where.CarriedBy, fmt.Sprintf("the object %q", o.CanonicalName))
+	}
+	for _, w := range f.Ways {
+		place(w.FromPlace, fmt.Sprintf("the way %q", w.Descriptor))
+		place(w.ToPlace, fmt.Sprintf("the way %q", w.Descriptor))
+	}
+	for i, h := range f.History {
+		place(h.Where, fmt.Sprintf("history event %d", i+1))
+	}
+	if f.Arrival != nil {
+		place(f.Arrival.Place, "the arrival")
+	}
+	return bad
 }
 
 func fillHasContent(f *fillFragment) bool {

@@ -342,3 +342,50 @@ func TestFillFromIdentity_OneMalformedBatchIsRetriedNotFatal(t *testing.T) {
 		t.Fatal("the retry does not tell the seat what was wrong")
 	}
 }
+
+// The dangling-reference class, caught at the batch instead of at the belt. Live 2026-08-28: the lives
+// batch authored "Sento" with starts_in "Cola Baja", a place no batch ever wrote, and the belt refused
+// the build 177 seconds later. Seven of eight live refusals that day were this same class.
+func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "El Lomo", Descriptor: "the living back"}}
+
+	// The exact live shape: a person standing in a place nobody authored.
+	frag := &fillFragment{}
+	frag.Cast = []genesisActor{{CanonicalName: "Sento", Hiding: "he has not reported the tremor", StartsIn: "Cola Baja"}}
+	bad := frag.danglingRefs(doc)
+	if len(bad) != 1 || !strings.Contains(bad[0], `"Cola Baja"`) {
+		t.Fatalf("the dangling place was not reported: %v", bad)
+	}
+
+	// A fragment that authors the place it stands in is fine — resolution includes the fragment itself.
+	ok := &fillFragment{}
+	ok.Places = []genesisPlace{{CanonicalName: "Cola Baja", Descriptor: "the low tail"}}
+	ok.Cast = []genesisActor{{CanonicalName: "Sento", Hiding: "he has not reported it", StartsIn: "Cola Baja"}}
+	if bad := ok.danglingRefs(doc); len(bad) != 0 {
+		t.Fatalf("a self-contained fragment was rejected: %v", bad)
+	}
+
+	// History naming a person lives has not written yet is the DELIBERATE forward debt (fillDebts),
+	// never a dangling reference. If this starts failing, the batch order has been broken.
+	fwd := &fillFragment{}
+	fwd.History = []genesisEvent{{
+		WhatHappened: "the rhythm changed and nobody wrote it down",
+		Where:        "El Lomo",
+		Who:          []string{"Nobody Yet Authored"},
+		Knowledge:    []genesisKnowledge{{Holder: "Nobody Yet Authored", Content: "she heard it", EpistemicType: "direct"}},
+	}}
+	if bad := fwd.danglingRefs(doc); len(bad) != 0 {
+		t.Fatalf("history's forward reference to a person was wrongly treated as dangling: %v", bad)
+	}
+
+	// And it is a REFUSAL out of fillOne, which is what makes the one-shot retry fire.
+	seat := stubDriver{raw: `{"empty":false,"cast":[{"descriptor":"a man","canonical_name":"Sento","standing":"s","speech_manner":"m","hiding":"h","malleability":"faint","starts_in":"Cola Baja"}]}`}
+	_, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, doc, "")
+	if err == nil || !IsGenesisRefusal(err) {
+		t.Fatalf("want a refusal the retry can act on, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "Cola Baja") {
+		t.Fatalf("the refusal does not name the offending place: %v", err)
+	}
+}
