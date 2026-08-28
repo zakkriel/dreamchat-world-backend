@@ -74,7 +74,35 @@ retraction — reviews, not gates, §7.3). **Built 2026-08-28, batches 2026-08-2
 - **Order (now the scheduler):** places → key history → lives → objects → revise → sufficiency, then review + retract + belt.
 - **Custom identity confirmation:** built this round (`POST /worlds/identity`, design §8). Fast still skips it.
 
-Q1 cost (design's own figures, not a new measurement): ~3 s and ~$0.008 per seat call. Understanding 1 + fill batches 6 + review 1 = **8 calls ≈ 24 s and ≈ $0.064** before interview, kickstart, or repair. Repair is +1. Fast-lane PRD is p50 ≤ 90 s and p50 ≤ $0.25 per world. Batching is the product answer to Q1 (not one dump, not one call per rule).
+### Q1, MEASURED in production 2026-08-28 — the constraint is latency, not money
+
+First real numbers for this pipeline, from `POST /worlds/identity` against production
+(`openrouter:deepseek/deepseek-v4-flash`, `json_object`, `max_tokens` 8192, brief: *"a night market
+where every debt is read aloud before you may buy"*):
+
+| | design assumed | measured |
+|---|---|---|
+| per seat call | ~3 s | **36.5 s** (`ms=36506`) |
+| per seat call | ~$0.008 | **$0.00098** (`tok_in=2585 tok_out=2219`) |
+
+**Money is ~8× cheaper than the design assumed. Time is ~12× worse.** That inverts the Q1 tradeoff:
+the design treated call count as a spend problem, and it is a wall-clock problem.
+
+Projecting the shipped pipeline — 1 understanding + 6 fill batches + 1 review = 8 calls, before
+interview, kickstart, or a repair — at the measured per-call figures:
+
+- **~4.8 minutes** against a Fast-lane PRD of p50 ≤ 90 s / p95 ≤ 180 s. **Missed by roughly 3×.**
+- **~$0.008 per world** against a budget of $0.25. **Roughly 31× under.**
+
+Caveats, stated rather than buried: one sample, one brief, one model. Understanding emits the largest
+document of any batch (twenty functions), so fill batches should be cheaper per call — unmeasured.
+`sort: latency` routing and cold start are both inside that 36.5 s and neither is separated out.
+
+The design's own Q1 listed the escapes: *"either the calls batch, or they parallelise, or the budget
+moves, or §7's mechanism does."* Batching is done and is not enough on its own. Parallelising is
+constrained by real dependencies — history needs places, lives need the names history used — but
+objects and the second pass are not obviously ordered against each other. **Founder decision, not an
+engineering one; do not quietly re-shape the pipeline to hit a number.**
 
 
 ## Product rulings 2026-08-28 (Q1–Q13)
