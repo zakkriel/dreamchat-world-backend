@@ -3,17 +3,10 @@ Reviewer saw ONLY: harness/roles/area-expert.md, docs/areas/world-genesis.md, an
 Output below is verbatim. Verdict: accept — no block; four gates (findings 3-6), discharged with
 shown output in EVIDENCE.md. -->
 
+
 # Plan checkpoint — world-genesis area expert (domain-package round)'.
 
-## assistant
 
-→ read(local://pkg-plan-review-prompt.md) ⇒ ok · 306 lines
-
-## assistant
-
-→ read(local://pkg-plan-review-prompt.md:301-507) ⇒ ok · 217 lines
-
-## assistant
 
 # Plan checkpoint — world-genesis area expert (domain-package round)
 

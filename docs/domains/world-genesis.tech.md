@@ -76,6 +76,7 @@ to date (`docs/design/2026-08-27-understanding-pass-probe/`, PR #126).
 | `ADR-P022` | Every seat prompt carries the byte-identical latitude block. | `go test -run Latitude` fails; or worse, it passes and one seat quietly has different latitude. |
 | `ADR-P023` | A style's look lives in `artstyle.go` and nowhere else; clients pick by key. | A second copy of a style's look, and the copies drift. |
 | `ADR-P024` | Seat config is part of the release — set in the environment BEFORE the merge that needs it. Nothing checks this. | A seat needing `json_object` or a token ceiling silently fails in production. |
+| `D-8` | The synchronous path stays small; images, summarization and other slow work run async. In genesis: the build streams and commits, and everything slower is detached — the art kick (`ADR-P021`) is this rule applied. | A slow call added inside the build stream turns a 30–90 s build into a timeout, and a provider outage into a lost world. |
 | `ADR-P026` | The package + restored design are the governing documents for this domain. | Genesis work falls back to re-deriving settled design. |
 | `D-1` + the `fast_path` exception | Canon is written through `apply_event`/`apply_ruled_event`; genesis' `origin='fast_path'` is the ONE documented exception, existing because the actors an event would reference do not exist yet. | A second exception corrupts replay (`I-1`) and provenance (`I-2`). |
 | `I-2`, `I-9` | Provenance on every row; invariants are the permanent regression suite. | A red invariant blocks merge, always. |
