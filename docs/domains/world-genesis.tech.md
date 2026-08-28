@@ -28,7 +28,8 @@ None of the create routes hang off `/worlds/{id}` — there is no world yet, whi
 | Path | Role |
 |---|---|
 | `core/api/worldgenesishandler.go` | The three collection-level routes. **Carries `Governed-by: ADR-P021`.** Its header is the best single explanation of the flow in the repo — read it first. |
-| `core/api/worldgenesis.go`, `worldgenesiscommit.go` | The build and the commit ladder |
+| `core/api/worldidentity.go` | Understanding pass + scheduled fill |
+| `core/api/worldgenesis.go`, `worldgenesiscommit.go` | The build document belt and the commit ladder |
 | `core/api/worldinterview.go` | The Custom lane's interview turn |
 | `core/api/worldkickstart.go`, `kickstartstate.go` | The character turn and the scenario/arrival turn, resumable |
 | `core/api/worldrefresh.go` | Refresh: mints a **new** world from a template and archives the source |
@@ -37,11 +38,11 @@ None of the create routes hang off `/worlds/{id}` — there is no world yet, whi
 | `core/api/worldturn.go` | Turn plumbing shared with the play loop |
 | `core/db/seeds/` | The two seeded worlds (Mara 0A, The Drowned Lantern) |
 
-Prompts: `world_genesis.txt`, `world_interview.txt`, `world_kickstart.txt`, `world_actor.txt`,
-`place_author.txt` — five of the nine seats, every one carrying the byte-identical latitude block
+Prompts: `world_understanding.txt`, `world_fill.txt`, `world_interview.txt`, `world_kickstart.txt`, `world_genesis.txt` (deprecated live path), `world_actor.txt`,
+`place_author.txt`, every one carrying the byte-identical latitude block
 (`ADR-P022`).
 
-Contracts: seat leashes `world_genesis.v1`, `world_interview.v1`, `world_kickstart.v1`,
+Contracts: seat leashes `world_identity.v1`, `world_fill.v1`, `world_genesis.v1`, `world_interview.v1`, `world_kickstart.v1`,
 `world_actor.v1`, `place_author.v1`; wire responses `world_genesis_frame.v3`,
 `world_interview_turn.v1`, `world_kickstart_turn.v2`, `world_created.v1`, `world_refreshed.v1`,
 `world_directory.v2`. Five are vendored by the frontend — see `seams.md`.
@@ -64,8 +65,7 @@ refused turn is a `422` with the stated reason and the world untouched.
 Step 2 of the five (`docs/design/2026-08-26-world-identity-and-the-understanding-pass.md`, restored
 by `ADR-P026`). Its emissions and their slots are the design's §3; the fill mechanism it governs is
 §7 (rules are the work plan; the code schedules, the model interprets; tagging survives for scoped
-retraction — reviews, not gates, §7.3). **Not yet built**; the hand-run probe is the only execution
-to date (`docs/design/2026-08-27-understanding-pass-probe/`, PR #126).
+retraction — reviews, not gates, §7.3). **Built 2026-08-28.** `POST /worlds/genesis` infers `world_identity/1` on `world_understanding`, then fills under that identity on `world_fill` (one scheduled call per rule, then sufficiency). The old single-shot `world_genesis` seat is not the live path. Identity is stored beside the document on `world.world_identity` (Q5 for this slice). Filling stops after the scheduled rules plus one sufficiency pass (Q4 for this slice). Q1 is accepted as sequential calls; the Fast-lane budget remains the PRD's, to be measured in production rather than by collapsing the loop.
 
 ## Technical decisions already made
 
@@ -159,9 +159,10 @@ genesis logic is exercised by reading them.
    them is deciding something new.
 2. **`SPEC-036`** — enforcement of a world's own rules. Deferred deliberately; the exist-kind cost
    scales with hours played, so it returns when world creation during gameplay is designed.
-3. **The fill probe** — does rule-governed filling yield entailed content? Untested (the probe
-   stopped at the identity). Founder ruling 2026-08-27: run it on the probe's identity **as-is,
-   misses included**, measuring what a missed protective rule costs before amending the pass.
+3. **The fill probe (hand-run)** — still outstanding as a quality measurement on Los Andantes.
+   Founder ruling 2026-08-27: run it on the probe's identity **as-is, misses included**. The
+   *mechanism* now runs in `POST /worlds/genesis` (2026-08-28); the Andantes cost-of-misses
+   measurement is a separate probe, not a blocker for the pipeline.
 4. **Two known blockers, recorded at the design's close:** the world-model schema has no machine
    representation (gates step 5 entirely — WE-11's, see `seams.md`), and `prd_world_creation.md`
    still describes `places / cast / objects / ways`, structurally the world-model version that died

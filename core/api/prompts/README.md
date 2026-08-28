@@ -51,6 +51,8 @@ each var's declaration) and is byte-identical to the const it replaced.
   Injected as the STABLE HEADER (prompt-prefix) at the top of `buildWorldActorPrompt`
   (`worldactorprompt.go`), before the WORLD/CURRENT SCENE/DRAWN SIZE sections. World-omniscient,
   TRUTH-side (mirrors resolve.txt's licensing) — never perception-scoped.
+- `world_understanding.txt` — the understanding pass. Identity only; no places or people.
+- `world_fill.txt` — one scheduled work item of identity-governed fill.
 - `system-anthropic.txt` — every call made through the anthropic driver. Injected as the `system`
   FIELD of the Messages API request body (`anthropic.go`), not a prompt prefix — it rides alongside
   whatever prompt the calling seat assembled. Still driver-owned (D-13 keeps provider shaping in the

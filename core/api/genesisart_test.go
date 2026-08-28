@@ -60,8 +60,9 @@ func TestGenesisRefusal_CommissionsNothing(t *testing.T) {
 	t.Cleanup(pool.Close)
 
 	refusing, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name: NewFakeStructuredDriver("fake-structured", nil),
-	}, SeatWorldGenesis)
+		SeatWorldUnderstanding.Name: NewFakeStructuredDriver("fake-structured", nil),
+		SeatWorldFill.Name:          NewFakeStructuredDriver("fake-structured", nil),
+	}, SeatWorldUnderstanding, SeatWorldFill)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}

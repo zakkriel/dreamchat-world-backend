@@ -122,9 +122,11 @@ func TestEveryEmbeddedPromptCarriesTheLatitude(t *testing.T) {
 		"decompose":       decomposeSystemHeader,
 		"place_author":    placeAuthorSystemHeader,
 		"anthropic":       anthropicSystemHeader,
-		"world_genesis":   worldGenesisSystemHeader,
-		"world_interview": worldInterviewSystemHeader,
-		"world_kickstart": worldKickstartPromptHeader,
+		"world_genesis":        worldGenesisSystemHeader,
+		"world_understanding":  worldUnderstandingSystemHeader,
+		"world_fill":           worldFillSystemHeader,
+		"world_interview":      worldInterviewSystemHeader,
+		"world_kickstart":      worldKickstartPromptHeader,
 	}
 
 	// Every prompt FILE must have an entry here, or a seat could ship embedded-but-unchecked.

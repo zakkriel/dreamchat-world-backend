@@ -72,7 +72,7 @@ var allSeatNames = []string{
 	SeatDecompose.Name, SeatNarrate.Name, SeatResolve.Name,
 	SeatCognitionBatch.Name, SeatCognitionIsolated.Name,
 	SeatWorldActor.Name, SeatPlaceAuthor.Name,
-	SeatWorldGenesis.Name, SeatWorldInterview.Name, SeatWorldKickstart.Name,
+	SeatWorldGenesis.Name, SeatWorldUnderstanding.Name, SeatWorldFill.Name, SeatWorldInterview.Name, SeatWorldKickstart.Name,
 }
 
 // seatConfigFromEnv resolves the seat→driver map from the environment. Pure apart from the reads,
@@ -173,7 +173,7 @@ func routingFor(seat, provider string, lookup func(string) string) string {
 // level; a positive timeout remains mandatory so one provider request cannot occupy a worker forever.
 func requestTimeoutFor(seat, provider string, lookup func(string) string) string {
 	timeout := perSeatOrProvider(seat, provider, "REQUEST_TIMEOUT_SECONDS", "DREAMCHAT_SEAT_REQUEST_TIMEOUT_SECONDS_%s", lookup)
-	if timeout == "" && seat == SeatWorldGenesis.Name {
+	if timeout == "" && (seat == SeatWorldGenesis.Name || seat == SeatWorldUnderstanding.Name || seat == SeatWorldFill.Name) {
 		return "300"
 	}
 	return timeout

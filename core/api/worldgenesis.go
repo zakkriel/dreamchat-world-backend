@@ -17,9 +17,7 @@ package main
 // because nothing has been written yet when validation runs.
 
 import (
-	"context"
 	"embed"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -168,38 +166,7 @@ type InterviewAnswer struct {
 	Answer   string `json:"answer"`
 }
 
-// authorWorld runs the genesis seat once and returns a document that has passed every belt check.
-// ONE call, no repair loop: unlike narrate (2 attempts) a world is expensive enough that a second full
-// authoring on a bad first answer doubles the bill for a build the user is watching, and unlike a
-// ruling there is no cheap partial to salvage. A refusal is reported, not retried.
-func authorWorld(ctx context.Context, seat Driver, brief string, answers []InterviewAnswer) (*genesisDoc, error) {
-	if seat == nil {
-		return nil, fmt.Errorf("authorWorld: no world_genesis seat bound")
-	}
-	brief = strings.TrimSpace(brief)
-	if brief == "" {
-		return nil, refuse("the brief is empty — there is nothing to build from")
-	}
-
-	raw, err := seat.Generate(ctx, GenRequest{
-		Prompt: buildWorldGenesisPrompt(brief, answers),
-		Schema: json.RawMessage(worldGenesisSchemaJSON),
-	})
-	if err != nil {
-		return nil, fmt.Errorf("authorWorld: Generate: %w", err)
-	}
-
-	var doc genesisDoc
-	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
-		// A seat that cannot answer its own schema is a refusal, not a crash: the user gets "that brief
-		// did not become a world", which is true, instead of a decoder error they cannot act on.
-		return nil, refuse("the world came back malformed (%v)", err)
-	}
-	if err := doc.validate(); err != nil {
-		return nil, err
-	}
-	return &doc, nil
-}
+// authorWorld lives in worldidentity.go — identity, then fill.
 
 // buildWorldGenesisPrompt renders the standing rulebook, then this build's inputs. Assembled in Go from
 // plain values — the prompt file is a fixed rulebook and never carries world data (prompts/README.md).

@@ -8,8 +8,7 @@ import (
 )
 
 func TestAuthorKickstartOffersThree(t *testing.T) {
-	gseat := NewFakeWorldGenesisDriver()
-	doc, err := authorWorld(context.Background(), gseat, "a harbour town at closing time", nil)
+	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "a harbour town at closing time", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,8 +35,7 @@ func TestAuthorKickstartOffersThree(t *testing.T) {
 }
 
 func TestAuthorKickstartGroundsCustomOpening(t *testing.T) {
-	gseat := NewFakeWorldGenesisDriver()
-	doc, _ := authorWorld(context.Background(), gseat, "a harbour town at closing time", nil)
+	doc, _, _ := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "a harbour town at closing time", nil)
 	kseat := NewFakeWorldKickstartDriver()
 	k, err := authorKickstart(context.Background(), kseat, doc, "a harbour town at closing time",
 		"the collector nobody expected", "I want to slip in through the kitchen while an argument is going on")
@@ -50,8 +48,7 @@ func TestAuthorKickstartGroundsCustomOpening(t *testing.T) {
 }
 
 func TestKickstartValidateRejectsUnpopulatedPlace(t *testing.T) {
-	gseat := NewFakeWorldGenesisDriver()
-	doc, _ := authorWorld(context.Background(), gseat, "a harbour town at closing time", nil)
+	doc, _, _ := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "a harbour town at closing time", nil)
 	k := &kickstartDoc{
 		Identity: kickstartIdentity{Descriptor: "a stranger", CanonicalName: "Someone"},
 		Scenarios: []kickstartScenario{

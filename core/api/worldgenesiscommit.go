@@ -84,7 +84,7 @@ type genesisIDs struct {
 // row, because the kickstart turns author against it and the arrival commit recomputes deterministic
 // geometry from it. It is server-side truth: no projection selects genesis_doc and no route serves
 // it, so the AC-7 secrecy boundary the in-memory draft store used to hold now holds in the database.
-func commitWorldContent(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, artStyleChoice string) (string, error) {
+func commitWorldContent(ctx context.Context, tx pgx.Tx, doc *genesisDoc, ident *worldIdentity, brief, artStyleChoice string) (string, error) {
 	theme, err := json.Marshal(map[string]string{
 		"schema_version": "world_theme/1",
 		"accent":         genesisAccent(doc.World.DisplayName),
@@ -125,11 +125,19 @@ func commitWorldContent(ctx context.Context, tx pgx.Tx, doc *genesisDoc, brief, 
 	if err != nil {
 		return "", fmt.Errorf("commitWorldContent: marshal doc: %w", err)
 	}
+	var identJSON []byte
+	if ident != nil {
+		var err error
+		identJSON, err = json.Marshal(ident)
+		if err != nil {
+			return "", fmt.Errorf("commitWorldContent: marshal identity: %w", err)
+		}
+	}
 	if _, err := tx.Exec(ctx,
-		`UPDATE world SET tagline = $2, brief = $3, art_style = $4, genesis_doc = $5::jsonb
+		`UPDATE world SET tagline = $2, brief = $3, art_style = $4, genesis_doc = $5::jsonb, world_identity = $6::jsonb
 		 WHERE world_id = $1::uuid`,
 		worldID, strings.TrimSpace(doc.World.Tagline), strings.TrimSpace(brief),
-		nullableArtStyleChoice(artStyleChoice), string(docJSON)); err != nil {
+		nullableArtStyleChoice(artStyleChoice), string(docJSON), nullableJSON(identJSON)); err != nil {
 		return "", fmt.Errorf("commitWorldContent: store doc: %w", err)
 	}
 	return worldID, nil

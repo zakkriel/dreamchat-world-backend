@@ -123,6 +123,11 @@ var (
 	// tries. The engine mints identity, draws footprints, assigns the tick ladder and decides
 	// acceptance — a generated world reaches canon through the same gate a hand-authored one does.
 	SeatWorldGenesis = Seat{Name: "world_genesis", Requires: []Capability{CapStructuredOutput}}
+	// world_understanding: infers identity from a brief (design step 2). REQUIRES structured output —
+	// world_identity/1 has no numeric field anywhere.
+	SeatWorldUnderstanding = Seat{Name: "world_understanding", Requires: []Capability{CapStructuredOutput}}
+	// world_fill: one scheduled work item (design step 4). REQUIRES structured output — world_fill/1.
+	SeatWorldFill = Seat{Name: "world_fill", Requires: []Capability{CapStructuredOutput}}
 	// world_interview: authors the NEXT question to ask about a brief, with its options — the Custom
 	// Creation lane. REQUIRES structured output: the surface renders exactly the options it is given.
 	SeatWorldInterview = Seat{Name: "world_interview", Requires: []Capability{CapStructuredOutput}}
@@ -326,6 +331,10 @@ func DefaultDriverFactory(dc DriverConfig) (Driver, error) {
 	// missing factory cases were found.
 	case "fake-world-genesis":
 		return NewFakeWorldGenesisDriver(), nil
+	case "fake-world-understanding":
+		return NewFakeWorldUnderstandingDriver(), nil
+	case "fake-world-fill":
+		return NewFakeWorldFillDriver(), nil
 	case "fake-world-interview":
 		return NewFakeWorldInterviewDriver(), nil
 	case "fake-world-kickstart":

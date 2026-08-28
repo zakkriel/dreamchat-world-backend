@@ -1,0 +1,176 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_fill/1",
+  "title": "world_fill/1 — what must exist because of ONE scheduled work item. Constraining and prohibiting rules may emit empty:true. No uuid, coordinate, tick, or count.",
+  "type": "object",
+  "required": ["empty"],
+  "additionalProperties": false,
+  "properties": {
+    "empty": { "type": "boolean" },
+    "why_empty": { "type": "string", "minLength": 1 },
+    "world": {
+      "type": "object",
+      "required": ["display_name", "tagline", "mood", "ornament"],
+      "additionalProperties": false,
+      "properties": {
+        "display_name": { "type": "string", "minLength": 1 },
+        "tagline": { "type": "string", "minLength": 1 },
+        "mood": { "type": "string", "minLength": 1 },
+        "ornament": { "type": "string", "minLength": 1 }
+      }
+    },
+    "region": {
+      "type": "object",
+      "required": ["descriptor", "extent_class"],
+      "additionalProperties": false,
+      "properties": {
+        "descriptor": { "type": "string", "minLength": 1 },
+        "extent_class": { "type": "string", "enum": ["intimate", "small", "medium", "large", "vast"] }
+      }
+    },
+    "places": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "canonical_name", "kind", "description", "tension", "extent_class"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1 },
+          "canonical_name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "description": { "type": "string", "minLength": 1 },
+          "tension": { "type": "string", "enum": ["frantic", "tense", "normal", "calm", "none"] },
+          "extent_class": { "type": "string", "enum": ["intimate", "small", "medium", "large", "vast"] }
+        }
+      }
+    },
+    "ways": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "from_place", "to_place", "state"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1 },
+          "from_place": { "type": "string", "minLength": 1 },
+          "to_place": { "type": "string", "minLength": 1 },
+          "state": { "type": "string", "enum": ["open", "shut", "locked"] }
+        }
+      }
+    },
+    "cast": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "canonical_name", "standing", "speech_manner", "traits", "hiding", "starts_in"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1 },
+          "canonical_name": { "type": "string", "minLength": 1 },
+          "standing": { "type": "string", "minLength": 1 },
+          "speech_manner": { "type": "string", "minLength": 1 },
+          "traits": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 4,
+            "items": {
+              "type": "object",
+              "required": ["key", "strength", "manner"],
+              "additionalProperties": false,
+              "properties": {
+                "key": { "type": "string", "minLength": 1 },
+                "strength": { "type": "string", "enum": ["faint", "moderate", "strong", "defining"] },
+                "manner": { "type": "string", "minLength": 1 }
+              }
+            }
+          },
+          "hiding": { "type": "string", "minLength": 1 },
+          "malleability": { "type": "string", "enum": ["faint", "moderate", "strong", "defining"] },
+          "starts_in": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "objects": {
+      "type": "array",
+      "maxItems": 4,
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "canonical_name", "kind", "where"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1 },
+          "canonical_name": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "minLength": 1 },
+          "where": {
+            "type": "object",
+            "additionalProperties": false,
+            "oneOf": [{ "required": ["in_place"] }, { "required": ["carried_by"] }],
+            "properties": {
+              "in_place": { "type": "string", "minLength": 1 },
+              "carried_by": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "history": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["what_happened", "where", "who", "knowledge"],
+        "additionalProperties": false,
+        "properties": {
+          "what_happened": { "type": "string", "minLength": 1 },
+          "where": { "type": "string", "minLength": 1 },
+          "who": { "type": "array", "minItems": 1, "maxItems": 6, "items": { "type": "string", "minLength": 1 } },
+          "knowledge": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 6,
+            "items": {
+              "type": "object",
+              "required": ["holder", "content", "epistemic_type"],
+              "additionalProperties": false,
+              "properties": {
+                "holder": { "type": "string", "minLength": 1 },
+                "content": { "type": "string", "minLength": 1 },
+                "epistemic_type": { "type": "string", "enum": ["direct", "told", "overheard", "public", "rumor", "inference"] }
+              }
+            }
+          }
+        }
+      }
+    },
+    "arrival": {
+      "type": "object",
+      "required": ["descriptor", "canonical_name", "place", "stated"],
+      "additionalProperties": false,
+      "properties": {
+        "descriptor": { "type": "string", "minLength": 1 },
+        "canonical_name": { "type": "string", "minLength": 1 },
+        "place": { "type": "string", "minLength": 1 },
+        "stated": { "type": "string", "minLength": 1 },
+        "why": { "type": "string", "minLength": 1 }
+      }
+    },
+    "arrival_candidates": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["descriptor", "canonical_name", "why"],
+        "additionalProperties": false,
+        "properties": {
+          "descriptor": { "type": "string", "minLength": 1 },
+          "canonical_name": { "type": "string", "minLength": 1 },
+          "why": { "type": "string", "minLength": 1 }
+        }
+      }
+    }
+  }
+}

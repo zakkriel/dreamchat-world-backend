@@ -63,10 +63,17 @@ func TestGenSeatContractPayloads(t *testing.T) {
 	dir := genesisPayloadDir(t)
 	ctx := context.Background()
 
-	genesis := &recordingDriver{Driver: NewFakeWorldGenesisDriver()}
-	doc, err := authorWorld(ctx, genesis, testBrief, nil)
+	understanding := &recordingDriver{Driver: NewFakeWorldUnderstandingDriver()}
+	fill := &recordingDriver{Driver: NewFakeWorldFillDriver()}
+	doc, _, err := authorWorld(ctx, understanding, fill, testBrief, nil)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
+	}
+	writePayload(t, dir, "world_identity_1.json", []byte(understanding.last))
+	writePayload(t, dir, "world_fill_1.json", []byte(fill.last))
+	genesis := &recordingDriver{Driver: NewFakeWorldGenesisDriver()}
+	if _, err := genesis.Generate(ctx, GenRequest{Prompt: buildWorldGenesisPrompt(testBrief, nil), Schema: json.RawMessage(worldGenesisSchemaJSON)}); err != nil {
+		t.Fatalf("legacy genesis payload: %v", err)
 	}
 	writePayload(t, dir, "world_genesis_1.json", []byte(genesis.last))
 
@@ -110,10 +117,11 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	defer pool.Close()
 
 	bridge, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name:   NewFakeWorldGenesisDriver(),
-		SeatWorldInterview.Name: NewFakeWorldInterviewDriver(),
-		SeatWorldKickstart.Name: NewFakeWorldKickstartDriver(),
-	}, SeatWorldGenesis, SeatWorldInterview, SeatWorldKickstart)
+		SeatWorldUnderstanding.Name: NewFakeWorldUnderstandingDriver(),
+		SeatWorldFill.Name:          NewFakeWorldFillDriver(),
+		SeatWorldInterview.Name:     NewFakeWorldInterviewDriver(),
+		SeatWorldKickstart.Name:     NewFakeWorldKickstartDriver(),
+	}, SeatWorldUnderstanding, SeatWorldFill, SeatWorldInterview, SeatWorldKickstart)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
@@ -218,8 +226,9 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	// array, which cannot unmarshal into genesisDoc) — captured so the `refused` shape is covered by a
 	// real refusal rather than a hand-made one.
 	refusing, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name: NewFakeStructuredDriver("fake-structured", nil),
-	}, SeatWorldGenesis)
+		SeatWorldUnderstanding.Name: NewFakeStructuredDriver("fake-structured", nil),
+		SeatWorldFill.Name:          NewFakeStructuredDriver("fake-structured", nil),
+	}, SeatWorldUnderstanding, SeatWorldFill)
 	if err != nil {
 		t.Fatalf("refusing bridge: %v", err)
 	}
@@ -236,8 +245,9 @@ func TestGenGenesisAPIPayloads(t *testing.T) {
 	// The fault branch, from a seat that cannot answer at all — captured so the `error` shape is
 	// covered by a real infrastructure fault rather than a hand-made one.
 	erroring, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name: erroringWorldGenesisDriver{},
-	}, SeatWorldGenesis)
+		SeatWorldUnderstanding.Name: erroringWorldGenesisDriver{},
+		SeatWorldFill.Name:          NewFakeWorldFillDriver(),
+	}, SeatWorldUnderstanding, SeatWorldFill)
 	if err != nil {
 		t.Fatalf("erroring bridge: %v", err)
 	}
