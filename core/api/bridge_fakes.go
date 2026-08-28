@@ -1080,20 +1080,20 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 	if brief == "" {
 		brief = "a cargo yard"
 	}
-	id := fillBatchID(req.Prompt)
-	switch id {
+	switch fillBatchID(req.Prompt) {
 	case "places":
+		// Public lore lives in the description at this depth: nobody exists yet to hold a canon event.
 		return string(mustJSON(map[string]any{
 			"empty": false,
 			"places": []map[string]any{{
 				"descriptor": "a low room with one lamp", "canonical_name": "The Counting Room",
 				"kind":        "back room",
-				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. The window is painted shut.",
+				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. Everyone knows the window was painted shut the year the tally was disputed.",
 				"tension":     "tense", "extent_class": "intimate",
 			}, {
 				"descriptor": "a yard stacked with crates", "canonical_name": "The Loading Yard",
 				"kind":        "yard",
-				"description": "Crates stacked two high against the wall, a wet gate standing open on the street, and the water tower above it all.",
+				"description": "Crates two high against the wall, a wet gate on the street, the water tower above. Nothing leaves here without a line, and everyone says that twice.",
 				"tension":     "normal", "extent_class": "small",
 			}},
 			"ways": []map[string]any{{
@@ -1101,20 +1101,34 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"to_place": "The Loading Yard", "state": "open",
 			}},
 		})), nil
-	case "history":
+	case "factions":
 		return string(mustJSON(map[string]any{
 			"empty": false,
-			"history": []map[string]any{{
-				"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
-				"where":         "The Loading Yard",
-				"who":           []string{"Adaeze", "Ferro"},
-				"knowledge": []map[string]any{
-					{"holder": "Adaeze", "content": "a crate went into my yard tonight that nobody entered in the book", "epistemic_type": "direct"},
-					{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
-				},
+			"factions": []map[string]any{{
+				"descriptor": "the body that keeps the book", "canonical_name": "The Tally",
+				"kind": "faction", "controls": "which crates are admitted to have arrived",
+				"publishes": "a weekly reconciled ledger", "buries": "the pages it reconciled by hand",
+				"goal": "to remain the only account anyone can cite", "sacrifice": "any one of its own clerks",
+				"seat": "The Counting Room",
+			}, {
+				"descriptor": "the families who unload without a line", "canonical_name": "The Unentered",
+				"kind": "group", "controls": "nothing, and moves most of it",
+				"publishes": "nothing", "buries": "who paid them last night",
+				"goal": "to be owed something the book cannot deny",
 			}},
 		})), nil
-	case "lives":
+	case "concepts":
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"concepts": []map[string]any{{
+				"descriptor": "the craft of writing a line that holds", "canonical_name": "Reconciliation",
+				"what_it_is": "the practice of making two disagreeing accounts into one citable page",
+				"contested":  "whether a reconciled page is the truth or merely the surviving version",
+				"taught_by":  "The Tally",
+			}},
+		})), nil
+	case "people":
+		// The roster, plus the first canon — now there are people to hold it.
 		return string(mustJSON(map[string]any{
 			"empty": false,
 			"cast": []map[string]any{{
@@ -1127,6 +1141,7 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				},
 				"hiding":       "the last two pages of the ledger are a different hand than hers",
 				"malleability": "faint", "starts_in": "The Counting Room",
+				"belongs_to": []string{"The Tally"},
 			}, {
 				"descriptor": "a man waiting by the crates", "canonical_name": "Ferro",
 				"standing":      "moves what the book says to move",
@@ -1136,9 +1151,19 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				},
 				"hiding":       "he has already been paid for tonight, by someone who is not in the book",
 				"malleability": "moderate", "starts_in": "The Loading Yard",
+				"belongs_to": []string{"The Unentered"},
+			}},
+			"history": []map[string]any{{
+				"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
+				"where":         "The Loading Yard",
+				"who":           []string{"Adaeze", "Ferro"},
+				"knowledge": []map[string]any{
+					{"holder": "Adaeze", "content": "a crate went into my yard tonight that nobody entered in the book", "epistemic_type": "direct"},
+					{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
+				},
 			}},
 		})), nil
-	case "objects":
+	case "artifacts":
 		return string(mustJSON(map[string]any{
 			"empty": false,
 			"objects": []map[string]any{{
@@ -1149,50 +1174,85 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"kind": "key", "where": map[string]any{"carried_by": "Adaeze"},
 			}},
 		})), nil
-	case "revise":
-		return `{"empty":true,"why_empty":"the first pass already held the neighbourhood"}`, nil
-	case "sufficiency", "repair":
+	case "person":
+		// The ascent's per-person call. One person's inner life, nobody else's.
+		who := fillSubject(req.Prompt)
+		if who == "" {
+			return `{"empty":true,"why_empty":"no subject named"}`, nil
+		}
+		person := map[string]any{
+			"descriptor": "as before", "canonical_name": who,
+			"standing": "as before", "speech_manner": "as before",
+			"traits": []map[string]any{{"key": "settled", "strength": "moderate", "manner": "does not raise their voice"}},
+			"hiding": "as before", "starts_in": "The Counting Room",
+			"upbringing":      "Raised in a house where the tally was read aloud at supper and disagreement cost you the meal.",
+			"beliefs":         []string{"a page outlives the hand that wrote it", "nobody is owed a second reading"},
+			"mantras":         []string{"say the number, then stop"},
+			"traumas":         []map[string]any{{"what_happened": "A line they signed was reconciled away and the man it named was never paid.", "how_it_shows": "reads every total twice and will not sign in another's presence"}},
+			"goal":            "to be the last person who can prove what happened",
+			"sacrifice":       "their standing in The Tally",
+			"example_phrases": []string{"That is not what the page says.", "Ask me again when you have the line.", "I wrote it. I did not agree to it."},
+		}
+		return string(mustJSON(map[string]any{"empty": false, "cast": []map[string]any{person}})), nil
+	case "arrival":
 		statedOpen := !strings.Contains(strings.ToLower(brief), "i am ")
 		doc := map[string]any{
 			"empty": false,
 			"world": map[string]any{
 				"display_name": "A World From: " + briefSlug(brief),
 				"tagline":      "Somewhere someone owes something, and the ledger is open.",
-				"mood":         "overcast",
-				"ornament":     "plain",
+				"mood":         "overcast", "ornament": "plain",
 			},
-			"region": map[string]any{
-				"descriptor":   "the quarter under the water tower",
-				"extent_class": "medium",
-			},
+			"region": map[string]any{"descriptor": "the quarter under the water tower", "extent_class": "medium"},
 			"arrival": map[string]any{
-				"descriptor":     "a stranger with wet shoulders",
-				"canonical_name": "Wren",
-				"place":          "The Counting Room",
-				"stated":         "I stepped into the counting room.",
-				"why":            "sent to collect on a line in somebody else's book",
+				"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren",
+				"place": "The Counting Room", "stated": "I stepped into the counting room.",
+				"why": "sent to collect on a line in somebody else's book",
 			},
 		}
 		if statedOpen {
-			doc["arrival_candidates"] = []map[string]any{{
-				"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren",
-				"why": "sent to collect on a line in somebody else's book",
-			}, {
-				"descriptor": "a courier stamping mud off her boots by the gate", "canonical_name": "Petra",
-				"why": "carrying a delivery the ledger has no line for",
-			}, {
-				"descriptor": "a man in a borrowed coat, checking the number over the door", "canonical_name": "Osei",
-				"why": "come to the wrong address on somebody else's word",
-			}}
+			doc["arrival_candidates"] = []map[string]any{
+				{"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren", "why": "sent to collect on a line in somebody else's book"},
+				{"descriptor": "a courier stamping mud off her boots", "canonical_name": "Petra", "why": "carrying a delivery the ledger has no line for"},
+				{"descriptor": "a man checking the number over the door", "canonical_name": "Osei", "why": "come to the wrong address on somebody else's word"},
+			}
 		}
 		return string(mustJSON(doc)), nil
+	case "repair", "closing":
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"objects": []map[string]any{{
+				"descriptor": "a tally stick nobody claims", "canonical_name": "The Loose Tally",
+				"kind": "record", "where": map[string]any{"in_place": "The Loading Yard"},
+			}},
+		})), nil
 	default:
-		return `{"empty":true,"why_empty":"this batch does not demand a fragment in the fake"}`, nil
+		// The ascent's connecting layers add nothing in the fake: it has no gaps to find.
+		return `{"empty":true,"why_empty":"this layer found nothing left to connect"}`, nil
 	}
 }
 
+// fillSubject reads the one person a per-item work block is about.
+func fillSubject(prompt string) string {
+	const marker = "this item is about exactly one person: \""
+	_, rest, ok := strings.Cut(prompt, marker)
+	if !ok {
+		return ""
+	}
+	name, _, ok := strings.Cut(rest, "\"")
+	if !ok {
+		return ""
+	}
+	return name
+}
+
 func fillBatchID(prompt string) string {
-	for _, id := range []string{"places", "history", "lives", "objects", "revise", "sufficiency", "repair"} {
+	// The layered schedule (design 2026-08-28): descent, then ascent, then arrival.
+	for _, id := range []string{
+		"places", "factions", "concepts", "people", "artifacts",
+		"artifacts-connect", "person", "concepts-connect", "factions-connect", "places-connect",
+		"arrival", "closing", "repair",
+	} {
 		if strings.Contains(prompt, "\nid: "+id+"\n") {
 			return id
 		}

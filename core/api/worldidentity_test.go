@@ -8,16 +8,49 @@ import (
 	"testing"
 )
 
-func TestScheduleWork_PlacesThenHistoryThenLivesThenObjectsThenRevise(t *testing.T) {
-	got := scheduleWork(&worldIdentity{})
-	want := []string{"places", "history", "lives", "objects", "revise", "sufficiency"}
-	if len(got) != len(want) {
-		t.Fatalf("len=%d want %d", len(got), len(want))
+func TestSchedule_DescendsThenAscends(t *testing.T) {
+	down := []string{"places", "factions", "concepts", "people", "artifacts"}
+	got := descentSchedule()
+	if len(got) != len(down) {
+		t.Fatalf("descent has %d layers, want %d", len(got), len(down))
 	}
-	for i := range want {
-		if got[i].ID != want[i] {
-			t.Errorf("item %d = %q, want %q", i, got[i].ID, want[i])
+	for i := range down {
+		if got[i].ID != down[i] {
+			t.Fatalf("descent layer %d is %q, want %q — nothing may be named before it exists", i, got[i].ID, down[i])
 		}
+	}
+
+	// The ascent is per-person, and it can only be built after the descent says who exists.
+	doc := &genesisDoc{}
+	doc.Cast = []genesisActor{{CanonicalName: "Adaeze"}, {CanonicalName: "Ferro"}}
+	up := ascentSchedule(doc)
+	people := 0
+	for _, it := range up {
+		if it.ID == "person" {
+			people++
+			if it.Subject == "" {
+				t.Fatal("a per-person ascent item carries no subject")
+			}
+		}
+	}
+	if people != 2 {
+		t.Fatalf("ascent authored %d person items for 2 people", people)
+	}
+	// Coming up, the layers are revisited in reverse: artifacts before people before places.
+	order := []string{}
+	for _, it := range up {
+		if it.ID != "person" {
+			order = append(order, it.ID)
+		}
+	}
+	want := []string{"artifacts-connect", "concepts-connect", "factions-connect", "places-connect"}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("ascent %d is %q, want %q — the way up is the way down reversed", i, order[i], want[i])
+		}
+	}
+	if mergeTag(workItem{ID: "person", Subject: "Adaeze"}) != "person:Adaeze" {
+		t.Fatal("per-item work is not distinguishable for retraction")
 	}
 }
 
@@ -79,9 +112,9 @@ func TestFillFromIdentity_PeopleHideAndBatchesCloseTheBelt(t *testing.T) {
 	}
 }
 
-func TestFakeFill_LivesBatchIsAFillFragmentNotAGenesisDump(t *testing.T) {
+func TestFakeFill_PeopleLayerIsAFillFragmentNotAGenesisDump(t *testing.T) {
 	raw, err := NewFakeWorldFillDriver().Generate(context.Background(), GenRequest{
-		Prompt: "\nid: lives\nkind: batch\n" + worldGenesisBriefMarker + "\n" + testBrief,
+		Prompt: "\nid: people\nkind: descent\n" + worldGenesisBriefMarker + "\n" + testBrief,
 		Schema: json.RawMessage(worldFillSchemaJSON),
 	})
 	if err != nil {
@@ -94,7 +127,7 @@ func TestFakeFill_LivesBatchIsAFillFragmentNotAGenesisDump(t *testing.T) {
 		t.Fatalf("fragment is not world_fill/1: %v\n%s", err, raw)
 	}
 	if frag.Empty || len(frag.Cast) == 0 {
-		t.Fatalf("lives batch should author people, empty=%v cast=%d", frag.Empty, len(frag.Cast))
+		t.Fatalf("people layer should author the roster, empty=%v cast=%d", frag.Empty, len(frag.Cast))
 	}
 }
 
@@ -204,7 +237,7 @@ func TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor(t *testing.T) 
 	soFar.Places = []genesisPlace{{CanonicalName: name, Descriptor: desc}}
 	soFar.Cast = []genesisActor{{CanonicalName: "Auscultadora Mayor Del Vas", Hiding: "she already knows", StartsIn: name}}
 
-	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar, "")
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "people", Kind: "descent"}, testBrief, nil, soFar, "")
 
 	// The exact string the model emitted must not be sitting in the prompt for it to copy.
 	if joined := name + " — " + desc; strings.Contains(prompt, joined) {
@@ -278,7 +311,7 @@ func TestFillPrompt_CanonsUnpaidNamesAreCarriedForward(t *testing.T) {
 		t.Fatalf("both named holders are owed, got %v", people)
 	}
 
-	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar, "")
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "people", Kind: "descent"}, testBrief, nil, soFar, "")
 	if !strings.Contains(prompt, worldFillOwedMarker) {
 		t.Fatal("the lives batch is not told what canon already owes")
 	}
@@ -382,7 +415,7 @@ func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
 	// And it is NOT fatal. Founder 2026-08-28: a good invention is never discarded for arriving before
 	// its room. fillOne hands the fragment back; the debt is carried and the closing pass authors it.
 	seat := stubDriver{raw: `{"empty":false,"cast":[{"descriptor":"a man","canonical_name":"Sento","standing":"s","speech_manner":"m","hiding":"h","malleability":"faint","starts_in":"Cola Baja"}]}`}
-	got, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, doc, "")
+	got, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "people", Kind: "descent"}, testBrief, nil, doc, "")
 	if err != nil {
 		t.Fatalf("an unpaid reference must not lose the fragment: %v", err)
 	}
@@ -438,7 +471,7 @@ func (o *owingFillDriver) Capabilities() CapabilitySet {
 }
 func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	switch {
-	case strings.Contains(req.Prompt, "\nid: lives\n"):
+	case strings.Contains(req.Prompt, "\nid: people\n"):
 		// Keep everything the ordinary fake authors and ADD one life standing in a room nobody wrote.
 		// Replacing the batch would empty the arrival neighbourhood and test the wrong failure.
 		raw, err := o.real.Generate(ctx, req)

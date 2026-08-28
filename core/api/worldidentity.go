@@ -141,6 +141,8 @@ type fillFragment struct {
 	RegionRaw         json.RawMessage    `json:"region,omitempty"`
 	Places            []genesisPlace     `json:"places,omitempty"`
 	Ways              []genesisWay       `json:"ways,omitempty"`
+	Factions          []genesisFaction   `json:"factions,omitempty"`
+	Concepts          []genesisConcept   `json:"concepts,omitempty"`
 	Cast              []genesisActor     `json:"cast,omitempty"`
 	Objects           []genesisObject    `json:"objects,omitempty"`
 	History           []genesisEvent     `json:"history,omitempty"`
@@ -159,6 +161,9 @@ type workItem struct {
 	Kind      string
 	Text      string
 	Therefore string
+	// Subject names the one thing this item is about, when the item is per-item rather than per-layer.
+	// The ascent authors one call per person, and that person's name travels here.
+	Subject string
 }
 
 func (id *worldIdentity) validate() error {
@@ -212,15 +217,86 @@ func (id *worldIdentity) validate() error {
 	return nil
 }
 
-func scheduleWork(_ *worldIdentity) []workItem {
+// descentSchedule is the way down: each layer authors from what is already above it, so nothing is ever
+// named before it exists (design 2026-08-28 §1.2). Static, because the descent cannot know what it has
+// not authored yet.
+//
+// This replaced a flat six-batch schedule whose single `history` layer ran BEFORE people existed, so canon
+// named people who did not. That one ordering error cost eleven failed production builds and three
+// mechanisms built to survive it.
+func descentSchedule() []workItem {
 	return []workItem{
-		{ID: "places", Kind: "batch", Text: "Author the places this identity demands, and the ways between them.", Therefore: "geography exists before canon, lives, or objects."},
-		{ID: "history", Kind: "batch", Text: "Author the key history that already happened in those places.", Therefore: "canon exists before the lives who still carry it."},
-		{ID: "lives", Kind: "batch", Text: "Author the lives at a specific angle on the pressure, including anyone history named.", Therefore: "depth is a private cost, not a profession."},
-		{ID: "objects", Kind: "batch", Text: "Author the objects that belong in those rooms and hands.", Therefore: "a body has something to touch."},
-		{ID: "revise", Kind: "batch", Text: "Second pass: leftover positions and anything the first pass left thin.", Therefore: "depth is a second look, not a bigger first dump."},
-		{ID: "sufficiency", Kind: "batch", Text: "The arrival neighbourhood must be inhabited whether or not the bargain cares.", Therefore: "A visitor walks in on people, never into an empty room they must then search."},
+		{ID: "places", Kind: "descent",
+			Text:      "What rooms does this world's condition force into existence, and what joins them? What does a stranger see first? Put each room's public lore INTO its description — what it is, what it was, what it is for. Do not author canon events yet: an event needs someone who knows it, and nobody exists yet.",
+			Therefore: "geography exists before anyone stands in it"},
+		{ID: "factions", Kind: "descent",
+			Text:      "Who organises here? What do they control, what do they publish, and what do they bury? Which are organised bodies with a command structure (kind: faction) and which are bare collectives with none (kind: group)? Their lore goes in their own fields. Still no canon events — there is nobody to hold them.",
+			Therefore: "an institution exists before the person who serves or resents it"},
+		{ID: "concepts", Kind: "descent",
+			Text:      "What bodies of knowledge does this world argue over — schools of thought, doctrines, a trade's craft? What is each one actually, and what is contested about it? Which faction teaches or owns it? Still no canon events.",
+			Therefore: "a school of thought exists before the apprentice who is wrong about it"},
+		{ID: "people", Kind: "descent",
+			Text:      "Who lives in these rooms? For each: what they are to the room, how they speak, what they carry that they will not say, and which factions or groups they belong to. Name the roster fully; each person's inner life is authored separately later. THIS IS ALSO WHERE CANON STARTS: now that there are people, author what has already happened here, and for each event who was there and who KNOWS — and a knower need never have been present. Every event needs at least one holder who is one of these people.",
+			Therefore: "the world needs its people before it can have their secrets, and canon needs someone to carry it"},
+		{ID: "artifacts", Kind: "descent",
+			Text:      "What does a body touch here? What sits in these rooms and what is carried in these hands? Who knows where each one is, and who thinks it is somewhere else?",
+			Therefore: "a world with nothing to pick up is a diorama"},
 	}
+}
+
+// ascentSchedule is the way back up: every layer revisited knowing everything BELOW it, which on the way
+// down it could not see (design §1.2.1). A room authored before anyone lived in it can finally be told who
+// sleeps there.
+//
+// Its job is connection and gap-filling. Creation is not forbidden, but a person invented here should
+// exist because a connection demanded them. Founder 2026-08-28: "there is no minimum or maximum".
+//
+// PEOPLE ARE PER-ITEM. One call per person, because a person's inner life has to reason about the specific
+// rooms, factions, concepts and other people that exist by name — a single call averaging over everyone is
+// how you get twelve variations of the same person. This is the expensive part and it is deliberate.
+func ascentSchedule(doc *genesisDoc) []workItem {
+	items := []workItem{
+		{ID: "artifacts-connect", Kind: "ascent",
+			Text:      "Everything now exists. Which of these people knows where each object is, which of them is wrong about it, and which object should belong to someone who has no reason to hold it? Fill the gaps you can now see.",
+			Therefore: "an object nobody has an opinion about is scenery"},
+	}
+	for _, a := range doc.Cast {
+		name := strings.TrimSpace(a.CanonicalName)
+		if name == "" {
+			continue
+		}
+		items = append(items, workItem{
+			ID:      "person",
+			Kind:    "ascent",
+			Subject: name,
+			Text: "Author this one person's inner life, and nobody else's. What happened to them growing up? " +
+				"What do they believe, including what they believe that is not true? What do they say to themselves? " +
+				"What happened to them that still shows in how they behave? What do they want, and what would they " +
+				"give up for it? And three or four lines in their own voice. Their upbringing and their temperament " +
+				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake.",
+			Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
+		})
+	}
+	items = append(items,
+		workItem{ID: "concepts-connect", Kind: "ascent",
+			Text:      "Now that these people exist, who holds which position on each of these bodies of knowledge? Who is orthodox, who is heretical, who is simply mistaken and acting on it?",
+			Therefore: "a doctrine with no adherents and no dissenters is a dictionary entry"},
+		workItem{ID: "factions-connect", Kind: "ascent",
+			Text:      "Connect the institutions to the people who serve, resent, left, or were expelled from them. What does each faction know about the others? What did one of them do that its own members disagree about?",
+			Therefore: "an institution is its people's arguments about it"},
+		workItem{ID: "places-connect", Kind: "ascent",
+			Text:      "Return to the rooms knowing who lives in them, what happened in them, and what sits in them. What does each room now need that it lacked when nothing was in it? What happened here that the people here remember differently?",
+			Therefore: "a room is what happened in it"},
+	)
+	return items
+}
+
+// arrivalWork is the last layer: the world header, the region, and the way in. It runs after the ascent so
+// the visitor walks into a room that is already inhabited and already has a history.
+func arrivalWork() workItem {
+	return workItem{ID: "arrival", Kind: "arrival",
+		Text:      "Name the world and the quarter it sits in, and bring a stranger into it. Which of these rooms do they walk into, what is the one sentence they know, and who is already there? THE ARRIVAL IS A STRANGER: a new name, appearing nowhere above, and never one of the world's own people.",
+		Therefore: "a visitor walks in on people, never into an empty room they must search"}
 }
 
 // authorWorld infers identity, then fills under it, and returns a document that has passed every belt check.
@@ -291,7 +367,11 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	}
 	doc := &genesisDoc{}
 	var tags []taggedName
-	for _, item := range scheduleWork(id) {
+	// The loop runs twice in opposite directions (design 2026-08-28 §1.2.1). Down: each layer authors
+	// from what is above it. Up: each layer is revisited knowing everything below it. Then the arrival.
+	schedule := descentSchedule()
+	ascentFrom := len(schedule)
+	for _, item := range schedule {
 		// One retry per batch, with the rejection fed back. A single malformed answer must not throw
 		// away every batch before it: measured live 2026-08-28, the revise batch spelled `places` as
 		// `place` and DisallowUnknownFields ended a 147-second build. The belt is NOT loosened — the
@@ -317,7 +397,36 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 				frag = again
 			}
 		}
-		mergeFill(doc, frag, item.ID, &tags)
+		mergeFill(doc, frag, mergeTag(item), &tags)
+	}
+	// The ascent can only be built once the descent has said who exists — that is the whole reason it is
+	// a second pass and not more layers. People are per-item here.
+	ascent := ascentSchedule(doc)
+	log.Printf("fill: descent authored %d place(s), %d faction(s), %d concept(s), %d person(s), %d object(s); ascent is %d item(s)",
+		len(doc.Places), len(doc.Factions), len(doc.Concepts), len(doc.Cast), len(doc.Objects), len(ascent))
+	_ = ascentFrom
+	for _, item := range append(ascent, arrivalWork()) {
+		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+		if err != nil && IsGenesisRefusal(err) {
+			log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
+			frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
+		}
+		if err != nil {
+			// The ascent connects and completes; it is not the pass that makes a world exist. One layer
+			// failing to answer costs that layer, never the build. The arrival is the exception the belt
+			// enforces for us: without it the document simply will not validate.
+			log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
+			continue
+		}
+		if bad := frag.danglingRefs(doc); len(bad) > 0 {
+			log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", mergeTag(item), len(bad), strings.Join(bad, "; "))
+			again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
+				"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
+			if aerr == nil && fillHasContent(again) {
+				frag = again
+			}
+		}
+		mergeFill(doc, frag, mergeTag(item), &tags)
 	}
 	// Closing passes: pay what canon owes instead of refusing it. Two rounds, because authoring the
 	// owed places can itself name a person, and that person is then owed. Founder 2026-08-28: a gap is
@@ -384,6 +493,15 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 	}
 	return doc, nil
+}
+
+// mergeTag names the work item a piece of content came from, for scoped retraction. Per-item work carries
+// its subject, so "person" becomes "person:Adaeze" and a review can name exactly which call to blame.
+func mergeTag(item workItem) string {
+	if s := strings.TrimSpace(item.Subject); s != "" {
+		return item.ID + ":" + s
+	}
+	return item.ID
 }
 
 func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc, priorError string) (*fillFragment, error) {
@@ -510,6 +628,7 @@ func (f *fillFragment) danglingRefs(doc *genesisDoc) []string {
 
 func fillHasContent(f *fillFragment) bool {
 	return len(f.WorldRaw) > 0 || len(f.RegionRaw) > 0 || len(f.Places) > 0 || len(f.Ways) > 0 ||
+		len(f.Factions) > 0 || len(f.Concepts) > 0 ||
 		len(f.Cast) > 0 || len(f.Objects) > 0 || len(f.History) > 0 || f.Arrival != nil || len(f.ArrivalCandidates) > 0
 }
 
@@ -553,10 +672,31 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 			*tags = append(*tags, taggedName{Kind: "way", Name: w.Descriptor, Rule: ruleID})
 		}
 	}
+	for _, f := range frag.Factions {
+		if !hasFaction(doc, f.CanonicalName) {
+			doc.Factions = append(doc.Factions, f)
+			*tags = append(*tags, taggedName{Kind: "faction", Name: f.CanonicalName, Rule: ruleID})
+		}
+	}
+	for _, c := range frag.Concepts {
+		if !hasConcept(doc, c.CanonicalName) {
+			doc.Concepts = append(doc.Concepts, c)
+			*tags = append(*tags, taggedName{Kind: "concept", Name: c.CanonicalName, Rule: ruleID})
+		}
+	}
 	for _, a := range frag.Cast {
 		if !hasActor(doc, a.CanonicalName) {
 			doc.Cast = append(doc.Cast, a)
 			*tags = append(*tags, taggedName{Kind: "cast", Name: a.CanonicalName, Rule: ruleID})
+			continue
+		}
+		// The ascent revisits people who already exist. Deepening them is the point of that pass, so an
+		// existing person is UPDATED with whatever the later answer added rather than being discarded.
+		for i := range doc.Cast {
+			if doc.Cast[i].CanonicalName == a.CanonicalName {
+				deepenActor(&doc.Cast[i], a)
+				break
+			}
 		}
 	}
 	for _, o := range frag.Objects {
@@ -582,6 +722,78 @@ func hasPlace(d *genesisDoc, name string) bool {
 	}
 	return false
 }
+func hasFaction(d *genesisDoc, name string) bool {
+	for _, f := range d.Factions {
+		if f.CanonicalName == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasConcept(d *genesisDoc, name string) bool {
+	for _, c := range d.Concepts {
+		if c.CanonicalName == name {
+			return true
+		}
+	}
+	return false
+}
+
+// deepenActor fills in what a later pass learned about someone who already exists, and never overwrites
+// what an earlier pass already said. The ascent exists to connect and complete, not to rewrite: a person
+// authored on the way down keeps their hiding and their goal, and gains the beliefs, mantras, traumas and
+// phrases the way back up found room for.
+func deepenActor(have *genesisActor, add genesisActor) {
+	str := func(dst *string, src string) {
+		if strings.TrimSpace(*dst) == "" && strings.TrimSpace(src) != "" {
+			*dst = src
+		}
+	}
+	str(&have.Descriptor, add.Descriptor)
+	str(&have.Standing, add.Standing)
+	str(&have.SpeechManner, add.SpeechManner)
+	str(&have.Hiding, add.Hiding)
+	str(&have.Malleability, add.Malleability)
+	str(&have.StartsIn, add.StartsIn)
+	str(&have.Upbringing, add.Upbringing)
+	str(&have.Goal, add.Goal)
+	str(&have.Sacrifice, add.Sacrifice)
+	if len(have.Traits) == 0 {
+		have.Traits = add.Traits
+	}
+	have.Beliefs = appendNew(have.Beliefs, add.Beliefs)
+	have.Mantras = appendNew(have.Mantras, add.Mantras)
+	have.ExamplePhrases = appendNew(have.ExamplePhrases, add.ExamplePhrases)
+	have.BelongsTo = appendNew(have.BelongsTo, add.BelongsTo)
+	for _, tr := range add.Traumas {
+		seen := false
+		for _, existing := range have.Traumas {
+			if existing.WhatHappened == tr.WhatHappened {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			have.Traumas = append(have.Traumas, tr)
+		}
+	}
+}
+
+func appendNew(have, add []string) []string {
+	seen := make(map[string]bool, len(have))
+	for _, s := range have {
+		seen[strings.TrimSpace(s)] = true
+	}
+	for _, s := range add {
+		if k := strings.TrimSpace(s); k != "" && !seen[k] {
+			seen[k] = true
+			have = append(have, s)
+		}
+	}
+	return have
+}
+
 func hasActor(d *genesisDoc, name string) bool {
 	for _, a := range d.Cast {
 		if a.CanonicalName == name {
@@ -1110,6 +1322,11 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	sb.WriteString(item.ID)
 	sb.WriteString("\nkind: ")
 	sb.WriteString(item.Kind)
+	if s := strings.TrimSpace(item.Subject); s != "" {
+		sb.WriteString("\nthis item is about exactly one person: \"")
+		sb.WriteString(s)
+		sb.WriteString("\" — author them and nobody else")
+	}
 	sb.WriteString("\ntext: ")
 	sb.WriteString(item.Text)
 	sb.WriteString("\ntherefore: ")
@@ -1130,6 +1347,30 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 		sb.WriteString(p.Descriptor)
 		sb.WriteString("\n")
 	}
+	for _, f := range soFar.Factions {
+		sb.WriteString("- ")
+		sb.WriteString(f.Kind)
+		sb.WriteString(" \"")
+		sb.WriteString(f.CanonicalName)
+		sb.WriteString("\"\n    controls: ")
+		sb.WriteString(f.Controls)
+		sb.WriteString("\n    publishes: ")
+		sb.WriteString(f.Publishes)
+		sb.WriteString("\n    buries: ")
+		sb.WriteString(f.Buries)
+		sb.WriteString("\n    wants: ")
+		sb.WriteString(f.Goal)
+		sb.WriteString("\n")
+	}
+	for _, c := range soFar.Concepts {
+		sb.WriteString("- concept \"")
+		sb.WriteString(c.CanonicalName)
+		sb.WriteString("\"\n    is: ")
+		sb.WriteString(c.WhatItIs)
+		sb.WriteString("\n    contested: ")
+		sb.WriteString(c.Contested)
+		sb.WriteString("\n")
+	}
 	for _, a := range soFar.Cast {
 		sb.WriteString("- person \"")
 		sb.WriteString(a.CanonicalName)
@@ -1137,7 +1378,22 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 		sb.WriteString(a.Hiding)
 		sb.WriteString("\n    starts_in: \"")
 		sb.WriteString(a.StartsIn)
-		sb.WriteString("\"\n")
+		sb.WriteString("\"")
+		if len(a.BelongsTo) > 0 {
+			sb.WriteString("\n    belongs to: ")
+			sb.WriteString(strings.Join(a.BelongsTo, ", "))
+		}
+		// Whether the inner life is already authored is the ascent's map of what is left to do.
+		if strings.TrimSpace(a.Goal) != "" {
+			sb.WriteString("\n    wants: ")
+			sb.WriteString(a.Goal)
+		}
+		if len(a.Beliefs) > 0 || len(a.Traumas) > 0 || len(a.ExamplePhrases) > 0 {
+			sb.WriteString("\n    inner life: authored")
+		} else {
+			sb.WriteString("\n    inner life: NOT YET AUTHORED")
+		}
+		sb.WriteString("\n")
 	}
 	if !docWorldEmpty(soFar) {
 		sb.WriteString("- world named ")
