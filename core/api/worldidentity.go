@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"unicode"
 )
 
 //go:embed prompts/world_understanding.txt schema/world_identity.v1.schema.json
@@ -340,6 +341,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	// Bookkeeping before the belt sees it, never authorship: drop what cannot be stored, and make the
 	// arrival offer coherent. Both cost a leaf at worst; neither costs the world.
 	dropUnstorable(doc)
+	normalisePersonNames(doc)
 	reconcileArrival(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
@@ -353,6 +355,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 		mergeFill(doc, frag, "repair", &tags)
 		dropUnstorable(doc)
+		normalisePersonNames(doc)
 		reconcileArrival(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2
@@ -616,6 +619,91 @@ type fillBreach struct {
 //
 // Founder 2026-08-28: a gap is worse than an invention that clicks — and losing an entire authored
 // world over one nameless prop is the worst gap available.
+// normalisePersonNames title-cases a person's name that is merely uncapitalised, instead of refusing
+// the world for it.
+//
+// identifierShapedName (worldgenesis.go) refuses a person whose name is cased script with no capital
+// anywhere. It exists for a real reason with receipts — the Ironmoor breach of 2026-08-20, where
+// genesis emitted slug join-keys as people's canonical names and players read them. But its heuristic
+// assumes English capitalisation, and measured live 2026-08-28 it refused a 407-second Andantes build
+// over "once familias" — Spanish for "eleven families", a perfectly speakable collective in a
+// Spanish-language world.
+//
+// Capitalisation is typography, not content. So the name is normalised and every reference to it is
+// rewritten with it, which is why the rename map exists: renaming a person without rewriting
+// history.who and objects.where.carried_by would orphan them and refuse the world for a different
+// reason one check later.
+//
+// UNDERSCORES ARE STILL REFUSED, deliberately. "silas_holton" is not a capitalisation slip, it is a
+// machine identifier, and the naming wall treats it as a breach. Normalising it would hide the signal
+// the Ironmoor incident taught us to watch for. Places and objects are untouched — the existing guard
+// already exempts them.
+func normalisePersonNames(doc *genesisDoc) {
+	rename := map[string]string{}
+	fix := func(name string) string {
+		n := strings.TrimSpace(name)
+		if n == "" || strings.Contains(n, "_") {
+			return name
+		}
+		if !identifierShapedName(n) {
+			return name
+		}
+		titled := titleCasePersonName(n)
+		if titled == n {
+			return name
+		}
+		log.Printf("normalisePersonNames: %q -> %q (uncapitalised, not a join key)", n, titled)
+		rename[n] = titled
+		return titled
+	}
+
+	for i := range doc.Cast {
+		doc.Cast[i].CanonicalName = fix(doc.Cast[i].CanonicalName)
+	}
+	doc.Arrival.CanonicalName = fix(doc.Arrival.CanonicalName)
+	for i := range doc.ArrivalCandidates {
+		doc.ArrivalCandidates[i].CanonicalName = fix(doc.ArrivalCandidates[i].CanonicalName)
+	}
+	if len(rename) == 0 {
+		return
+	}
+
+	apply := func(s string) string {
+		if v, ok := rename[strings.TrimSpace(s)]; ok {
+			return v
+		}
+		return s
+	}
+	for i := range doc.History {
+		for j := range doc.History[i].Who {
+			doc.History[i].Who[j] = apply(doc.History[i].Who[j])
+		}
+		for j := range doc.History[i].Knowledge {
+			doc.History[i].Knowledge[j].Holder = apply(doc.History[i].Knowledge[j].Holder)
+		}
+	}
+	for i := range doc.Objects {
+		doc.Objects[i].Where.CarriedBy = apply(doc.Objects[i].Where.CarriedBy)
+	}
+}
+
+// titleCasePersonName capitalises the first letter of each word and leaves the rest alone, so
+// "once familias" becomes "Once Familias" without touching interior letters a language may care about.
+func titleCasePersonName(name string) string {
+	out := []rune(name)
+	atWordStart := true
+	for i, r := range out {
+		switch {
+		case unicode.IsSpace(r) || r == '-' || r == '\'':
+			atWordStart = true
+		case atWordStart:
+			out[i] = unicode.ToUpper(r)
+			atWordStart = false
+		}
+	}
+	return string(out)
+}
+
 func dropUnstorable(doc *genesisDoc) {
 	objects := make([]genesisObject, 0, len(doc.Objects))
 	for i, o := range doc.Objects {
