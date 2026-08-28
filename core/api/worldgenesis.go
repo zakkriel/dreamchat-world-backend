@@ -82,6 +82,8 @@ type genesisDoc struct {
 	} `json:"region"`
 	Places            []genesisPlace     `json:"places"`
 	Ways              []genesisWay       `json:"ways"`
+	Factions          []genesisFaction   `json:"factions,omitempty"`
+	Concepts          []genesisConcept   `json:"concepts,omitempty"`
 	Cast              []genesisActor     `json:"cast"`
 	Objects           []genesisObject    `json:"objects"`
 	History           []genesisEvent     `json:"history"`
@@ -120,6 +122,62 @@ type genesisActor struct {
 	Hiding        string         `json:"hiding"`
 	Malleability  string         `json:"malleability,omitempty"`
 	StartsIn      string         `json:"starts_in"`
+
+	// The inner life, authored by the fill stage's people layer. Every field is optional: the old
+	// single-shot world_genesis seat never emits any of them, and the belt does not require them.
+	//
+	// Circumstance and disposition are SEPARATE on purpose (design 2026-08-28 §1.5). Upbringing is what
+	// happened to them; traits and beliefs are who they became. The interesting person is the one where
+	// those two disagree — the worst life and an optimistic temperament — and a single trait list cannot
+	// express that. Traumas carry how they SHOW rather than how they feel, because behaviour is what the
+	// narrator can use. Example phrases are the material stage 4 uses to be this person: one line they
+	// would actually say beats three adjectives.
+	Upbringing     string          `json:"upbringing,omitempty"`
+	Beliefs        []string        `json:"beliefs,omitempty"`
+	Mantras        []string        `json:"mantras,omitempty"`
+	Traumas        []genesisTrauma `json:"traumas,omitempty"`
+	Goal           string          `json:"goal,omitempty"`
+	Sacrifice      string          `json:"sacrifice,omitempty"`
+	ExamplePhrases []string        `json:"example_phrases,omitempty"`
+	BelongsTo      []string        `json:"belongs_to,omitempty"`
+}
+
+// genesisTrauma is a thing that happened to someone and the mark it left on how they behave. It lives on
+// the PERSON, never as a perception: perception_record carries only confidence and distortion_level, both
+// epistemic, so it can say what someone knows and never what it did to them (design §2.1, SPEC-042).
+type genesisTrauma struct {
+	WhatHappened string `json:"what_happened"`
+	HowItShows   string `json:"how_it_shows"`
+}
+
+// genesisFaction is an organised body or a bare collective. `kind` separates them: a faction has
+// interests and a command structure (a guild, a college); a group is a collective without one (eleven
+// families, the survivors of an outbreak). Live builds with no slot for either crammed them into `cast`
+// and produced descriptor-shaped names — a missing content class, not a naming bug.
+type genesisFaction struct {
+	Descriptor    string `json:"descriptor"`
+	CanonicalName string `json:"canonical_name"`
+	Kind          string `json:"kind"`
+	Controls      string `json:"controls"`
+	Publishes     string `json:"publishes"`
+	Buries        string `json:"buries"`
+	Goal          string `json:"goal"`
+	Sacrifice     string `json:"sacrifice,omitempty"`
+	Seat          string `json:"seat,omitempty"`
+}
+
+// genesisConcept is a body of knowledge people hold beliefs about and are wrong about — a school of
+// thought, a doctrine, a trade's craft. NOT the world's rules: that magic exists is identity, authored by
+// the understanding pass. This is the knowable thing an apprentice can be mistaken about.
+//
+// There is no engine in this stage, so a concept is a document entry like any other (design §2.4). How it
+// becomes a row is stage 3's question (SPEC-043).
+type genesisConcept struct {
+	Descriptor    string `json:"descriptor"`
+	CanonicalName string `json:"canonical_name"`
+	WhatItIs      string `json:"what_it_is"`
+	Contested     string `json:"contested"`
+	TaughtBy      string `json:"taught_by,omitempty"`
 }
 
 type genesisObject struct {
