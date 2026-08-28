@@ -47,7 +47,7 @@
     },
     "ways": {
       "type": "array",
-      "maxItems": 20,
+      "maxItems": 30,
       "items": {
         "type": "object",
         "required": ["descriptor", "from_place", "to_place", "state"],
@@ -62,7 +62,7 @@
     },
     "cast": {
       "type": "array",
-      "maxItems": 14,
+      "maxItems": 26,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "standing", "speech_manner", "traits", "hiding", "starts_in"],
