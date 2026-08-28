@@ -321,10 +321,18 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		len(doc.Places), len(doc.Cast), len(doc.Objects), len(doc.History))})
 
 	// Narration first — every line names authored content (law 2), commit or not.
+	//
+	// A DEAD SOCKET IS NOT A REASON TO THROW THE WORLD AWAY. This loop used to `return` when emit failed,
+	// three lines above the commit. Measured 2026-08-28: a 23-call build spent 1,256 seconds and $0.046,
+	// authored 11 places, 4 factions, 4 concepts, 6 people and 14 objects — and was discarded in silence
+	// because the client had gone at the edge's 900-second cut and a narration frame could not be written.
+	// No log, no commit, no world.
+	//
+	// Every other emit in this function already ignores its error deliberately; this was the one that did
+	// not. Detaching the build's context (above) only got it as far as here. The user's connection is a
+	// convenience for watching; it is never a condition of the world existing.
 	for _, line := range genesisNarration(doc) {
-		if err := frames.emit("working", map[string]any{"stated": line}); err != nil {
-			return
-		}
+		_ = frames.emit("working", map[string]any{"stated": line})
 	}
 
 	// The commit that makes the world durable: everything it IS, before anyone is anyone in it.
