@@ -1539,18 +1539,23 @@ Personality is who someone is, and it is the axis that carries weight, so trauma
 there and not in perception. Modelling a trauma as a perception yields a fact someone knows with no
 expression of what it did to them.
 
-**The sequencing constraint, which is the operative rule for implementers.** Fill may author only what
-transcription can commit:
+**Fill authors a document; the engine is not in this stage.** An earlier version of this entry carried a
+"sequencing constraint" saying fill may author only what transcription can commit. That was wrong — it
+imported a later stage's limits into this one and used them to shrink what a world may contain. At fill
+time there is no `entity_kind`, no CHECK constraint and no migration; there is a JSON document, and
+concepts sit in it on the same footing as places and people.
 
-- **factions and groups — author now.** `entity_kind IN ('faction','group')` has always been valid; only
-  the fill contract lacked a slot. That gap is why live runs crammed collectives into `cast` ("Two Guild
-  guards", "once familias", "supervivientes del brote"), producing descriptor-shaped names that tripped
-  the join-key guard. A missing entity class, not a naming bug.
-- **goals, example phrases, private personality — author as fiction, no engine home yet** (`SPEC-042`).
-- **unperceived canon — do not author yet.** Refused at genesis and unreachable in play (`SPEC-040`), so
-  keep at least one holder per event until that is built.
-- **concepts — do not author yet.** `entity_kind` is closed and has no `concept` (`SPEC-043`); authoring
-  them would produce documents that cannot commit.
+What stage 3 will have to decide, recorded as a note for whoever builds it rather than as a limit here:
+factions and groups map onto engine kinds that already exist; concepts have no kind yet (`SPEC-043`);
+goals, example phrases and private personality have no home (`SPEC-042`); unperceived canon is refused and
+unreachable (`SPEC-040`). Today's code chains fill straight into commit in one request, which is why a
+document richer than the engine currently fails late — a stage-3 problem, not a reason to author a
+shallower world.
+
+One observation worth keeping because it cost real money: with no slot for a collective, live runs crammed
+them into `cast` ("Two Guild guards", "once familias", "supervivientes del brote"), producing
+descriptor-shaped names that tripped the join-key guard. A missing **content class**, not a naming bug —
+and the same will happen to concepts if they have nowhere to go.
 
 **Measured, and not negotiable by tuning.** `ms = 1349 + 15.84 × tokens_out` — 1.35 s fixed per call then
 ~63 tokens/second, which predicted a 234 s build to within 1%. Wall clock is bought with output tokens,
