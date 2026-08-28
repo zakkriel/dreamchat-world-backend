@@ -337,7 +337,9 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 		retractBreaches(doc, breaches)
 	}
-	// Make the arrival offer coherent before the belt sees it. Bookkeeping, not authorship.
+	// Bookkeeping before the belt sees it, never authorship: drop what cannot be stored, and make the
+	// arrival offer coherent. Both cost a leaf at worst; neither costs the world.
+	dropUnstorable(doc)
 	reconcileArrival(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
@@ -350,6 +352,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			return nil, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
+		dropUnstorable(doc)
 		reconcileArrival(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2
@@ -598,6 +601,43 @@ type fillBreach struct {
 //
 // If the offer cannot be made coherent at exactly three distinct names, the LIST is dropped rather than
 // the world: an incomplete offer is no offer, and the arrival alone is a legitimate, playable world.
+// dropUnstorable removes entities the engine cannot store, instead of refusing the world that contains
+// them.
+//
+// Measured live 2026-08-28: a 472-second build with 27,383 tokens of authored world was refused for
+// "object 7 has no canonical_name" — one nameless thing in a long list. The schema already asks for a
+// name (minLength 1); in json_object mode that ask is advisory and the Go belt is the enforcement, so a
+// seat can and does slip one through.
+//
+// Scoped deliberately to LEAVES — objects and history events. Nothing in the document points at an
+// object, and nothing points at an event, so removing one cannot orphan a reference. Places and people
+// are NOT dropped here: things stand in them and canon names them, so an unnamed one is a structurally
+// broken fragment and the belt should keep saying so plainly.
+//
+// Founder 2026-08-28: a gap is worse than an invention that clicks — and losing an entire authored
+// world over one nameless prop is the worst gap available.
+func dropUnstorable(doc *genesisDoc) {
+	objects := make([]genesisObject, 0, len(doc.Objects))
+	for i, o := range doc.Objects {
+		if strings.TrimSpace(o.CanonicalName) == "" || strings.TrimSpace(o.Descriptor) == "" || strings.TrimSpace(o.Kind) == "" {
+			log.Printf("dropUnstorable: object %d is missing a name, descriptor or kind — dropping it and keeping the world", i+1)
+			continue
+		}
+		objects = append(objects, o)
+	}
+	doc.Objects = objects
+
+	history := make([]genesisEvent, 0, len(doc.History))
+	for i, h := range doc.History {
+		if strings.TrimSpace(h.WhatHappened) == "" {
+			log.Printf("dropUnstorable: history event %d has no account of what happened — dropping it", i+1)
+			continue
+		}
+		history = append(history, h)
+	}
+	doc.History = history
+}
+
 func reconcileArrival(doc *genesisDoc) {
 	if len(doc.ArrivalCandidates) == 0 {
 		return

@@ -529,3 +529,43 @@ func TestReconcileArrival_SeatsTheArrivalAmongItsCandidates(t *testing.T) {
 		t.Fatal("the arrival itself must survive")
 	}
 }
+
+// A 472-second build with 27,383 tokens of authored world was refused for "object 7 has no
+// canonical_name". Objects and history events are leaves — nothing points at them — so an unstorable
+// one costs itself, never the world.
+func TestDropUnstorable_CostsTheLeafNotTheWorld(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Objects = []genesisObject{
+		{CanonicalName: "The Listening Horn", Descriptor: "a brass cone", Kind: "instrument"},
+		{CanonicalName: "", Descriptor: "something", Kind: "thing"},
+		{CanonicalName: "The Ledger", Descriptor: "an open book", Kind: "record"},
+		{CanonicalName: "No Kind", Descriptor: "a thing", Kind: ""},
+	}
+	doc.History = []genesisEvent{
+		{WhatHappened: "the heart stumbled and nobody wrote it down"},
+		{WhatHappened: "   "},
+	}
+	dropUnstorable(doc)
+
+	if len(doc.Objects) != 2 {
+		t.Fatalf("want the two storable objects, got %d", len(doc.Objects))
+	}
+	for _, o := range doc.Objects {
+		if o.CanonicalName != "The Listening Horn" && o.CanonicalName != "The Ledger" {
+			t.Fatalf("wrong object survived: %q", o.CanonicalName)
+		}
+	}
+	if len(doc.History) != 1 {
+		t.Fatalf("want the one real event, got %d", len(doc.History))
+	}
+
+	// Places and people are NOT leaves and are deliberately left alone — things stand in them and canon
+	// names them, so the belt must keep refusing a nameless one plainly.
+	doc2 := &genesisDoc{}
+	doc2.Places = []genesisPlace{{CanonicalName: "", Descriptor: "nowhere"}}
+	doc2.Cast = []genesisActor{{CanonicalName: "", Hiding: "h"}}
+	dropUnstorable(doc2)
+	if len(doc2.Places) != 1 || len(doc2.Cast) != 1 {
+		t.Fatal("dropUnstorable must not silently remove places or people")
+	}
+}
