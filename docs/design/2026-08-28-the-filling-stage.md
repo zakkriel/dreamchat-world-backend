@@ -56,13 +56,51 @@ Each layer is authored **from** the layers above it. Founder's ordering:
 | 1 | **Foundation** | nothing — map what the author already gave us | — |
 | 2 | **Places** | rooms and the ways between them | public |
 | 3 | **Factions & groups** | organised bodies and collectives, each with a goal | public |
-| 4 | **People** | individuals: public surface, personality, goal, example speech | public **and** private, including private lore *about* the places and factions above |
-| 5 | **Artifacts & elements** | things a body can touch | lore, plus who knows where they are and who is wrong |
-| 6 | *(Concepts — deferred, `SPEC-043`)* | schools of thought, bodies of knowledge | knowledge held about them |
+| 5 | **People** | individuals: public surface, personality, goal, example speech | public **and** private, including private lore *about* the places, factions and concepts above |
+| 4 | **Concepts** | schools of thought, bodies of knowledge — `SPEC-043` | knowledge held about them |
+| 6 | **Artifacts & elements** | things a body can touch | lore, plus who knows where they are and who is wrong |
 | 7 | **Arrival** | the world header, the region, and the way in | — |
+
+Concepts sit **above people and below factions**: a school of thought exists before the apprentice who is
+wrong about it, and the College that teaches it exists before the school is a thing anyone argues over.
+They are a full layer, on the same footing as every other — nothing about them is conditional on the
+engine, because the engine is not in this stage.
 
 **The loop always uses the previous data.** A person's private lore is about *these* rooms and *these*
 guilds, named. An artifact's lore says which of *these* people knows where it is.
+
+### 1.2.1 Descent, then ascent — create going down, connect coming back up
+
+Founder, 2026-08-28:
+
+> we go for the first layer down, making content on each layer. and then we bounce up
+> fixing/correcting and making content on each layer ... the second round is more to fill gaps and
+> connect with clicks rather than creation (creating is not forbidden) and the result can be hundreds of
+> new stuff or not. there is no minimum or maximum
+
+So the loop runs **twice, in opposite directions**, and the two passes have different jobs.
+
+**Descending** — foundation → places → factions & groups → concepts → people → artifacts — each layer
+authors from what is already above it. This is where the world is *created*, and it can only ever look
+upward, so nothing is named before it exists.
+
+**Ascending** — artifacts → people → concepts → factions & groups → places — each layer is revisited
+knowing **everything below it**, which on the way down it could not see. A room authored before anyone
+lived in it can now be told who sleeps there and what happened in it. A guild authored before its members
+existed can now be connected to the people who joined, left, or were struck from its roll.
+
+The ascent's job is **connection and gap-filling**, not bulk. It may create — creation is never forbidden
+— but a new person invented on the way up should exist because a *connection* demanded them, not because
+the pass felt thin. **There is no minimum and no maximum.** An ascent that adds one sentence to one room
+and a hundred links is a good ascent; so is one that adds forty people because the world genuinely had
+holes.
+
+**This replaces the flat `revise` batch**, which sat in the middle of a one-way schedule and had no way to
+know what came after it.
+
+**A layer may prove redundant, and that is a finding, not a failure.** The founder's expectation is that
+the ascent may show some layer had nothing left to do. Measure before deleting: a layer that adds nothing
+on a dense brief may be carrying a sparse one.
 
 ### 1.3 Why layered rather than flat
 
@@ -183,31 +221,34 @@ and is attached to nothing, while the cast are embedded in canon, in hands and i
 An earlier version of this pipeline stripped a participant out of history to resolve a name collision.
 That was wrong twice over — it deleted authored content, and it treated the record as negotiable.
 
-### 2.4 What the engine supports today, and what fill may therefore author
+### 2.4 Fill authors a document. The engine is not in this stage.
 
-**This table is the sequencing constraint. Fill may only author what transcription can commit.**
+**This section used to say "fill may author only what transcription can commit". That was wrong, and it
+was wrong in the way this whole design exists to prevent.** It imported a later stage's constraints into
+this one, and then used them to shrink what the world is allowed to contain.
 
-| the design wants | engine today | fill may author it? |
-|---|---|---|
-| places, ways | `entity_kind = 'location'`, portals | **yes** — shipped |
-| people | `entity_kind = 'actor'`, `personality_core.traits`, `malleability` | **yes** — shipped |
-| artifacts | `entity_kind = 'artifact'` | **yes** — shipped |
-| **factions & groups** | `entity_kind IN ('faction','group')` — **already valid** | **yes — add now** |
-| canon + perceptions | `canon_event`, `perception_record`, `perception_subject` | **yes** — shipped |
-| **goals** (people and factions) | **no home anywhere** | author as fiction; transcription must decide |
-| **example phrases** | only `speech_manner`, one line | author as fiction; needs a home |
-| **private personality** (trauma, private belief) | `personality_core` forbids secrets — `SPEC-042` | author as fiction; needs a home |
-| **unperceived canon** | refused at genesis, unreachable in play — `SPEC-040` | **no** — keep one holder per event until built |
-| **concepts** (schools of thought) | `entity_kind` closed, no `concept` — `SPEC-043` | **no** — deferred layer |
+At fill time there is no `entity_kind`, no CHECK constraint, no migration and no engine. There is a JSON
+document. A concept in that document is a name, a description and the knowledge people hold about it —
+exactly like a place or a person, and no more privileged. **How any of it becomes rows is transcription's
+problem, in transcription's stage.**
 
-Two rows deserve emphasis:
+So fill authors the full world the identity demands: places, factions, groups, **concepts**, people,
+artifacts, canon, perceptions, personality, goals, example speech. Nothing here is gated on engine
+support.
 
-- **Factions and groups are free.** The engine has had the kinds all along; only the fill contract lacked
-  a slot. That absence is why live runs kept cramming collectives into `cast` — "Two Guild guards", "once
-  familias", "supervivientes del brote" — producing descriptor-shaped names that then tripped the
-  join-key guard. **That was a missing entity class, not a naming bug.**
-- **Concepts are not free.** Authoring them before `SPEC-043` would produce documents that cannot commit.
-  Deferred on purpose.
+What *is* worth writing down, as a note for whoever builds stage 3 rather than a limit on stage 2:
+
+| the document will contain | stage 3 will need |
+|---|---|
+| places, people, artifacts, canon, perceptions | already handled |
+| factions, groups | `entity_kind IN ('faction','group')` already exists — likely trivial |
+| concepts | no `entity_kind` for them yet (`SPEC-043`) — a decision for stage 3 |
+| goals, example phrases, private personality | no home yet (`SPEC-042`) — a decision for stage 3 |
+| unperceived canon | refused and unreachable today (`SPEC-040`) — a decision for stage 3 |
+
+**Today's code happens to chain fill straight into commit in one request.** That is a property of the
+current implementation, not of the design, and it is the reason a document richer than the engine will
+currently fail late. Fixing that is stage 3 work. It is not a reason to author a shallower world.
 
 ### 2.5 Faction, group, and concept are three different things
 
