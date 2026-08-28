@@ -191,3 +191,32 @@ func TestIdentityHandler_OmitsTheTwenty(t *testing.T) {
 		t.Fatal("register missing")
 	}
 }
+
+// The Andantes refusal, 2026-08-28, as a test. A live build spent 234 seconds and refused because
+// fill set starts_in to "Colegio de Auscultadores — Sede del Colegio de Auscultadores, en la cima
+// del distrito" — the whole ALREADY AUTHORED line, name and descriptor joined by the em-dash the
+// prompt itself put there. Place names in a real world contain dashes and commas, so the separator
+// could never have been a boundary. The name is quoted now and nothing shares its line.
+func TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor(t *testing.T) {
+	name := "Colegio de Auscultadores"
+	desc := "Sede del Colegio de Auscultadores, en la cima del distrito"
+	soFar := &genesisDoc{}
+	soFar.Places = []genesisPlace{{CanonicalName: name, Descriptor: desc}}
+	soFar.Cast = []genesisActor{{CanonicalName: "Auscultadora Mayor Del Vas", Hiding: "she already knows", StartsIn: name}}
+
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, soFar)
+
+	// The exact string the model emitted must not be sitting in the prompt for it to copy.
+	if joined := name + " — " + desc; strings.Contains(prompt, joined) {
+		t.Fatalf("the prompt still offers name and descriptor as one string: %q", joined)
+	}
+	if !strings.Contains(prompt, `- place "`+name+`"`) {
+		t.Fatalf("the place's canonical_name is not quoted on its own; prompt:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "    looks like: "+desc) {
+		t.Fatal("the descriptor is not on its own labelled line")
+	}
+	if !strings.Contains(prompt, `- person "Auscultadora Mayor Del Vas"`) {
+		t.Fatal("the person's canonical_name is not quoted on its own")
+	}
+}
