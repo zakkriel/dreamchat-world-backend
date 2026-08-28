@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "world_fill/1",
-  "title": "world_fill/1 — what must exist because of ONE scheduled work item. Constraining and prohibiting rules may emit empty:true. No uuid, coordinate, tick, or count.",
+  "title": "world_fill/1 — what must exist because of ONE batch of the fill schedule. A batch is a lens, not a fence: author whatever your lens entails, including rooms, people, objects or canon another batch may also touch. Emitting nothing is a legitimate answer. The maxItems ceilings bound ONE call so it cannot outrun the seat token budget and truncate — they are not a depth budget, and a world that needs more places than one call allows gets them across batches and the closing pass. No uuid, coordinate, tick, or count.",
   "type": "object",
   "required": ["empty"],
   "additionalProperties": false,
@@ -30,7 +30,7 @@
     },
     "places": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 14,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "kind", "description", "tension", "extent_class"],
@@ -47,7 +47,7 @@
     },
     "ways": {
       "type": "array",
-      "maxItems": 6,
+      "maxItems": 20,
       "items": {
         "type": "object",
         "required": ["descriptor", "from_place", "to_place", "state"],
@@ -62,7 +62,7 @@
     },
     "cast": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 14,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "standing", "speech_manner", "traits", "hiding", "starts_in"],
@@ -95,7 +95,7 @@
     },
     "objects": {
       "type": "array",
-      "maxItems": 4,
+      "maxItems": 14,
       "items": {
         "type": "object",
         "required": ["descriptor", "canonical_name", "kind", "where"],
@@ -118,7 +118,7 @@
     },
     "history": {
       "type": "array",
-      "maxItems": 3,
+      "maxItems": 10,
       "items": {
         "type": "object",
         "required": ["what_happened", "where", "who", "knowledge"],

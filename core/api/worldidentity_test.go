@@ -379,13 +379,95 @@ func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
 		t.Fatalf("history's forward reference to a person was wrongly treated as dangling: %v", bad)
 	}
 
-	// And it is a REFUSAL out of fillOne, which is what makes the one-shot retry fire.
+	// And it is NOT fatal. Founder 2026-08-28: a good invention is never discarded for arriving before
+	// its room. fillOne hands the fragment back; the debt is carried and the closing pass authors it.
 	seat := stubDriver{raw: `{"empty":false,"cast":[{"descriptor":"a man","canonical_name":"Sento","standing":"s","speech_manner":"m","hiding":"h","malleability":"faint","starts_in":"Cola Baja"}]}`}
-	_, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, doc, "")
-	if err == nil || !IsGenesisRefusal(err) {
-		t.Fatalf("want a refusal the retry can act on, got %v", err)
+	got, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "lives", Kind: "batch"}, testBrief, nil, doc, "")
+	if err != nil {
+		t.Fatalf("an unpaid reference must not lose the fragment: %v", err)
 	}
-	if !strings.Contains(err.Error(), "Cola Baja") {
-		t.Fatalf("the refusal does not name the offending place: %v", err)
+	if len(got.Cast) != 1 || got.Cast[0].CanonicalName != "Sento" {
+		t.Fatal("Sento was discarded rather than kept for the closing pass")
 	}
+	// Merged in, the debt is visible to fillDebts and therefore to the closing pass.
+	var tags []taggedName
+	mergeFill(doc, got, "lives", &tags)
+	if _, places := fillDebts(doc); len(places) != 1 || places[0] != "Cola Baja" {
+		t.Fatalf("the unpaid place is not queued for the closing pass: %v", places)
+	}
+}
+
+// The closing pass authors what canon owes, rather than the build refusing it. This is the mechanism
+// the founder asked for on 2026-08-28: creation, not constriction.
+func TestFillFromIdentity_ClosingPassAuthorsWhatCanonOwes(t *testing.T) {
+	// A fill seat whose lives batch stands someone in a room it never authors, and whose closing batch
+	// pays that debt — the live Andantes shape.
+	seat := &owingFillDriver{real: NewFakeWorldFillDriver()}
+	id, err := inferIdentity(context.Background(), NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil)
+	if err != nil {
+		t.Fatalf("the build refused instead of authoring the owed place: %v", err)
+	}
+	if !seat.closed {
+		t.Fatal("the closing pass never ran")
+	}
+	if !hasPlace(doc, "Cola Baja") {
+		t.Fatal("the owed place was never authored")
+	}
+	if people, places := fillDebts(doc); len(people) > 0 || len(places) > 0 {
+		t.Fatalf("debts survived the closing pass: people=%v places=%v", people, places)
+	}
+	if err := doc.validate(); err != nil {
+		t.Fatalf("closed world is not playable: %v", err)
+	}
+}
+
+// owingFillDriver adds an unpaid place reference on the lives batch, and authors it when the closing
+// batch asks. Everything else delegates to the ordinary fake.
+type owingFillDriver struct {
+	real   Driver
+	closed bool
+}
+
+func (o *owingFillDriver) Name() string { return "owing-fill" }
+func (o *owingFillDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	switch {
+	case strings.Contains(req.Prompt, "\nid: lives\n"):
+		// Keep everything the ordinary fake authors and ADD one life standing in a room nobody wrote.
+		// Replacing the batch would empty the arrival neighbourhood and test the wrong failure.
+		raw, err := o.real.Generate(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		var frag map[string]any
+		if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+			return "", err
+		}
+		cast, _ := frag["cast"].([]any)
+		frag["cast"] = append(cast, map[string]any{
+			"descriptor": "a man on the low tail", "canonical_name": "Sento",
+			"standing": "walks the tail", "speech_manner": "few words",
+			"traits": []any{map[string]any{
+				"key": "watchful", "strength": "strong",
+				"manner": "listens to the ground before he answers",
+			}},
+			"hiding":       "he has not reported the tremor",
+			"malleability": "faint", "starts_in": "Cola Baja",
+		})
+		out, err := json.Marshal(frag)
+		if err != nil {
+			return "", err
+		}
+		return string(out), nil
+	case strings.Contains(req.Prompt, "\nid: closing\n"):
+		o.closed = true
+		return `{"empty":false,"places":[{"descriptor":"the low tail, awash","canonical_name":"Cola Baja","kind":"district","description":"The tail drags and the water comes over it twice a day; nobody builds high here.","tension":"normal","extent_class":"small"}],"ways":[{"descriptor":"the climb up the spine","from_place":"Cola Baja","to_place":"The Counting Room","state":"open"}]}`, nil
+	}
+	return o.real.Generate(ctx, req)
 }
