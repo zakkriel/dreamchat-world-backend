@@ -158,7 +158,7 @@ func TestGenesisPersistsTheChosenStyle(t *testing.T) {
 			pool := testPool(t)
 			t.Cleanup(pool.Close)
 
-			doc, err := authorWorld(ctx, NewFakeWorldGenesisDriver(), testBrief, nil)
+			doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
 			if err != nil {
 				t.Fatalf("authorWorld: %v", err)
 			}
@@ -168,7 +168,7 @@ func TestGenesisPersistsTheChosenStyle(t *testing.T) {
 			}
 			t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-			worldID, err := commitWorldContent(ctx, tx, doc, testBrief, tc.choice)
+			worldID, err := commitWorldContent(ctx, tx, doc, nil, testBrief, tc.choice)
 			if err != nil {
 				t.Fatalf("commitWorldContent: %v", err)
 			}

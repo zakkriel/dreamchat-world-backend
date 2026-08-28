@@ -38,8 +38,8 @@ func TestWorldGenesis_TheBuildStreamNeverGoesQuiet(t *testing.T) {
 	t.Cleanup(func() { genesisHeartbeatEvery = oldEvery })
 
 	bridge, err := NewBridgeWithDrivers(
-		map[string]Driver{SeatWorldGenesis.Name: slowGenesisDriver{delay: 250 * time.Millisecond}},
-		SeatWorldGenesis)
+		map[string]Driver{SeatWorldUnderstanding.Name: slowGenesisDriver{delay: 250 * time.Millisecond}},
+		SeatWorldUnderstanding)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}

@@ -973,3 +973,138 @@ func sectionAfter(s, from, until string) string {
 	}
 	return rest
 }
+
+
+// FAKE: world_understanding. Emits a small identity with one rule of each kind so the fill
+// scheduler has real work, and twenty one-line function answers so the schema floor holds.
+type fakeWorldUnderstandingDriver struct{ name string }
+
+func NewFakeWorldUnderstandingDriver() Driver {
+	return &fakeWorldUnderstandingDriver{name: "fake-world-understanding"}
+}
+func (f *fakeWorldUnderstandingDriver) Name() string { return f.name }
+func (f *fakeWorldUnderstandingDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (f *fakeWorldUnderstandingDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: used without a schema", f.name)
+	}
+	brief := parseIdentityBrief(req.Prompt)
+	if brief == "" {
+		return "", fmt.Errorf("%s: no brief in the prompt", f.name)
+	}
+	fns := []string{
+		"who feeds people", "who repairs and makes things", "who moves goods",
+		"what happens to the sick and the dead", "who raises and teaches the young",
+		"where people with nothing sleep", "what exchange is", "what people do for pleasure",
+		"how two ordinary people settle a dispute", "what happens to the old",
+		"what the world does with its waste", "how ordinary people learn ordinary news",
+		"what a normal day's work is", "what people fear that has nothing to do with the bargain",
+		"what people find funny", "what marks status", "what children are warned about",
+		"what a stranger is", "what privacy means", "what counts as clean and dirty",
+	}
+	functions := make([]map[string]any, 0, 20)
+	for _, fn := range fns {
+		functions = append(functions, map[string]any{
+			"function": fn,
+			"answer":   "Here it is done in the open, because the book is the weapon and secrecy is already spent.",
+		})
+	}
+	id := map[string]any{
+		"condition": map[string]any{"text": "Paperwork decides what is real here.", "origin": "axiomatic"},
+		"bargain": map[string]any{
+			"text":      "What is not in the book did not happen.",
+			"therefore": "nothing invented may treat an unrecorded act as publicly known",
+		},
+		"departure": map[string]any{
+			"neighbour": "a crime story about a cargo yard",
+			"how_not":   "the crime is the book itself, not the crates",
+		},
+		"scarce":            "a line in the ledger that is true",
+		"wrongly_abundant":  "crates nobody can admit exist",
+		"exclusions": []map[string]any{{
+			"never": "a person whose name is not in some book", "because": "unrecorded people cannot be owed or paid",
+			"kind": "exist",
+		}},
+		"register": "missing a line, not losing a war",
+		"content_demand": map[string]any{
+			"text":      "the pressure is what the book hides",
+			"therefore": "a scene that never touches a record has not happened",
+		},
+		"voice": []string{
+			"The lamp sits over the open page.",
+			"Someone has already decided what tonight cost.",
+			"The gate is wet and nobody has closed it.",
+		},
+		"functions": functions,
+		"rules": []map[string]any{
+			{"id": "r-water", "kind": "constraining", "text": "what is not written cannot be cited", "therefore": "every public claim needs a line"},
+			{"id": "r-ask", "kind": "generative", "text": "someone has to keep the book, and someone has to move what it names", "therefore": "those two lives exist"},
+			{"id": "r-no", "kind": "prohibiting", "text": "no timetable is enforceable against the book", "therefore": "do not invent a clock that overrules a page"},
+		},
+	}
+	out, err := json.Marshal(id)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+func parseIdentityBrief(prompt string) string {
+	_, rest, ok := strings.Cut(prompt, worldIdentityBriefMarker)
+	if !ok {
+		return parseGenesisBrief(prompt)
+	}
+	if before, _, found := strings.Cut(rest, worldIdentityAnswersMarker); found {
+		rest = before
+	}
+	return strings.TrimSpace(rest)
+}
+
+// FAKE: world_fill. Constraining/prohibiting/voicing emit empty. Generative and sufficiency emit
+// the same complete miniature world the old genesis fake used, so CI still walks a playable world.
+type fakeWorldFillDriver struct{ name string }
+
+func NewFakeWorldFillDriver() Driver { return &fakeWorldFillDriver{name: "fake-world-fill"} }
+func (f *fakeWorldFillDriver) Name() string { return f.name }
+func (f *fakeWorldFillDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (string, error) {
+	if req.Schema == nil {
+		return "", fmt.Errorf("%s: used without a schema", f.name)
+	}
+	kind := fillKindFromPrompt(req.Prompt)
+	if kind == "constraining" || kind == "prohibiting" || kind == "voicing" {
+		return `{"empty":true,"why_empty":"constraint — no entity"}`, nil
+	}
+	brief := parseGenesisBrief(req.Prompt)
+	if brief == "" {
+		brief = "a cargo yard"
+	}
+	// Reuse the genesis fake's complete world as one fill fragment.
+	raw, err := NewFakeWorldGenesisDriver().Generate(context.Background(), GenRequest{
+		Prompt: worldGenesisBriefMarker + "\n" + brief,
+		Schema: json.RawMessage(`{}`),
+	})
+	if err != nil {
+		return "", err
+	}
+	var doc map[string]any
+	if err := json.Unmarshal([]byte(raw), &doc); err != nil {
+		return "", err
+	}
+	doc["empty"] = false
+	out, err := json.Marshal(doc)
+	return string(out), err
+}
+
+func fillKindFromPrompt(prompt string) string {
+	for _, k := range []string{"constraining", "prohibiting", "voicing", "generative"} {
+		if strings.Contains(prompt, "\nkind: "+k+"\n") {
+			return k
+		}
+	}
+	return "generative"
+}

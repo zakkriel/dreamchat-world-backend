@@ -1,0 +1,138 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "world_identity/1",
+  "title": "world_identity/1 — invention rules this world makes about itself. Inferred from the brief. No uuid, coordinate, tick, or count. Every rule carries a therefore.",
+  "type": "object",
+  "required": ["condition", "bargain", "departure", "exclusions", "register", "content_demand", "voice", "functions", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "condition": {
+      "type": "object",
+      "required": ["text", "origin"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "origin": { "type": "string", "enum": ["axiomatic", "contingent"] },
+        "cause": { "type": "string", "minLength": 1 }
+      }
+    },
+    "bargain": {
+      "type": "object",
+      "required": ["text", "therefore"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "therefore": { "type": "string", "minLength": 1 }
+      }
+    },
+    "faces": {
+      "type": "array",
+      "maxItems": 6,
+      "items": {
+        "type": "object",
+        "required": ["life", "text"],
+        "additionalProperties": false,
+        "properties": {
+          "life": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "departure": {
+      "type": "object",
+      "required": ["neighbour", "how_not"],
+      "additionalProperties": false,
+      "properties": {
+        "neighbour": { "type": "string", "minLength": 1 },
+        "how_not": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scarce": { "type": "string", "minLength": 1 },
+    "wrongly_abundant": { "type": "string", "minLength": 1 },
+    "consequence": {
+      "type": "object",
+      "required": ["what", "who"],
+      "additionalProperties": false,
+      "properties": {
+        "what": { "type": "string", "minLength": 1 },
+        "who": { "type": "string", "minLength": 1 }
+      }
+    },
+    "exclusions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["never", "because", "kind"],
+        "additionalProperties": false,
+        "properties": {
+          "never": { "type": "string", "minLength": 1 },
+          "because": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["exist", "happen"] },
+          "enforcement": { "type": "string", "enum": ["engine", "narrator_guidance"] }
+        }
+      }
+    },
+    "register": { "type": "string", "minLength": 1 },
+    "content_demand": {
+      "type": "object",
+      "required": ["text", "therefore"],
+      "additionalProperties": false,
+      "properties": {
+        "text": { "type": "string", "minLength": 1 },
+        "therefore": { "type": "string", "minLength": 1 }
+      }
+    },
+    "voice": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "worked_examples": {
+      "type": "array",
+      "maxItems": 3,
+      "items": {
+        "type": "object",
+        "required": ["tries", "happens"],
+        "additionalProperties": false,
+        "properties": {
+          "tries": { "type": "string", "minLength": 1 },
+          "happens": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "functions": {
+      "type": "array",
+      "minItems": 20,
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "required": ["function", "answer"],
+        "additionalProperties": false,
+        "properties": {
+          "function": { "type": "string", "minLength": 1 },
+          "answer": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 16,
+      "items": {
+        "type": "object",
+        "required": ["id", "kind", "text", "therefore"],
+        "additionalProperties": false,
+        "properties": {
+          "id": { "type": "string", "minLength": 1 },
+          "kind": { "type": "string", "enum": ["constraining", "generative", "prohibiting", "voicing"] },
+          "text": { "type": "string", "minLength": 1 },
+          "therefore": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "flat": { "type": "boolean" }
+  }
+}

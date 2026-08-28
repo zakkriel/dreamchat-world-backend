@@ -18,8 +18,8 @@ package main
 // beat, and the same transport for the same reason. The alternative was a two-minute blank screen ending
 // in a redirect, which tells the user nothing while it works and nothing about why if it fails. Every
 // frame here names something real, in the world's own language; there is no percentage, no ETA and no
-// stage checklist rendered from nothing (law 2: never invent a displayed value). While the one long seat
-// call is in flight the stream also says it is still alive — each liveness line states only measured
+// stage checklist rendered from nothing (law 2: never invent a displayed value). While authoring (identity, then fill)
+// is in flight the stream also says it is still alive — each liveness line states only measured
 // fact (the call is running, and for how long), because a silent minute is indistinguishable from a
 // hang and was reported as one.
 //
@@ -228,17 +228,20 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Authoring first, and it is the slow part: one seat call for a whole world. Nothing is written yet, so
+	// Authoring first, and it is the slow part: identity, then one fill call per scheduled rule. Nothing is written yet, so
 	// a refusal here costs nothing but the call. While the author writes, the stream keeps saying so —
 	// every heartbeat carries only measured fact (the call is in flight, and for how long), never a
 	// percentage or a stage. The heartbeats also keep an idle-sensitive proxy from closing the stream.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
 	stopHeartbeat := stillWriting(frames, start)
-	doc, err := authorWorld(ctx, h.bridge.Driver(SeatWorldGenesis.Name), req.Brief, req.Answers)
+	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), req.Brief, req.Answers)
 	stopHeartbeat()
 	if err != nil {
 		h.fail(frames, err, "")
 		return
+	}
+	if ident != nil {
+		_ = frames.emit("working", map[string]any{"stated": ident.Bargain.Text})
 	}
 
 	// The reply is back and already validated (authorWorld runs every belt check before returning), so
@@ -264,7 +267,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	}
 	worldID, err = func() (string, error) {
 		defer func() { _ = tx.Rollback(ctx) }()
-		id, err := commitWorldContent(ctx, tx, doc, req.Brief, req.ArtStyle)
+		id, err := commitWorldContent(ctx, tx, doc, ident, req.Brief, req.ArtStyle)
 		if err != nil {
 			return "", err
 		}

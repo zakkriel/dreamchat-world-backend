@@ -4205,6 +4205,7 @@ CREATE TABLE public.world (
     art_style text,
     genesis_doc jsonb,
     kickstart_state jsonb,
+    world_identity jsonb,
     CONSTRAINT world_art_style_check CHECK (((art_style IS NULL) OR (length(btrim(art_style)) > 0))),
     CONSTRAINT world_brief_check CHECK (((brief IS NULL) OR (length(btrim(brief)) > 0))),
     CONSTRAINT world_display_name_check CHECK ((length(btrim(display_name)) > 0)),
@@ -4239,6 +4240,13 @@ COMMENT ON COLUMN public.world.brief IS 'The prose a user typed to author this w
 --
 
 COMMENT ON COLUMN public.world.art_style IS 'Requested art style choice for this world (preset key or custom prose). NULL means no explicit choice and resolves to the house fallback profile.';
+
+
+--
+-- Name: COLUMN world.world_identity; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.world.world_identity IS 'world_identity/1 from the understanding pass. Server-side only. NULL if the world was not built this way.';
 
 
 --
@@ -5076,4 +5084,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260821120000'),
     ('20260825120000'),
     ('20260825130000'),
-    ('20260825140000');
+    ('20260825140000'),
+    ('20260828090000');

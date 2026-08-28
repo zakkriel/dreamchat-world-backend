@@ -124,7 +124,7 @@ func TestWorldStatement_LoadedFromTheDocumentAndNeverTheBrief(t *testing.T) {
 	const sentinel = "the ledger keeper skims crates by candlelight and bills the tide for it"
 	const brief = "A cargo yard. " + sentinel + "."
 
-	doc, err := authorWorld(ctx, NewFakeWorldGenesisDriver(), brief, nil)
+	doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), brief, nil)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestWorldStatement_LoadedFromTheDocumentAndNeverTheBrief(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-	worldID, err := commitWorldContent(ctx, tx, doc, brief, "")
+	worldID, err := commitWorldContent(ctx, tx, doc, nil, brief, "")
 	if err != nil {
 		t.Fatalf("commitWorldContent: %v", err)
 	}

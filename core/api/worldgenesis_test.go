@@ -31,7 +31,7 @@ func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
 
-	doc, err := authorWorld(ctx, NewFakeWorldGenesisDriver(), testBrief, nil)
+	doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -42,7 +42,7 @@ func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	}
 	t.Cleanup(func() { _ = tx.Rollback(ctx) })
 
-	worldID, err := commitWorldContent(ctx, tx, doc, testBrief, "")
+	worldID, err := commitWorldContent(ctx, tx, doc, nil, testBrief, "")
 	if err != nil {
 		t.Fatalf("commitWorldContent: %v", err)
 	}
@@ -355,7 +355,7 @@ func castID(t *testing.T, ctx context.Context, tx pgx.Tx, worldID, canonicalName
 // authoredWorld returns the fake's document, decoded — the starting point for corruption tests.
 func authoredWorld(t *testing.T) *genesisDoc {
 	t.Helper()
-	doc, err := authorWorld(context.Background(), NewFakeWorldGenesisDriver(), testBrief, nil)
+	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -440,7 +440,7 @@ func TestWorldGenesis_TheBriefReachesTheSeat(t *testing.T) {
 	if !strings.Contains(strings.ToLower(doc.World.DisplayName), "cargo") {
 		t.Errorf("display_name = %q, want it derived from the brief", doc.World.DisplayName)
 	}
-	if _, err := authorWorld(context.Background(), NewFakeWorldGenesisDriver(), "   ", nil); err == nil {
+	if _, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "   ", nil); err == nil {
 		t.Error("an empty brief was accepted; there is nothing to build from")
 	}
 }
@@ -581,15 +581,14 @@ func TestValidateArrivalCandidates(t *testing.T) {
 }
 
 func TestFakeGenesisEmitsCandidatesUnlessIdentityStated(t *testing.T) {
-	seat := NewFakeWorldGenesisDriver() // match the fake's real constructor name in bridge_fakes.go
-	open, err := authorWorld(context.Background(), seat, "a harbour town at closing time", nil)
+open, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "a harbour town at closing time", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(open.ArrivalCandidates) != 3 {
 		t.Fatalf("identity-open brief: %d candidates, want 3", len(open.ArrivalCandidates))
 	}
-	stated, err := authorWorld(context.Background(), seat, "a harbour town; I am the debt collector", nil)
+	stated, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), "a harbour town; I am the debt collector", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -619,9 +618,10 @@ func kickstartHarnessFor(t *testing.T) *kickstartHarness {
 		return kh
 	}
 	bridge, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatWorldGenesis.Name:   NewFakeWorldGenesisDriver(),
-		SeatWorldKickstart.Name: NewFakeWorldKickstartDriver(),
-	}, SeatWorldGenesis, SeatWorldKickstart)
+		SeatWorldUnderstanding.Name: NewFakeWorldUnderstandingDriver(),
+		SeatWorldFill.Name:          NewFakeWorldFillDriver(),
+		SeatWorldKickstart.Name:     NewFakeWorldKickstartDriver(),
+	}, SeatWorldUnderstanding, SeatWorldFill, SeatWorldKickstart)
 	if err != nil {
 		t.Fatalf("bridge: %v", err)
 	}
