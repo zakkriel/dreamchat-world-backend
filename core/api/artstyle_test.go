@@ -158,7 +158,7 @@ func TestGenesisPersistsTheChosenStyle(t *testing.T) {
 			pool := testPool(t)
 			t.Cleanup(pool.Close)
 
-			doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil)
+			doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), testBrief, nil, nil, nil)
 			if err != nil {
 				t.Fatalf("authorWorld: %v", err)
 			}
