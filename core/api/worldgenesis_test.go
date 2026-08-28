@@ -972,16 +972,16 @@ func TestKickstartKinMaterialized(t *testing.T) {
 			`SELECT count(*) FROM perception_record pr
 			 JOIN perception_subject ps ON ps.perception_id = pr.perception_id
 			 WHERE pr.world_id=$1::uuid AND pr.holder_id=$2::uuid AND ps.entity_id=$3::uuid
-			   AND pr.content=$4 AND pr.acquired_tick=50`,
-			worldID, playerID, kinID, kin).Scan(&playerKnows); err != nil {
+			   AND pr.content=$4 AND pr.acquired_tick=$5`,
+			worldID, playerID, kinID, kin, genesisArrivalTick).Scan(&playerKnows); err != nil {
 			t.Fatalf("player knows %s: %v", kin, err)
 		}
 		if err := pool.QueryRow(ctx,
 			`SELECT count(*) FROM perception_record pr
 			 JOIN perception_subject ps ON ps.perception_id = pr.perception_id
 			 WHERE pr.world_id=$1::uuid AND pr.holder_id=$2::uuid AND ps.entity_id=$3::uuid
-			   AND pr.acquired_tick=50`,
-			worldID, kinID, playerID).Scan(&kinKnows); err != nil {
+			   AND pr.acquired_tick=$4`,
+			worldID, kinID, playerID, genesisArrivalTick).Scan(&kinKnows); err != nil {
 			t.Fatalf("%s knows player: %v", kin, err)
 		}
 		if playerKnows != 1 || kinKnows != 1 {

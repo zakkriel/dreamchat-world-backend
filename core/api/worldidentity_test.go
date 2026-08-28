@@ -624,3 +624,31 @@ func TestNormalisePersonNames_CapitalisesRatherThanRefusing(t *testing.T) {
 		t.Fatalf("a join key was quietly repaired instead of refused: %q", slug.Cast[0].CanonicalName)
 	}
 }
+
+// The tick ladder must have room for the depth the fill schema can produce. A 499-second Andantes
+// build was refused with "too much history to place before the world opens" because scene genesis sat
+// ten ticks above the backstory base while the fill ceilings had been raised for depth. Ticks are
+// logical (B-5, ADR-030), so the gap is spacing — but schema and ladder must not drift apart again.
+func TestTickLadder_HasRoomForTheCanonFillCanAuthor(t *testing.T) {
+	slots := genesisSceneTick - genesisBackstoryBaseTick
+	if slots < 60 {
+		t.Fatalf("only %d backstory slots between tick %d and %d — depth will hit the wall again",
+			slots, genesisBackstoryBaseTick, genesisSceneTick)
+	}
+	if genesisArrivalTick <= genesisSceneTick {
+		t.Fatalf("arrival (%d) must be the world's highest tick, above scene (%d)",
+			genesisArrivalTick, genesisSceneTick)
+	}
+	if genesisNamingTick >= genesisBackstoryBaseTick {
+		t.Fatalf("naming (%d) must precede the backstory (%d)", genesisNamingTick, genesisBackstoryBaseTick)
+	}
+
+	// And the belt must actually accept a deep canon now.
+	doc := &genesisDoc{}
+	for i := 0; i < 40; i++ {
+		doc.History = append(doc.History, genesisEvent{WhatHappened: "something happened"})
+	}
+	if genesisBackstoryBaseTick+int64(len(doc.History)) > genesisSceneTick {
+		t.Fatalf("40 authored events still do not fit before the world opens")
+	}
+}

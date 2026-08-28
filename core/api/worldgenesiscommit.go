@@ -44,20 +44,27 @@ var errWorldAlreadyPlayable = errors.New("this world already has its player — 
 
 // The tick ladder, in the shape the hand-authored world already proves plays correctly:
 //
-//	25  world_genesis — who knows whose name before anything happens
-//	30+ backstory     — one accepted event per authored beat of history, ascending
-//	40  scene genesis — the whole opening state, ordered by beat_seq under one event
-//	50  arrival       — the player walks in; the world's highest tick, and the live
-//	                    handler mints the next beat after it
+//	25   world_genesis — who knows whose name before anything happens
+//	30+  backstory     — one accepted event per authored beat of history, ascending
+//	120  scene genesis — the whole opening state, ordered by beat_seq under one event
+//	130  arrival       — the player walks in; the world's highest tick, and the live
+//	                     handler mints the next beat after it
 //
 // Absolute rather than relative because a world's clock starts at 0 (fn_world_now returns 0 with no
 // events) and every authored perception sets acquired_tick = valid_tick = its source event's tick, which
 // satisfies I-9 by construction. The gaps are deliberate: they leave room to insert without renumbering.
+//
+// THE BACKSTORY GAP WAS 10 AND DEPTH OUTGREW IT. Scene genesis sat at 40, so a world could carry at
+// most ten events before genesisDoc.validate() refused it with "too much history to place before the
+// world opens" — which is exactly what a 499-second Andantes build hit on 2026-08-28 after the fill
+// ceilings were raised for depth. In-world time is a LOGICAL tick ladder with a display label (B-5,
+// ADR-030); these numbers are spacing, not physics, and widening the gap the comment above already
+// describes costs nothing. Ninety slots is far past anything a build has produced.
 const (
 	genesisNamingTick        int64 = 25
 	genesisBackstoryBaseTick int64 = 30
-	genesisSceneTick         int64 = 40
-	genesisArrivalTick       int64 = 50
+	genesisSceneTick         int64 = 120
+	genesisArrivalTick       int64 = 130
 )
 
 // What a person can carry, in the units seed_world_defaults speaks (SPEC-026). The template gives the
