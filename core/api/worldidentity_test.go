@@ -569,3 +569,58 @@ func TestDropUnstorable_CostsTheLeafNotTheWorld(t *testing.T) {
 		t.Fatal("dropUnstorable must not silently remove places or people")
 	}
 }
+
+// A 407-second Andantes build was refused over "once familias" — Spanish for "eleven families", a
+// speakable collective in a Spanish-language world. identifierShapedName assumes English
+// capitalisation. Capitalisation is typography, not content, so it is normalised — and every reference
+// is rewritten with it, or the rename would orphan canon and refuse one check later.
+func TestNormalisePersonNames_CapitalisesRatherThanRefusing(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "once familias", Hiding: "they have not said which heart they heard"},
+		{CanonicalName: "Adaeze", Hiding: "the last two pages are another hand"},
+	}
+	doc.History = []genesisEvent{{
+		WhatHappened: "the rhythm changed and nobody filed it",
+		Where:        "El Lomo",
+		Who:          []string{"once familias", "Adaeze"},
+		Knowledge: []genesisKnowledge{
+			{Holder: "once familias", Content: "we felt it through the floor", EpistemicType: "direct"},
+			{Holder: "Adaeze", Content: "they have stopped reporting", EpistemicType: "inference"},
+		},
+	}}
+	horn := genesisObject{CanonicalName: "The Listening Horn", Descriptor: "a brass cone", Kind: "instrument"}
+	horn.Where.CarriedBy = "once familias"
+	doc.Objects = []genesisObject{horn}
+
+	normalisePersonNames(doc)
+
+	if doc.Cast[0].CanonicalName != "Once Familias" {
+		t.Fatalf("name not normalised: %q", doc.Cast[0].CanonicalName)
+	}
+	if doc.Cast[1].CanonicalName != "Adaeze" {
+		t.Fatalf("an already-capitalised name was disturbed: %q", doc.Cast[1].CanonicalName)
+	}
+	// Every reference must move with it, or canon points at somebody who no longer exists.
+	if doc.History[0].Who[0] != "Once Familias" {
+		t.Fatalf("history.who was orphaned: %v", doc.History[0].Who)
+	}
+	if doc.History[0].Knowledge[0].Holder != "Once Familias" {
+		t.Fatalf("knowledge holder was orphaned: %q", doc.History[0].Knowledge[0].Holder)
+	}
+	if doc.Objects[0].Where.CarriedBy != "Once Familias" {
+		t.Fatalf("carried_by was orphaned: %q", doc.Objects[0].Where.CarriedBy)
+	}
+	// And the normalised name now passes the guard that refused it.
+	if identifierShapedName("Once Familias") {
+		t.Fatal("the normalised name still reads as a join key")
+	}
+
+	// Underscores are NOT normalised — a slug is a signal, not a typo (the Ironmoor breach).
+	slug := &genesisDoc{}
+	slug.Cast = []genesisActor{{CanonicalName: "silas_holton", Hiding: "h"}}
+	normalisePersonNames(slug)
+	if slug.Cast[0].CanonicalName != "silas_holton" {
+		t.Fatalf("a join key was quietly repaired instead of refused: %q", slug.Cast[0].CanonicalName)
+	}
+}
