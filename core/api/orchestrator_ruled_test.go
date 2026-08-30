@@ -11,13 +11,15 @@ import (
 
 // inlineRulingDriver returns a fixed ruling JSON string regardless of the prompt.
 type inlineRulingDriver struct {
-	name    string
-	ruling  string
+	name      string
+	ruling    string
 	callCount int
 }
 
-func (d *inlineRulingDriver) Name() string                { return d.name }
-func (d *inlineRulingDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (d *inlineRulingDriver) Name() string { return d.name }
+func (d *inlineRulingDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (d *inlineRulingDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without schema", d.name)
@@ -28,13 +30,15 @@ func (d *inlineRulingDriver) Generate(_ context.Context, req GenRequest) (string
 
 // countingRulingDriver returns different rulings on successive calls.
 type countingRulingDriver struct {
-	name     string
-	rulings  []string
+	name      string
+	rulings   []string
 	callCount int
 }
 
-func (d *countingRulingDriver) Name() string                { return d.name }
-func (d *countingRulingDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (d *countingRulingDriver) Name() string { return d.name }
+func (d *countingRulingDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (d *countingRulingDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without schema", d.name)

@@ -87,12 +87,12 @@ type mintEnvelope struct {
 	ActionType        *string      `json:"actionType"`
 	MovementModifiers []mintModRow `json:"movementModifiers"`
 	// artifact / place
-	Size             *float64    `json:"size"`
-	MaxRoom          *float64    `json:"maxRoom"`
-	Coordinate       *mintCoord  `json:"coordinate"`
-	ParentArea       *mintArea   `json:"parentArea"`
-	LocationID       *string     `json:"locationId"`
-	ParentLocationID *string     `json:"parentLocationId"`
+	Size             *float64   `json:"size"`
+	MaxRoom          *float64   `json:"maxRoom"`
+	Coordinate       *mintCoord `json:"coordinate"`
+	ParentArea       *mintArea  `json:"parentArea"`
+	LocationID       *string    `json:"locationId"`
+	ParentLocationID *string    `json:"parentLocationId"`
 }
 
 // validateMints returns the SHAPE + BOUNDS violations across a ruling's mints slice (empty = pass).

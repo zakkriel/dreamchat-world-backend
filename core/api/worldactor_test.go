@@ -163,8 +163,10 @@ func TestBuildWorldActorPrompt_CarriesRulesAndSlice(t *testing.T) {
 // on where the seed happens to have put people.
 type misScopedWorldActorDriver struct{ actorID, destID string }
 
-func (d *misScopedWorldActorDriver) Name() string                { return "mis-scoped-world-actor" }
-func (d *misScopedWorldActorDriver) Capabilities() CapabilitySet { return CapabilitySet{CapStructuredOutput: true} }
+func (d *misScopedWorldActorDriver) Name() string { return "mis-scoped-world-actor" }
+func (d *misScopedWorldActorDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
 func (d *misScopedWorldActorDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("mis-scoped-world-actor: used without a schema")

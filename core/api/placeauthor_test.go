@@ -37,7 +37,7 @@ func paCreateLocation(t *testing.T, ctx context.Context, pool *pgxpool.Pool, wor
 	}
 	attrs, err := json.Marshal(map[string]any{
 		"parent_location_id": parentID,
-		"coordinates":         map[string]float64{"x": x, "y": y},
+		"coordinates":        map[string]float64{"x": x, "y": y},
 	})
 	if err != nil {
 		t.Fatalf("paCreateLocation: marshal attrs: %v", err)

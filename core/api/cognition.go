@@ -1,9 +1,18 @@
 package main
 
+// Governed-by: D-1 — the LLM proposes, a deterministic gate decides. This file IS that gate for the
+// cognition seats: present-actor-only, the closed `none | commit | telegraph` set, and the shared
+// validateAttemptFields — the same shapes and the same pipeline as the player's chain, no bypass.
+// Also ADR-009 — the closed attempt vocabulary (allowedBeatTypesV2, minus UNRESOLVED and QUERY,
+// because NPCs act and never ask) is the post-hoc belt behind the structured-output leash, exactly
+// as ruling.go is that belt for the player's chain.
+// Derived 2026-08-28 from this file's own checks — promoted out of docs/domains/npc-cognition.tech.md,
+// where it was prose no test could hold (D-9).
+
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
-	_ "embed"
 )
 
 //go:embed schema/npc_attempts.v1.schema.json
