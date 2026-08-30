@@ -962,6 +962,48 @@ retires a category of per-entity model cost.
 
 **Status, newest first.**
 
+**STANDING INSTRUMENT BUILT 2026-08-30.** `ci/host_conformance.sh` — one command that dumps the real
+assembled decompose prompt and schema from the real call path, then replays those exact bytes against
+each allowlisted host **one at a time** with `allow_fallbacks: false`, and scores a fixed 12-sentence
+corpus (`ci/host_conformance_corpus.tsv`) covering every branch a player reaches by typing. It reads
+the binding from `railway variables` itself, and prints it, because a score without its binding is
+worthless. Not a CI gate: it spends real money. **Run it whenever the allowlist changes or a host is
+added.** Until it existed, this whole class of defect was invisible — that is why the fix below was
+found by four rounds of guessing rather than by a measurement.
+
+It reports **three** numbers per host, never one: `correct`, `wrong`, `unavailable`. Collapsing the
+last two is exactly what made this bug take four rounds — a rate-limited host and a mis-parsing host
+both read as "scored badly", and only one of them corrupts a world. Exit status is non-zero **only**
+for `wrong`.
+
+**NEW FINDING, first run of the instrument, 2026-08-30. `parasail` mis-parses object handover.**
+Same binding, byte-identical input, one host pinned per run:
+
+| host | correct | wrong | unavailable |
+|---|---|---|---|
+| `coreweave` | 36 | 0 | 0 |
+| `deepinfra` | 15 | 0 | 21 — all HTTP 429 (capacity, not conformance) |
+| `ionstream` | 0 | 0 | 36 — all HTTP 404 (does not serve this model) |
+| `parasail` | 33 | **3** | 0 |
+
+Isolated on the failing sentence with more samples: `I hand the Sealed Note to Mara` →
+**`parasail` 0 of 6 correct**, returning `Communicated` every time; `coreweave` correct every time.
+Deterministic and host-specific: handing an object becomes *speech*, so the note never moves and the
+player is told they said something. `ObjectRelocated` is in the vocabulary (see SPEC-037's correction)
+— this is not a missing verb, it is a host answering wrongly.
+
+**Not acted on, deliberately.** Removing `parasail` would leave `coreweave` as the only host that both
+serves this model and parses correctly, with `deepinfra` rate-limited and `ionstream` unable to serve
+it at all. That is a capacity decision, not an engineering one, and it needs a founder call. The
+numbers are here so the call can be made from evidence.
+
+**DEPLOY CONFIRMED 2026-08-30.** The `venice` removal below was staged with `--skip-deploys`, and
+whether the running container had picked it up was **asserted rather than checked** — Railway exposes
+no timestamp on a variable, so it was not provable either way. Settled by redeploying the same commit
+(`9405cd58`, `reason: redeploy`, 14:55:34Z) and watching it boot: 13 seats `(routed)`, allowlist
+`coreweave, deepinfra, ionstream, parasail`, no `venice`. Now true by construction rather than by
+argument.
+
 **ACTION TAKEN 2026-08-28: `venice` removed from `DREAMCHAT_PROVIDER_OPENROUTER_ROUTING.only`**
 (set with `--skip-deploys`, so it is staged and takes effect on the NEXT deploy — seat config is read
 at boot). Removed from `only` rather than added to `ignore` so the two lists cannot contradict each
