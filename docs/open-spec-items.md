@@ -962,6 +962,26 @@ retires a category of per-entity model cost.
 
 **Status, newest first.**
 
+**ACTION TAKEN 2026-08-30: `parasail` removed from `DREAMCHAT_PROVIDER_OPENROUTER_ROUTING.only`.**
+Founder call, on the numbers below. Live and verified, not staged: the variable set triggered a deploy
+(`15:20:34Z`, `reason: deploy`), the container booted `15:20:47Z` with seats `(routed)`, and production
+answers. The allowlist is now `coreweave, deepinfra, ionstream`. Removed from `only` rather than added
+to `ignore`, so the two lists cannot contradict each other; nothing else in the policy changed.
+
+**IF CAPACITY BECOMES THE PROBLEM, `parasail` IS THE SECOND-BEST CALL — put it back, knowingly.**
+This is written down because the next person to hit 429s will otherwise re-add it blind, or worse,
+widen the allowlist back to hosts that cannot serve the model at all. The ranking, measured:
+
+| if you need more capacity | do this | what it costs you |
+|---|---|---|
+| 1st | `parasail` back into `only` | object handover mis-parses: `I hand X to Y` becomes `Communicated` — the object never moves and the player is told they spoke. Everything else measured 33/36. |
+| 2nd | raise the `deepinfra` share (it is `sort: latency`, so it loses to `coreweave`) | nothing on correctness — it was 15/15 correct, its 21 misses were all HTTP 429. Capacity, not conformance. |
+| never | `ionstream` | it does not serve `deepseek-v4-flash` at all — 36/36 HTTP 404. It stays in `only` harmlessly (the router skips it) but it is not capacity. |
+| never | `venice` | 6/24 wrong, the original defect. |
+
+**Re-run `ci/host_conformance.sh` before and after any such change.** A host's behaviour is not a
+constant, and this table is a measurement with a date on it, not a property.
+
 **STANDING INSTRUMENT BUILT 2026-08-30.** `ci/host_conformance.sh` — one command that dumps the real
 assembled decompose prompt and schema from the real call path, then replays those exact bytes against
 each allowlisted host **one at a time** with `allow_fallbacks: false`, and scores a fixed 12-sentence
