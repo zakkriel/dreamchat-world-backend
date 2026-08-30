@@ -825,3 +825,43 @@ func TestArrivalYieldsToCanon_HistoryIsNeverEdited(t *testing.T) {
 		t.Fatal("Elián was removed from the record of an event they were part of")
 	}
 }
+
+// Canon exists once. History used to merge by blind append, which was already wrong — the ascent
+// revisits layers and repair re-answers — and became a hazard when the per-person calls started running
+// together: independent writers describing the same night produced one event each. A perception may
+// disagree freely because it belongs to one holder; the event underneath it does not multiply.
+func TestMergeFill_CanonExistsOnceAndGainsItsWitnesses(t *testing.T) {
+	doc := &genesisDoc{}
+	var tags []taggedName
+
+	first := &fillFragment{History: []genesisEvent{{
+		WhatHappened: "The heart stumbled and nobody wrote it down.",
+		Where:        "El Lomo",
+		Who:          []string{"Adaeze"},
+		Knowledge:    []genesisKnowledge{{Holder: "Adaeze", Content: "the rhythm changed", EpistemicType: "direct"}},
+	}}}
+	mergeFill(doc, first, "people", &tags)
+
+	// The same night, told again by another person's call — with a witness and a belief the first lacked.
+	second := &fillFragment{History: []genesisEvent{{
+		WhatHappened: "the heart stumbled and nobody wrote it down.",
+		Where:        "El Lomo",
+		Who:          []string{"Ferro"},
+		Knowledge: []genesisKnowledge{
+			{Holder: "Ferro", Content: "she heard it and said nothing", EpistemicType: "inference"},
+			{Holder: "Adaeze", Content: "the rhythm changed", EpistemicType: "direct"},
+		},
+	}}}
+	mergeFill(doc, second, "person:Ferro", &tags)
+
+	if len(doc.History) != 1 {
+		t.Fatalf("canon multiplied: %d events for one night", len(doc.History))
+	}
+	h := doc.History[0]
+	if len(h.Who) != 2 {
+		t.Fatalf("the second witness was lost: %v", h.Who)
+	}
+	if len(h.Knowledge) != 2 {
+		t.Fatalf("want both holders' beliefs once each, got %d", len(h.Knowledge))
+	}
+}

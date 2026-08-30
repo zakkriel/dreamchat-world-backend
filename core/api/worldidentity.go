@@ -274,7 +274,13 @@ func ascentSchedule(doc *genesisDoc) []workItem {
 				"What do they believe, including what they believe that is not true? What do they say to themselves? " +
 				"What happened to them that still shows in how they behave? What do they want, and what would they " +
 				"give up for it? And three or four lines in their own voice. Their upbringing and their temperament " +
-				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake.",
+				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake. " +
+				"AND WHAT THIS PERSON KNOWS ABOUT THE OTHERS: every other person is listed below with what they hide " +
+				"and where they stand, so give this one their beliefs about them — what they have right, what they " +
+				"have wrong, what they suspect and cannot prove. A perception belongs to ONE holder, so yours may " +
+				"contradict theirs; that disagreement is the world working. " +
+				"DO NOT INVENT NEW CANON. The events already exist — attach this person's knowledge to them rather " +
+				"than authoring the night again from their side.",
 			Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
 		})
 	}
@@ -769,7 +775,24 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 			*tags = append(*tags, taggedName{Kind: "object", Name: o.CanonicalName, Rule: ruleID})
 		}
 	}
-	doc.History = append(doc.History, frag.History...)
+	// Canon dedupes on (what happened, where). This was a blind append, which was already wrong — the
+	// ascent revisits layers and a repair pass re-answers — and became a hazard the moment the
+	// per-person calls ran together: seven independent writers describing the same night produced seven
+	// events. Canon is the shared record; a perception is per-holder and may disagree freely, but the
+	// event underneath it exists once.
+	for _, h := range frag.History {
+		if !hasEvent(doc, h) {
+			doc.History = append(doc.History, h)
+			continue
+		}
+		// Same event, arriving again with witnesses or knowledge the first telling did not have.
+		for i := range doc.History {
+			if sameEvent(doc.History[i], h) {
+				deepenEvent(&doc.History[i], h)
+				break
+			}
+		}
+	}
 	if frag.Arrival != nil && strings.TrimSpace(doc.Arrival.CanonicalName) == "" {
 		doc.Arrival = *frag.Arrival
 	}
@@ -786,6 +809,40 @@ func hasPlace(d *genesisDoc, name string) bool {
 	}
 	return false
 }
+func sameEvent(a, b genesisEvent) bool {
+	return strings.EqualFold(strings.TrimSpace(a.WhatHappened), strings.TrimSpace(b.WhatHappened)) &&
+		strings.TrimSpace(a.Where) == strings.TrimSpace(b.Where)
+}
+
+func hasEvent(d *genesisDoc, h genesisEvent) bool {
+	for _, existing := range d.History {
+		if sameEvent(existing, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// deepenEvent folds a second telling of the same event into the first: more witnesses, more holders.
+// Nothing is overwritten — canon is append-only in spirit here too, and two holders of the same event
+// are expected to believe different things about it.
+func deepenEvent(have *genesisEvent, add genesisEvent) {
+	have.Who = appendNew(have.Who, add.Who)
+	for _, k := range add.Knowledge {
+		dup := false
+		for _, existing := range have.Knowledge {
+			if strings.TrimSpace(existing.Holder) == strings.TrimSpace(k.Holder) &&
+				strings.EqualFold(strings.TrimSpace(existing.Content), strings.TrimSpace(k.Content)) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			have.Knowledge = append(have.Knowledge, k)
+		}
+	}
+}
+
 func hasFaction(d *genesisDoc, name string) bool {
 	for _, f := range d.Factions {
 		if f.CanonicalName == name {
