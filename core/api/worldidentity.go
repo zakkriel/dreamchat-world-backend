@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -273,7 +274,13 @@ func ascentSchedule(doc *genesisDoc) []workItem {
 				"What do they believe, including what they believe that is not true? What do they say to themselves? " +
 				"What happened to them that still shows in how they behave? What do they want, and what would they " +
 				"give up for it? And three or four lines in their own voice. Their upbringing and their temperament " +
-				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake.",
+				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake. " +
+				"AND WHAT THIS PERSON KNOWS ABOUT THE OTHERS: every other person is listed below with what they hide " +
+				"and where they stand, so give this one their beliefs about them — what they have right, what they " +
+				"have wrong, what they suspect and cannot prove. A perception belongs to ONE holder, so yours may " +
+				"contradict theirs; that disagreement is the world working. " +
+				"DO NOT INVENT NEW CANON. The events already exist — attach this person's knowledge to them rather " +
+				"than authoring the night again from their side.",
 			Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
 		})
 	}
@@ -405,7 +412,54 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	log.Printf("fill: descent authored %d place(s), %d faction(s), %d concept(s), %d person(s), %d object(s); ascent is %d item(s)",
 		len(doc.Places), len(doc.Factions), len(doc.Concepts), len(doc.Cast), len(doc.Objects), len(ascent))
 	_ = ascentFrom
-	for _, item := range append(ascent, arrivalWork()) {
+
+	// THE PER-PERSON CALLS ARE INDEPENDENT OF EACH OTHER, so they run at once.
+	//
+	// Each one authors one person's inner life from the same document, and nothing in it reads another
+	// person's answer — the interdependence is between LAYERS, not between people inside a layer. Run
+	// sequentially they were the largest avoidable cost in the build: measured 2026-08-28, seven people
+	// at ~30 s each was ~210 s of waiting for no reason, and it grows linearly with the roster while a
+	// parallel pass does not.
+	//
+	// I previously told the founder that parallelising "buys almost nothing". That was true of the
+	// layers and wrong about the items inside one, and this is the correction.
+	//
+	// Merging stays SERIAL, after the wave: mergeFill mutates the document and dedupes by name, and the
+	// ascent's own ordering (artifacts, then people, then concepts, then factions, then places) is
+	// preserved because only the person items are hoisted out.
+	people, rest := splitPersonWork(ascent)
+	if len(people) > 0 {
+		frags := make([]*fillFragment, len(people))
+		var wg sync.WaitGroup
+		for i, item := range people {
+			wg.Add(1)
+			go func(i int, item workItem) {
+				defer wg.Done()
+				frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+				if err != nil && IsGenesisRefusal(err) {
+					log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
+					frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
+				}
+				if err != nil {
+					log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
+					return
+				}
+				frags[i] = frag
+			}(i, item)
+		}
+		wg.Wait()
+		merged := 0
+		for i, frag := range frags {
+			if frag == nil {
+				continue
+			}
+			mergeFill(doc, frag, mergeTag(people[i]), &tags)
+			merged++
+		}
+		log.Printf("fill: %d person call(s) ran together, %d answered", len(people), merged)
+	}
+
+	for _, item := range append(rest, arrivalWork()) {
 		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
 		if err != nil && IsGenesisRefusal(err) {
 			log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
@@ -497,6 +551,19 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 
 // mergeTag names the work item a piece of content came from, for scoped retraction. Per-item work carries
 // its subject, so "person" becomes "person:Adaeze" and a review can name exactly which call to blame.
+// splitPersonWork separates the per-item person work from the layer work. Only the person items are
+// safe to run together — the layers above and below them are ordered by construction.
+func splitPersonWork(items []workItem) (people, rest []workItem) {
+	for _, it := range items {
+		if it.ID == "person" && strings.TrimSpace(it.Subject) != "" {
+			people = append(people, it)
+			continue
+		}
+		rest = append(rest, it)
+	}
+	return people, rest
+}
+
 func mergeTag(item workItem) string {
 	if s := strings.TrimSpace(item.Subject); s != "" {
 		return item.ID + ":" + s
@@ -708,7 +775,24 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 			*tags = append(*tags, taggedName{Kind: "object", Name: o.CanonicalName, Rule: ruleID})
 		}
 	}
-	doc.History = append(doc.History, frag.History...)
+	// Canon dedupes on (what happened, where). This was a blind append, which was already wrong — the
+	// ascent revisits layers and a repair pass re-answers — and became a hazard the moment the
+	// per-person calls ran together: seven independent writers describing the same night produced seven
+	// events. Canon is the shared record; a perception is per-holder and may disagree freely, but the
+	// event underneath it exists once.
+	for _, h := range frag.History {
+		if !hasEvent(doc, h) {
+			doc.History = append(doc.History, h)
+			continue
+		}
+		// Same event, arriving again with witnesses or knowledge the first telling did not have.
+		for i := range doc.History {
+			if sameEvent(doc.History[i], h) {
+				deepenEvent(&doc.History[i], h)
+				break
+			}
+		}
+	}
 	if frag.Arrival != nil && strings.TrimSpace(doc.Arrival.CanonicalName) == "" {
 		doc.Arrival = *frag.Arrival
 	}
@@ -725,6 +809,40 @@ func hasPlace(d *genesisDoc, name string) bool {
 	}
 	return false
 }
+func sameEvent(a, b genesisEvent) bool {
+	return strings.EqualFold(strings.TrimSpace(a.WhatHappened), strings.TrimSpace(b.WhatHappened)) &&
+		strings.TrimSpace(a.Where) == strings.TrimSpace(b.Where)
+}
+
+func hasEvent(d *genesisDoc, h genesisEvent) bool {
+	for _, existing := range d.History {
+		if sameEvent(existing, h) {
+			return true
+		}
+	}
+	return false
+}
+
+// deepenEvent folds a second telling of the same event into the first: more witnesses, more holders.
+// Nothing is overwritten — canon is append-only in spirit here too, and two holders of the same event
+// are expected to believe different things about it.
+func deepenEvent(have *genesisEvent, add genesisEvent) {
+	have.Who = appendNew(have.Who, add.Who)
+	for _, k := range add.Knowledge {
+		dup := false
+		for _, existing := range have.Knowledge {
+			if strings.TrimSpace(existing.Holder) == strings.TrimSpace(k.Holder) &&
+				strings.EqualFold(strings.TrimSpace(existing.Content), strings.TrimSpace(k.Content)) {
+				dup = true
+				break
+			}
+		}
+		if !dup {
+			have.Knowledge = append(have.Knowledge, k)
+		}
+	}
+}
+
 func hasFaction(d *genesisDoc, name string) bool {
 	for _, f := range d.Factions {
 		if f.CanonicalName == name {
