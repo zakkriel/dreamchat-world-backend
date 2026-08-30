@@ -254,7 +254,7 @@ func (s *sseReader) nextRaw() ([]byte, error) {
 // the SAME coverage, so every one of those tests is repointed at /beats and its response collapsed
 // back into the identical shape here, rather than rewriting dozens of assertions against frames.
 
-// collapseBeatFrames re-assembles a driven /beats (or /beats/continue) SSE response into the
+// collapseBeatFrames re-assembles a driven /beats SSE response into the
 // pre-Task-5 beat_result/3 JSON envelope: schema_version, narration (the legacy joined narrator-view
 // string, reconstructed by narrateMessages's own rule — speech quoted under its label, everything
 // else verbatim), messages, and result{committed, halt_reason, ticks_advanced, unresolved_candidates,
@@ -1078,7 +1078,7 @@ func TestGenBeatFramePayloads(t *testing.T) {
 // beathandler.go's route (beatRoute), its Match, and its ServeHTTP entry point are gone outright — no
 // alias, no deprecation shim (founder-approved 2026-08-07; the only caller was the founder's own
 // throwaway test page). This drives the real router type (main.go) wired with every handler that could
-// plausibly claim a /worlds/{w}/beat... path — scene/current, /beats, and /beats/continue all anchor on
+// plausibly claim a /worlds/{w}/beat... path — scene/current and /beats both anchor on
 // different suffixes, so none of them match the deleted singular pattern and the router falls through
 // to its own 404, exactly as a live server would.
 func TestOldBeatEndpointIsGone(t *testing.T) {
@@ -1099,16 +1099,25 @@ func TestOldBeatEndpointIsGone(t *testing.T) {
 	}
 }
 
-// ── TestBeatsContinue_AdvancesAJourneyOneLeg ────────────────────────────────────────────────────────
+// ── TestBeatsFrame_ArrivalShowsAsArrivedNotNull ─────────────────────────────────────────────────────
 
-// continueBridge binds fakes to every seat beatsStreamHandler's Orchestrator construction can reach
-// (matching main.go's own full seat list) — a continue press never calls decompose, but the journey
-// leg it runs still exercises world-first cognition and, if a leg lands somewhere unknown, PlaceAuthor.
-func continueBridge(t *testing.T) *Bridge {
+// journeyBridge binds fakes to every seat beatsStreamHandler's Orchestrator construction can reach
+// (matching main.go's own full seat list). Decompose is scripted to turn the walk sentence into a real
+// ActorMoved chain; the journey it starts still exercises world-first cognition and, if a leg lands
+// somewhere unknown, PlaceAuthor.
+func journeyBridge(t *testing.T, walkSentence, goalID string) *Bridge {
+	t.Helper()
+	chain := `[{"type":"ActorMoved","stated":"` + walkSentence + `","to_target_id":"` + goalID + `"}]`
+	return fakeSeatBridge(t, map[string]string{walkSentence: chain})
+}
+
+// fakeSeatBridge is journeyBridge's body with the decompose script left open: an empty table means the
+// fake returns the empty chain for anything, which is how a test asks for "the parse bound nothing".
+func fakeSeatBridge(t *testing.T, decomposeTable map[string]string) *Bridge {
 	t.Helper()
 	bridge, err := NewBridgeWithDrivers(map[string]Driver{
-		SeatDecompose.Name:         NewFakeStructuredDriver("fake-structured:continue", nil),
-		SeatNarrate.Name:           NewFakeTextDriver("fake-text:continue"),
+		SeatDecompose.Name:         NewFakeStructuredDriver("fake-structured:journey", decomposeTable),
+		SeatNarrate.Name:           NewFakeTextDriver("fake-text:journey"),
 		SeatResolve.Name:           NewFakeResolveDriver(),
 		SeatCognitionBatch.Name:    NewFakeCognitionDriver(),
 		SeatCognitionIsolated.Name: NewFakeCognitionDriver(),
@@ -1116,20 +1125,24 @@ func continueBridge(t *testing.T) *Bridge {
 		SeatPlaceAuthor.Name:       NewFakePlaceAuthorDriver(),
 	}, SeatDecompose, SeatNarrate, SeatResolve, SeatCognitionBatch, SeatCognitionIsolated, SeatWorldActor, SeatPlaceAuthor)
 	if err != nil {
-		t.Fatalf("continueBridge: %v", err)
+		t.Fatalf("fakeSeatBridge: %v", err)
 	}
 	return bridge
 }
 
-// beatsContinueFrames drives one POST /worlds/{w}/beats/continue (no body) through h and returns the
-// journey and result frames it emitted (nil journey = the frame carried a real JSON null).
-func beatsContinueFrames(t *testing.T, h http.Handler, worldID, viewerID string) (*journeyBlock, resultBlock) {
+// beatsTypedFrames drives one POST /worlds/{w}/beats carrying text through h and returns the journey
+// and result frames it emitted (nil journey = the frame carried a real JSON null).
+func beatsTypedFrames(t *testing.T, h http.Handler, worldID, viewerID, text string) (*journeyBlock, resultBlock) {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats/continue?viewer="+viewerID, nil)
+	body, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		t.Fatalf("marshal body: %v", err)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/worlds/"+worldID+"/beats?viewer="+viewerID, bytes.NewReader(body))
 	rec := httptest.NewRecorder()
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("continue status = %d, want 200: %s", rec.Code, rec.Body.String())
+		t.Fatalf("beat status = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	sr := newSSEReader(bytes.NewReader(rec.Body.Bytes()))
 	var journeyGot *journeyBlock
@@ -1148,8 +1161,8 @@ func beatsContinueFrames(t *testing.T, h http.Handler, worldID, viewerID string)
 		case "interpretation":
 			sawInterpretation = true
 			chain, _ := frame["chain"].([]any)
-			if len(chain) != 0 {
-				t.Fatalf("interpretation chain = %v, want empty (continue is an empty chain — orchestrator.go's RunBeat docstring)", chain)
+			if len(chain) != 1 {
+				t.Fatalf("interpretation chain = %v, want the one scripted ActorMoved", chain)
 			}
 		case "journey":
 			var f journeyFrame
@@ -1171,104 +1184,52 @@ func beatsContinueFrames(t *testing.T, h http.Handler, worldID, viewerID string)
 	return journeyGot, resultGot
 }
 
-// TestBeatsContinue_AdvancesAJourneyOneLeg pins rung3 Task 5's continue route: POST
-// /worlds/{w}/beats/continue carries no body and advances an active journey by EXACTLY one leg — never
-// a fast-forward (C-6). Mechanically it is RunBeat with an empty chain, which rung 2 already defined as
-// the continue press; this proves the ROUTE wires that through end to end, with no decompose call, and
-// that the journey frame reports the progress.
-func TestBeatsContinue_AdvancesAJourneyOneLeg(t *testing.T) {
-	pool := testPool(t)
-	t.Cleanup(func() { pool.Close() })
-	ctx := context.Background()
-	wtDisableWorldActor(t, ctx, pool, dlWorldID) // no stray eruption may cut the leg short mid-assertion.
-
-	orc := wtOrchestrator(pool)
-	baseTick := wtBaseTick(t, ctx, pool)
-
-	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
-	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
-	if err != nil {
-		t.Fatalf("startJourney: %v", err)
-	}
-	if j.LegsTotal < 2 {
-		t.Fatalf("fixture sanity: LegsTotal = %d, want >= 2 (one continue press must land mid-trip, not on arrival)", j.LegsTotal)
-	}
-	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
-	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
-	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
-
-	h := NewBeatsStreamHandler(pool, true, continueBridge(t))
-	journeyGot, resultGot := beatsContinueFrames(t, h, dlWorldID, dlKadeID)
-
-	if resultGot.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want journey_leg (one continue press advances one leg of %d, never arriving early in this fixture)", resultGot.HaltReason, j.LegsTotal)
-	}
-	if journeyGot == nil {
-		t.Fatalf("journey frame = null, want the journey mid-trip")
-	}
-	if journeyGot.LegsDone != 1 {
-		t.Fatalf("journey.legs_done = %d, want exactly 1 (one continue press = one leg, never a fast-forward — C-6)", journeyGot.LegsDone)
-	}
-	if journeyGot.Status != "active" {
-		t.Fatalf("journey.status = %q, want active (the trip is not over after one leg)", journeyGot.Status)
-	}
-	if journeyGot.Progress <= 0 {
-		t.Fatalf("journey.progress = %v, want > 0 after one leg", journeyGot.Progress)
-	}
-
-	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
-}
-
-// ── TestBeatsFrame_ArrivalShowsAsArrivedNotNull ─────────────────────────────────────────────────────
-
 // TestBeatsFrame_ArrivalShowsAsArrivedNotNull is rung3 Task 5's correction: journeyBlock's own
 // activeJourney lookup only ever returns a status='active' row, so the beat in which a journey ARRIVES
 // used to project journey: null at exactly the moment the play page most needed to say "arrived". The
 // fix (BeatOutcome.Journey, orchestrator.go; projectJourneyBlock, journey.go) makes the beat stream's
-// journey frame prefer the journey the beat itself just touched. This drives a real travel journey to
-// arrival through repeated /beats/continue presses and asserts the ARRIVAL beat's journey frame reports
-// status "arrived", never null.
+// journey frame prefer the journey the beat itself just touched.
+//
+// It drove that with repeated /beats/continue presses until 2026-08-28. Journeys now run their own
+// legs inside the beat (runJourneyToCompletion) and the continue route is deleted, so ONE typed
+// sentence starts the walk and finishes it — which makes this a stronger test of the same property:
+// the arrival frame is the FIRST frame the player ever sees for this trip, and if it read null the
+// play page would show a walk that silently never happened.
 func TestBeatsFrame_ArrivalShowsAsArrivedNotNull(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
 	wtDisableWorldActor(t, ctx, pool, dlWorldID)
+	wtSetTavernTension(t, ctx, pool, "tense") // 30 s budget, so the walk cannot fit the beat and must become a journey.
 
-	orc := wtOrchestrator(pool)
 	baseTick := wtBaseTick(t, ctx, pool)
-
-	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
-	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
-	if err != nil {
-		t.Fatalf("startJourney: %v", err)
-	}
-	legsTotal := j.LegsTotal
-	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
 	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
 	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+	t.Cleanup(func() { jaDeleteJourneys(t, pool, dlWorldID, dlKadeID) })
 
-	h := NewBeatsStreamHandler(pool, true, continueBridge(t))
+	// Far enough that the walk cannot fit the 30 s budget, with its own open door — the same geometry
+	// the quiet-road acceptance test uses, so the trip must become a journey rather than resolve inline.
+	goalID := paCreateLocation(t, ctx, pool, dlWorldID, "The Long Wharf (arrival-frame test)", paHarborQuarterID, 400, 200)
+	jaOpenPortal(t, ctx, pool, dlWorldID, wtTavernID, goalID, "the wharf door (arrival-frame test)")
 
-	var lastJourney *journeyBlock
-	var lastResult resultBlock
-	for range legsTotal {
-		lastJourney, lastResult = beatsContinueFrames(t, h, dlWorldID, dlKadeID)
-		if lastResult.HaltReason == "journey_arrived" {
-			break
-		}
+	const walk = "I walk out to the long wharf"
+	h := NewBeatsStreamHandler(pool, true, journeyBridge(t, walk, goalID))
+	journeyGot, resultGot := beatsTypedFrames(t, h, dlWorldID, dlKadeID, walk)
+
+	if resultGot.HaltReason != "journey_arrived" {
+		t.Fatalf("halt_reason = %q, want journey_arrived — one sentence, and the quiet road carries the walk to its end", resultGot.HaltReason)
 	}
-
-	if lastResult.HaltReason != "journey_arrived" {
-		t.Fatalf("final halt_reason = %q, want journey_arrived (the fixture must reach arrival within %d legs)", lastResult.HaltReason, legsTotal)
-	}
-	if lastJourney == nil {
+	if journeyGot == nil {
 		t.Fatalf("the arrival beat's journey frame = null, want status \"arrived\" (rung3 Task 5 correction: activeJourney only ever returns 'active' rows)")
 	}
-	if lastJourney.Status != "arrived" {
-		t.Fatalf("the arrival beat's journey.status = %q, want arrived", lastJourney.Status)
+	if journeyGot.Status != "arrived" {
+		t.Fatalf("the arrival beat's journey.status = %q, want arrived", journeyGot.Status)
 	}
-	if lastJourney.Active {
+	if journeyGot.Active {
 		t.Fatalf("the arrival beat's journey.active = true, want false (the trip is over)")
+	}
+	if journeyGot.LegsDone < 1 {
+		t.Fatalf("journey.legs_done = %d, want the legs it actually walked", journeyGot.LegsDone)
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))

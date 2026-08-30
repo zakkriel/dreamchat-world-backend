@@ -444,20 +444,19 @@ func TestRunJourneyLeg_WatchHorizonExpiresUnresolved(t *testing.T) {
 	}
 }
 
-// Task 7 — continue, and changing your mind (R6): "the actions are all typed… there is no waiting or
-// loading, so the user cannot ever interrupt its own actions while they are being computed unless the
-// world interrupts him first. And after an interruption the user has full autonomy." In this rung
-// "continue" IS an empty chain (rung 3 maps POST /beats/continue onto exactly that) — RunBeat reads
-// the actor's active journey fresh, then routes: an empty chain runs one leg IN PLACE OF the normal
-// chain/floor path; any other chain ends the journey and falls through to an ordinary beat.
+// Task 7 — changing your mind (R6): "the actions are all typed… there is no waiting or loading, so
+// the user cannot ever interrupt its own actions while they are being computed unless the world
+// interrupts him first. And after an interruption the user has full autonomy." Any real input ends an
+// active journey and then runs as an ordinary beat (the test below this one).
+//
+// This rung once routed an EMPTY chain to "advance one leg", and rung 3 put a POST /beats/continue
+// button on it. Both are gone (2026-08-28): a journey runs its own legs, so nothing is ever left
+// mid-trip for a press to advance, and an empty chain now means only "the parse produced nothing".
 
-// Continue = an empty chain while a journey is active: it advances exactly one leg and commits no new
-// action. This also pins the instant-floor interaction the plan calls out by name: runChain's own
-// Step-5 tail fires on ANY empty chain (curTick == startTick) — if RunBeat fell through to runChain
-// here instead of intercepting, the beat would cost the leg's own slice AND the 2s instant floor AND
-// a second world's turn. Asserting the journey's persisted current_tick advanced by EXACTLY the leg's
-// own slice (not slice+2) is what catches that regression; legs_done and status pin the rest.
-func TestRunBeat_EmptyChainAdvancesTheActiveJourney(t *testing.T) {
+// One leg costs exactly one leg. The slice is the whole of it — no instant floor stacked on top, no
+// second world's turn — which is what keeps a ten-leg trip costing ten legs of world time and not
+// twenty. legs_done and status pin that the leg neither skipped ahead nor ended the journey early.
+func TestRunJourneyLeg_AdvancesByExactlyOneSlice(t *testing.T) {
 	pool := testPool(t)
 	t.Cleanup(func() { pool.Close() })
 	ctx := context.Background()
@@ -483,14 +482,14 @@ func TestRunBeat_EmptyChainAdvancesTheActiveJourney(t *testing.T) {
 		t.Fatalf("legSliceSeconds = %d, want a positive first-leg slice", wantSlice)
 	}
 
-	outcome, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, j.CurrentTick+1, nil)
-	if err != nil {
-		t.Fatalf("RunBeat (continue): %v", err)
+	outcome := &BeatOutcome{}
+	if err := orc.runJourneyLeg(ctx, j, outcome, nil); err != nil {
+		t.Fatalf("runJourneyLeg: %v", err)
 	}
 	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
 
 	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("HaltReason = %q, want journey_leg (a quiet continue press never ends the journey)", outcome.HaltReason)
+		t.Fatalf("HaltReason = %q, want journey_leg (a quiet leg never ends the journey)", outcome.HaltReason)
 	}
 
 	var legsDone int
@@ -501,7 +500,7 @@ func TestRunBeat_EmptyChainAdvancesTheActiveJourney(t *testing.T) {
 		t.Fatalf("read back journey: %v", err)
 	}
 	if legsDone != 1 {
-		t.Fatalf("legs_done = %d, want exactly 1 — a continue press advances ONE leg, never two", legsDone)
+		t.Fatalf("legs_done = %d, want exactly 1 — one leg advances ONE leg, never two", legsDone)
 	}
 	if status != "active" {
 		t.Fatalf("status = %q, want active (one leg of many does not end the journey)", status)
@@ -570,5 +569,62 @@ func TestRunBeat_NewActionEndsTheJourneyAndRunsWhereYouStand(t *testing.T) {
 
 	if got := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); got != startLoc {
 		t.Fatalf("actor location = %q, want unchanged %q — the new action ran WHERE the player stands, not at some journey waypoint", got, startLoc)
+	}
+}
+
+// TestRunJourneyLeg_RefusedArrivalIsBarredNotAnError guards the error path that journeys-running-
+// their-own-legs created.
+//
+// A traveller can END a leg somewhere the goal is not lawfully reachable from — the world fires, R2
+// mints a waystation, and the way onward from THAT place is shut or was never built. The distance is
+// still covered, so the threshold is still met, and the arrival commit is then REFUSED by the
+// accessibility floor. (A doorless goal chosen from the start never gets this far: the beat's own
+// premise check rejects it up front with "premise_broken", which is why this test displaces the actor
+// mid-journey instead — that is the shape the real case has.)
+//
+// A shut road must read as "journey_barred" with the journey ended and the actor standing where they
+// are, never as a server error. While a journey advanced one leg per press you had to click all the
+// way to the threshold to provoke this; runJourneyToCompletion reaches every arrival, so it went live
+// the same day (2026-08-28).
+func TestRunJourneyLeg_RefusedArrivalIsBarredNotAnError(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+	wtDisableWorldActor(t, ctx, pool, dlWorldID) // nothing may fire: this test is about the arrival, not an interruption.
+
+	orc := wtOrchestrator(pool)
+	baseTick := wtBaseTick(t, ctx, pool)
+
+	// The journey starts lawfully, from the tavern to Dock Street — exactly as the arriving test does.
+	attempt := Attempt{Type: "ActorMoved", Stated: "I walk out to Dock Street", ToTargetID: jrDockStreetID}
+	j, err := orc.startJourney(ctx, dlWorldID, dlKadeID, attempt, baseTick)
+	if err != nil {
+		t.Fatalf("startJourney: %v", err)
+	}
+	t.Cleanup(func() { jrDeleteJourney(t, context.Background(), pool, j.ID) })
+
+	startLoc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID)
+	t.Cleanup(func() { jrSetActorLocation(t, context.Background(), pool, dlWorldID, dlKadeID, startLoc) })
+
+	// Then the road takes them somewhere with no way on: a spur with no portal to the goal. This
+	// stands in for the minted-waystation case without needing to force an eruption to mint one.
+	spurID := paCreateLocation(t, ctx, pool, dlWorldID, "The Sealed Spur (barred-arrival test)", paHarborQuarterID, 400, 200)
+	jrSetActorLocation(t, ctx, pool, dlWorldID, dlKadeID, spurID)
+
+	outcome := &BeatOutcome{}
+	if err := orc.runJourneyToCompletion(ctx, j, outcome, nil); err != nil {
+		t.Fatalf("runJourneyToCompletion: %v — a shut road must not surface as a server error", err)
+	}
+	t.Cleanup(func() { wtDeleteEruptionRows(t, context.Background(), pool, dlWorldID, outcome.Committed) })
+
+	if outcome.HaltReason != "journey_barred" {
+		t.Fatalf("halt_reason = %q, want journey_barred — a gate-refused arrival is the way being shut", outcome.HaltReason)
+	}
+	if j.Status != "ended" {
+		t.Fatalf("Journey.Status = %q, want ended — a barred journey does not stay open", j.Status)
+	}
+	// The traveller never got in: they are still on the spur, not at the goal.
+	if got := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); got != spurID {
+		t.Fatalf("actor location = %q, want the spur %q — a barred arrival commits nothing", got, spurID)
 	}
 }

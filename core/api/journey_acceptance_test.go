@@ -161,61 +161,49 @@ func TestJourney_FoundingRuling_QuietRoadArrives(t *testing.T) {
 
 	walk := Attempt{Type: "ActorMoved", Stated: "I walk the coast road to the far landing", ToTargetID: goalID}
 
-	// The opening press: the walk does not fit the beat, so it must BEGIN the journey rather than
-	// halt turn_budget (the exact dead end RULINGS-2026-07-30 §2 calls "dramatically dead").
+	// ONE beat. The walk does not fit, so it becomes a journey — and the journey now runs its legs
+	// back to back rather than waiting to be clicked through (2026-08-28). On a quiet road that means
+	// it arrives inside this beat: no presses, no active row left behind.
 	outcome, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{walk}, baseTick+1, nil)
 	if err != nil {
-		t.Fatalf("RunBeat (opening press): %v", err)
+		t.Fatalf("RunBeat (the walk): %v", err)
 	}
 	allCommitted = append(allCommitted, outcome.Committed...)
-	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want journey_leg — the founding ruling: an over-budget walk BEGINS, it never bounces to turn_budget", outcome.HaltReason)
+	if outcome.HaltReason == "turn_budget" {
+		t.Fatalf("halt_reason = turn_budget — the founding ruling: an over-budget walk BEGINS, it never bounces")
 	}
-	if loc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); loc != startLoc {
-		t.Fatalf("actor location after the opening press = %q, want unchanged %q — starting a journey must never teleport the actor to the goal", loc, startLoc)
+	if outcome.HaltReason != "journey_arrived" {
+		t.Fatalf("halt_reason = %q, want journey_arrived — a quiet road with no obstruction must let the actor arrive in the one beat (RULINGS-2026-07-30 §2)", outcome.HaltReason)
 	}
 
-	j, err := orc.activeJourney(ctx, dlWorldID, dlKadeID)
-	if err != nil {
+	// Nothing is left waiting for a press.
+	if still, err := orc.activeJourney(ctx, dlWorldID, dlKadeID); err != nil {
 		t.Fatalf("activeJourney: %v", err)
-	}
-	if j == nil {
-		t.Fatalf("activeJourney = nil, want the journey the opening press just started")
-	}
-	if j.LegsTotal < 5 || j.LegsTotal > 10 {
-		t.Fatalf("legs_total = %d, want in [5,10] — R7's bounded-press band, whatever the trip's length", j.LegsTotal)
+	} else if still != nil {
+		t.Fatalf("a journey is still active after the beat (%s) — the player would be shown a continue button with nothing to continue", still.ID)
 	}
 
-	// Every following press is a continue: an EMPTY chain while the journey is active advances
-	// exactly one leg (R6/Task 7). The loop is bounded by legs_total - 1 (the opening press already
-	// spent leg 1) so a stuck journey fails loudly here instead of hanging the suite.
-	presses := 1
-	last := outcome
-	for i := 1; i < j.LegsTotal && last.HaltReason == "journey_leg"; i++ {
-		cur, err := orc.activeJourney(ctx, dlWorldID, dlKadeID)
-		if err != nil {
-			t.Fatalf("activeJourney (continue press %d): %v", presses+1, err)
-		}
-		if cur == nil {
-			t.Fatalf("activeJourney = nil before continue press %d — the journey vanished mid-trip", presses+1)
-		}
-		last, err = orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, cur.CurrentTick+1, nil)
-		if err != nil {
-			t.Fatalf("RunBeat (continue press %d): %v", presses+1, err)
-		}
-		allCommitted = append(allCommitted, last.Committed...)
-		presses++
+	// THE WORLD KEPT EVERY CHANCE IT HAD. R7's 5-10 band is now legs the world rolled on, not clicks
+	// the player made: the danger is unchanged, only the clicking is gone.
+	var legsTotal, legsDone int
+	var status string
+	if err := pool.QueryRow(ctx,
+		`SELECT legs_total, legs_done, status FROM journey
+		   WHERE world_id=$1 AND actor_id=$2 ORDER BY started_tick DESC LIMIT 1`,
+		dlWorldID, dlKadeID).Scan(&legsTotal, &legsDone, &status); err != nil {
+		t.Fatalf("read back the journey: %v", err)
 	}
-	t.Logf("quiet road: %d presses to arrive (legs_total=%d, span_seconds=%d)", presses, j.LegsTotal, j.SpanSeconds)
-	if last.HaltReason != "journey_arrived" {
-		t.Fatalf("final halt_reason = %q after %d presses, want journey_arrived — a quiet road with no obstruction must let the actor arrive (RULINGS-2026-07-30 §2: 'nobody acts this slot -> the action... carries to the next slot')", last.HaltReason, presses)
+	if status != "arrived" {
+		t.Fatalf("journey.status = %q, want arrived", status)
 	}
-	if presses != j.LegsTotal {
-		t.Fatalf("presses taken = %d, want exactly legs_total = %d — one press per leg, no more, no fewer", presses, j.LegsTotal)
+	if legsTotal < 5 || legsTotal > 10 {
+		t.Fatalf("legs_total = %d, want within the founder's 5-10 band (R7)", legsTotal)
 	}
-	if presses < 5 || presses > 10 {
-		t.Fatalf("presses taken = %d, want within the founder's 5-10 band (R7) — the player-facing promise a journey never overruns", presses)
+	if legsDone != legsTotal {
+		t.Fatalf("legs_done = %d, want all %d — every leg must run, because every leg is an interruption roll", legsDone, legsTotal)
 	}
+	t.Logf("quiet road: arrived in ONE beat over %d legs (span_seconds=%d)", legsTotal, legsTotal)
+
 	if loc := jrActorLocation(t, ctx, pool, dlWorldID, dlKadeID); loc != goalID {
 		t.Fatalf("actor_state.attrs.location_id = %q, want the goal %q — 'if it never did -> the actor arrives' (RULINGS-2026-07-30 §2)", loc, goalID)
 	}
@@ -269,39 +257,38 @@ func TestJourney_FoundingRuling_InterruptedThenRestated(t *testing.T) {
 
 	walk := Attempt{Type: "ActorMoved", Stated: "I cross the back room toward its far corner", ToTargetID: goalID}
 
-	// Leg 1 — quiet (no pending row is due yet): the walk begins, exactly as the founding ruling
-	// demands before anything can possibly stop it.
-	outcome, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{walk}, baseTick+1, nil)
+	// The cut-in is scheduled BEFORE the beat now, because the whole journey runs inside one beat.
+	// It is placed in LEG 2's own window — the SECOND of the "multiple chances" the ruling describes,
+	// so the road is still shown standing on its own for one quiet leg before the world acts on it.
+	// Leg 1 covers (start, start+slice]; slice is ceil(span/legs), legSliceSeconds' own first-leg value.
+	span, err := orc.fnMoveDurationActor(ctx, dlWorldID, dlKadeID, goalID)
 	if err != nil {
-		t.Fatalf("RunBeat (opening press): %v", err)
+		t.Fatalf("move duration: %v", err)
 	}
-	allCommitted = append(allCommitted, outcome.Committed...)
-	if outcome.HaltReason != "journey_leg" {
-		t.Fatalf("halt_reason = %q, want journey_leg — the walk must begin before anything can interrupt it", outcome.HaltReason)
+	var legs int64
+	if err := pool.QueryRow(ctx, `SELECT fn_journey_legs($1::uuid, $2::bigint)`, dlWorldID, span).Scan(&legs); err != nil {
+		t.Fatalf("leg count: %v", err)
 	}
+	start := baseTick + 1
+	slice := (span + legs - 1) / legs
+	fireAt := start + slice + 1 // inside leg 2
 
-	j, err := orc.activeJourney(ctx, dlWorldID, dlKadeID)
-	if err != nil {
-		t.Fatalf("activeJourney: %v", err)
-	}
-	if j == nil {
-		t.Fatalf("activeJourney = nil, want the journey the opening press just started")
-	}
-	journeyID := j.ID
-
-	// A MEDIUM cut-in, scheduled deterministically inside leg 2's own (tickBefore, tickAfter] window
-	// — the SECOND of the "multiple chances" the ruling describes, not the first, so the road is
-	// shown standing on its own for a quiet leg before the world ever acts on it.
-	fireAt := j.CurrentTick + 1
 	pendingAttempt := `{"type":"AttributeChanged","stated":"a stack of crates goes over in the dark","target_id":"` + dlBarID + `"}`
 	pendingID := lgInsertPending(t, ctx, pool, dlWorldID, fireAt, "medium", wtMaraID, pendingAttempt)
 	t.Cleanup(func() { lgDeletePending(t, context.Background(), pool, pendingID) })
 
-	interrupted, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, j.CurrentTick+1, nil)
+	interrupted, err := orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{walk}, start, nil)
 	if err != nil {
-		t.Fatalf("RunBeat (continue into leg 2, the interruption): %v", err)
+		t.Fatalf("RunBeat (the walk, cut short in leg 2): %v", err)
 	}
 	allCommitted = append(allCommitted, interrupted.Committed...)
+
+	var journeyID string
+	if err := pool.QueryRow(ctx,
+		`SELECT journey_id::text FROM journey WHERE world_id=$1 AND actor_id=$2 ORDER BY started_tick DESC LIMIT 1`,
+		dlWorldID, dlKadeID).Scan(&journeyID); err != nil {
+		t.Fatalf("find the journey the beat started: %v", err)
+	}
 
 	if status := lgPendingStatus(t, ctx, pool, pendingID); status != "fired" {
 		t.Fatalf("pending_event status = %q, want fired — the forced medium cut-in must actually have run this leg", status)
@@ -347,23 +334,7 @@ func TestJourney_FoundingRuling_InterruptedThenRestated(t *testing.T) {
 		t.Fatalf("halt_reason = %q restating the SAME walk from where the interruption left Kade — R6's full autonomy means the player CAN try again and it must not be structurally refused", last.HaltReason)
 	}
 
-	presses := 1
-	for i := 0; i < 10 && last.HaltReason == "journey_leg"; i++ {
-		cur, err := orc.activeJourney(ctx, dlWorldID, dlKadeID)
-		if err != nil {
-			t.Fatalf("activeJourney (restart continue press %d): %v", presses+1, err)
-		}
-		if cur == nil {
-			t.Fatalf("activeJourney = nil before restart continue press %d", presses+1)
-		}
-		last, err = orc.RunBeat(ctx, dlWorldID, dlKadeID, []Attempt{}, cur.CurrentTick+1, nil)
-		if err != nil {
-			t.Fatalf("RunBeat (restart continue press %d): %v", presses+1, err)
-		}
-		allCommitted = append(allCommitted, last.Committed...)
-		presses++
-	}
-	t.Logf("interrupted after 2 presses (1 opening + 1 continue that hit the cut-in); restart resolved via halt_reason=%q after %d press(es)", last.HaltReason, presses)
+	t.Logf("interrupted inside leg 2 of one beat; restating resolved with halt_reason=%q", last.HaltReason)
 	if last.HaltReason != "completed" && last.HaltReason != "journey_arrived" {
 		t.Fatalf("final halt_reason after restating = %q, want completed or journey_arrived — restating the walk must eventually arrive, not dead-end a second time", last.HaltReason)
 	}

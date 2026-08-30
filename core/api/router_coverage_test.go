@@ -46,8 +46,8 @@ const (
 )
 
 // routeTable is the contract: what this service serves. One row per (method, path) shape.
-// Several rows may legitimately share a handler — /beats and /beats/continue do — but every handler
-// must appear at least once, and the backward assertion below enforces it.
+// Several rows may legitimately share a handler, but every handler must appear at least once, and the
+// backward assertion below enforces it.
 var routeTable = []struct {
 	method, path, why string
 }{
@@ -67,7 +67,6 @@ var routeTable = []struct {
 	{http.MethodGet, "/worlds/" + w1 + "/scene/current", "where you are and who is present"},
 
 	{http.MethodPost, "/worlds/" + w1 + "/beats", "THE ONLY WRITE PATH — QA found this one deletable"},
-	{http.MethodPost, "/worlds/" + w1 + "/beats/continue", "the continue press, same handler"},
 
 	{http.MethodGet, "/worlds", "the world directory (SPEC-028)"},
 	{http.MethodPost, "/worlds", "world creation"},

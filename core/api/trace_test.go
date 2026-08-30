@@ -9,7 +9,7 @@ package main
 //
 // rung3 Task 5 deleted the singular POST /worlds/{w}/beat endpoint that once shipped BeatTrace under a
 // debug-only `reasoning_log` JSON key (founder-approved clean cutover, no alias). AT THE TIME this
-// comment was first written, the streaming replacement (/beats, /beats/continue) surfaced no trace on
+// comment was first written, the streaming replacement (/beats) surfaced no trace on
 // the wire at all — Task 3's frame protocol had no trace frame, debug or not — so there was no HTTP
 // surface left to drive the two deleted tests through. rung3 Task 4 (commit adding the "trace" frame,
 // beatsstream.go) restored that surface: a debug beat now emits a `trace` frame LAST carrying the full

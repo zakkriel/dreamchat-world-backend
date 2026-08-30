@@ -126,8 +126,18 @@ type ActorAttempt struct {
 // It commits passthrough types via apply_event and routes adjudicated types through the
 // Resolve driver. Returns BeatOutcome describing what was committed and why halted.
 //
-// The per-attempt loop itself lives in runChain, which RunReactionBeat's post-collision remainder
-// also uses — a normal chain is a normal chain wherever it runs (RULINGS-2026-07-24 §2).
+// RunBeat IS THE ONLY WAY A PLAYER SPENDS A TURN. It was briefly one of two, alongside a continue
+// press that advanced a journey by one leg; both that entry point and the button behind it were
+// deleted on 2026-08-28 when journeys began running their own legs (runJourneyToCompletion). A leg
+// boundary asks the player nothing, so there was nothing for the press to decide.
+//
+// The two were ONE function until earlier the same day, distinguished only by whether the chain was
+// empty, and that overload is the whole of SPEC-037: a sentence the decompose stage could make
+// nothing of also arrives as an empty chain, so "the player deliberately passed" and "we could not
+// read the player" were the same value. The engine picked the first meaning every time — advancing a
+// journey leg, or spending the stillness floor and running the world's turn — and reported
+// `completed`. The player's sentence was discarded in silence and their turn was spent on it. An
+// unbindable sentence now halts `bounce` and costs nothing.
 //
 // trace is the Unit 3 reasoning log (nil except in debug): it is threaded through the whole per-beat
 // call tree so each stage appends what it computed, and is nil-safe end-to-end (a nil trace's append
@@ -139,28 +149,41 @@ func (o *Orchestrator) RunBeat(ctx context.Context, worldID, actorID string, cha
 		Telegraphs:           []string{},
 	}
 
+	// The player typed, and the parse produced no actions. NOTHING happens: no clock, no world's
+	// turn, no journey touched, nothing committed. `bounce` is the halt reason, and the surface says
+	// so plainly (founder ruling 2026-08-28: "stop it, but the user needs to be informed that nothing
+	// happened").
+	//
+	// This deliberately does NOT diagnose. We know the parse yielded nothing; we do NOT know whether
+	// the sentence was unreadable, or named something absent, or asked for a verb this vocabulary has
+	// no shape for. The message reports the two facts that are certain — nothing happened, and it cost
+	// nothing — and claims nothing else. A richer "this world cannot do that" shape was considered and
+	// deliberately NOT built: "at best that is a try/catch, at worse a plaster that hides a need"
+	// (founder). The beat_derivation table counts these instead, so the missing verbs are chosen from
+	// data rather than argued about here.
+	//
+	// Waiting is NOT this case and must never reach here: a deliberate wait is a real attempt carrying
+	// a `sustain` shape ({"kind":"for"} / until_at / until_attr — beatseats.go), so it arrives as a
+	// non-empty chain and still costs its time. Nor is a QUERY-only beat: questions are elements too,
+	// and they still pay the instant floor in runChain's tail.
+	if len(chain) == 0 {
+		outcome.HaltReason = "bounce"
+		outcome.TicksAdvanced = 0
+		return outcome, nil
+	}
+
 	// R6 / design §4.7: read the actor's active journey fresh from the table — no server memory, no
 	// session object, the same discipline pendingHeldOutcomes already applies for held acts — BEFORE
 	// the chain runs, and route on it. "Continue advances one leg. Any other input ends the journey
-	// and runs as a normal turn where you stand" (founder, R6). In this rung "continue" IS an empty
-	// chain (rung 3 maps POST /beats/continue onto exactly that): an empty chain with an active
-	// journey runs ONE leg INSTEAD OF the normal chain/floor path below, never in addition to it — if
-	// this fell through to runChain, its own Step-5 instant-floor tail would ALSO fire on the empty
-	// chain (curTick == startTick), costing a second clock advance and a second world's turn for one
-	// continue press. A non-empty chain is the player changing their mind: the journey ends right
-	// here, standing exactly where the interruption found them, and falls through to the ordinary path.
+	// and runs as a normal turn where you stand" (founder, R6). Typing IS taking back decision
+	// priority, so the journey ends right here, standing exactly where the interruption found them,
+	// and falls through to the ordinary path. Nothing suspends and nothing auto-resumes: the player
+	// restates, which starts a fresh journey over what is left (journey.go, runJourneyLeg step 2).
 	j, jErr := o.activeJourney(ctx, worldID, actorID)
 	if jErr != nil {
 		return outcome, fmt.Errorf("active journey: %w", jErr)
 	}
 	if j != nil {
-		if len(chain) == 0 {
-			if legErr := o.runJourneyLeg(ctx, j, &outcome, trace); legErr != nil {
-				return outcome, fmt.Errorf("journey leg: %w", legErr)
-			}
-			outcome.TicksAdvanced = j.CurrentTick - startTick
-			return outcome, nil
-		}
 		if endErr := o.endJourney(ctx, j, "ended"); endErr != nil {
 			return outcome, fmt.Errorf("end journey: %w", endErr)
 		}
@@ -337,7 +360,8 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			if over || attempt.Sustain != nil {
 				// RULINGS-2026-07-30 §2 / design §4.7: over-budget is NOT a reject — it is the
 				// Journey. The attempt does not fit this beat, so it becomes a span the world gets
-				// to interrupt (startJourney + one leg, Task 4-6). The impossible move (speed 0 →
+				// to interrupt — startJourney then every leg, back to back (2026-08-28: the player does
+				// not click through the world's dice). The impossible move (speed 0 →
 				// MaxInt64, or an overflow) is NOT over-budget in that sense: it cannot be done at
 				// all, and still halts turn_budget — the ONE case the Journey does not swallow.
 				if dur == math.MaxInt64 || dur > math.MaxInt64-curTick {
@@ -349,8 +373,8 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				if jErr != nil {
 					return fmt.Errorf("start journey: %w", jErr)
 				}
-				if legErr := o.runJourneyLeg(ctx, j, outcome, trace); legErr != nil {
-					return fmt.Errorf("journey leg: %w", legErr)
+				if legErr := o.runJourneyToCompletion(ctx, j, outcome, trace); legErr != nil {
+					return fmt.Errorf("journey: %w", legErr)
 				}
 				outcome.TicksAdvanced = j.CurrentTick - startTick
 				return nil
@@ -434,8 +458,8 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				if jErr != nil {
 					return fmt.Errorf("start journey: %w", jErr)
 				}
-				if legErr := o.runJourneyLeg(ctx, j, outcome, trace); legErr != nil {
-					return fmt.Errorf("journey leg: %w", legErr)
+				if legErr := o.runJourneyToCompletion(ctx, j, outcome, trace); legErr != nil {
+					return fmt.Errorf("journey: %w", legErr)
 				}
 				outcome.TicksAdvanced = j.CurrentTick - startTick
 				return nil

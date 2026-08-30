@@ -322,6 +322,38 @@ func (o *Orchestrator) endJourney(ctx context.Context, j *Journey, status string
 	return nil
 }
 
+// runJourneyToCompletion runs the journey's legs back to back until it ENDS — arrived, interrupted,
+// barred, or spent — and returns with the journey no longer active.
+//
+// WHY THE PLAYER DOES NOT CLICK THROUGH THIS (founder, 2026-08-28). A leg boundary asks the player
+// nothing. The only thing that can change the outcome is whether the WORLD fires, which is the world's
+// roll, not the player's choice — so a press per leg is the player operating a progress bar by hand,
+// five to ten times, for a trip whose result was never theirs to influence. *"There should be no
+// continue button when you cannot continue a relevant interruption. 'You are being attacked ->
+// continue' — fuck no."* The risk of a long trip is accepted when the trip is chosen, not re-accepted
+// at every waypoint.
+//
+// The world loses NOTHING: runJourneyLeg still runs the world's turn once per leg, so every one of the
+// five-to-ten interruption rolls still happens, at the same odds, and a medium or large eruption still
+// ends the trip where it stands. What is removed is the clicking, not the danger.
+//
+// Bounded by LegsTotal so a journey that somehow never reaches a terminal state cannot spin: the leg
+// count is 5-10 by fn_journey_legs, and step 4 of runJourneyLeg ends the journey on the last leg
+// regardless. The guard is belt and braces against a future threshold bug, not an expected path.
+func (o *Orchestrator) runJourneyToCompletion(ctx context.Context, j *Journey, outcome *BeatOutcome, trace *BeatTrace) error {
+	for i := 0; i <= j.LegsTotal; i++ {
+		if err := o.runJourneyLeg(ctx, j, outcome, trace); err != nil {
+			return err
+		}
+		if j.Status != "active" {
+			return nil
+		}
+	}
+	// Unreachable unless runJourneyLeg stops ending journeys. Say so rather than looping forever.
+	return fmt.Errorf("runJourneyToCompletion: journey %s still active after %d legs (legs_total=%d)",
+		j.ID, j.LegsTotal+1, j.LegsTotal)
+}
+
 // runJourneyLeg runs ONE leg of j, in order: compute the slice (legSliceSeconds), advance the
 // journey's clock in memory, resolve the leg's SCENE (journeyScene — R2's "are you somewhere
 // known?", asked BEFORE the world's turn runs: runWorldTurn's own `scene` argument is only ever
@@ -421,6 +453,26 @@ func (o *Orchestrator) runJourneyLeg(ctx context.Context, j *Journey, outcome *B
 			_, _, halt, commitErr := o.commitWorldPayload(ctx, j.WorldID, j.ActorID, arrival, j.CurrentTick, seqUsed, nil, outcome, trace)
 			if commitErr != nil {
 				return fmt.Errorf("runJourneyLeg: arrival commit: %w", commitErr)
+			}
+			// A REFUSED arrival is the road being shut, not a broken server. The accessibility floor
+			// says there is no lawful way from where the traveller stands to the goal — which is
+			// exactly what "journey_barred" already means one branch above, where R4's gap-fill finds
+			// a shut connection. Ending honestly beats a 500: the player is standing somewhere real
+			// and keeps their turn.
+			//
+			// This path was effectively unreachable while a journey advanced one leg per press — you
+			// had to click all the way to the threshold to see it. Journeys now run to completion in
+			// one beat (runJourneyToCompletion, 2026-08-28), so every journey reaches its arrival and
+			// this became a live error path the same day. Only `gate_reject` is treated this way; any
+			// other halt is still a genuine fault and still returns.
+			if halt == "gate_reject" {
+				if endErr := o.endJourney(ctx, j, "ended"); endErr != nil {
+					return fmt.Errorf("runJourneyLeg: end (arrival barred): %w", endErr)
+				}
+				if outcome != nil {
+					outcome.HaltReason = "journey_barred"
+				}
+				return nil
 			}
 			if halt != "" {
 				return fmt.Errorf("runJourneyLeg: arrival commit halted: %s", halt)

@@ -18,22 +18,18 @@ import (
 	raindrop "github.com/raindrop-ai/go"
 )
 
-// beatsRoute is POST /worlds/{w}/beats (plural). beatsContinueRoute is POST /worlds/{w}/beats/continue
-// — same frame protocol, no body: "continue" IS an empty chain (RunBeat's own docstring,
-// orchestrator.go) — it advances the moment by exactly one beat and never fast-forwards (C-6). Both
-// are the ONLY beat write paths left after rung3 Task 5 deleted the singular /beat endpoint
-// (founder-approved clean cutover, no alias, no deprecation shim).
+// beatsRoute is POST /worlds/{w}/beats (plural) — the ONE beat write path. The singular /beat
+// endpoint went in rung3 Task 5, and POST /worlds/{w}/beats/continue went on 2026-08-28 when
+// journeys began running their own legs (runJourneyToCompletion): with nothing ever left mid-trip,
+// a continue press had nothing to advance. Both were clean cutovers — no alias, no deprecation shim.
 var beatsRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beats$`)
-var beatsContinueRoute = regexp.MustCompile(`^/worlds/([0-9a-fA-F-]{36})/beats/continue$`)
 
-// beatsStreamHandler serves both routes above, delivering the beat as a stream of validated frames
+// beatsStreamHandler serves that route, delivering the beat as a stream of validated frames
 // instead of one buffered JSON response (design §4.8, plan rung3 Task 3). It reuses beatHandler's
 // SURVIVING pipeline pieces wholesale — payload, speechTexts, narrateRoster, narrateMessages,
 // buildDecomposePrompt (beathandler.go; its own HTTP entry point is gone, Task 5) — plus
 // Orchestrator.RunBeat/RunReactionBeat, buildScene (scenehandler.go), and
-// projectJourneyBlock/journeyBlock (journey.go) for the scene/journey frames. /beats/continue skips
-// decompose entirely: an empty chain against an active journey IS the continue press (rung 2 commit
-// 9ec9d7e) — the same beat, one fewer stage.
+// projectJourneyBlock/journeyBlock (journey.go) for the scene/journey frames.
 type beatsStreamHandler struct {
 	pool   *pgxpool.Pool
 	dbg    bool
@@ -47,8 +43,7 @@ func NewBeatsStreamHandler(pool *pgxpool.Pool, debug bool, bridge *Bridge) http.
 }
 
 func (h *beatsStreamHandler) Match(r *http.Request) bool {
-	return r.Method == http.MethodPost &&
-		(beatsRoute.MatchString(r.URL.Path) || beatsContinueRoute.MatchString(r.URL.Path))
+	return r.Method == http.MethodPost && beatsRoute.MatchString(r.URL.Path)
 }
 
 // interpretationFrame carries the decoded intent chain — "how the input was understood", for the
@@ -217,11 +212,6 @@ type traceFrame struct {
 // gone out.
 func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	m := beatsRoute.FindStringSubmatch(r.URL.Path)
-	continuePress := false
-	if m == nil {
-		m = beatsContinueRoute.FindStringSubmatch(r.URL.Path)
-		continuePress = true
-	}
 	if m == nil || r.Method != http.MethodPost {
 		http.NotFound(w, r)
 		return
@@ -245,29 +235,22 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The chain: decoded from the request body, or — on /beats/continue — the empty chain outright.
-	// "continue" carries no body and decodes nothing (rung3 Task 5): an empty chain against an active
-	// journey IS the continue press (RunBeat's own docstring, orchestrator.go), so there is no
-	// decompose call, no driver round trip, and no §7 injection surface on this path.
+	// The chain: decoded from the request body. Every beat carries the player's own sentence — there
+	// is no bodyless press any more (the continue route went with runJourneyToCompletion, 2026-08-28).
 	var chain []Attempt
 	var playerText string
 	var decomposeText string
-	if continuePress {
-		chain = []Attempt{}
-	} else {
-		// §7 injection bound — identical cap to the deleted beatHandler.ServeHTTP (RULINGS-2026-07-24 §7).
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-		var in struct {
-			Text string `json:"text"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
-			http.Error(w, "bad body", http.StatusBadRequest)
-			return
-		}
-		playerText = in.Text
-
-		decomposeText = in.Text
+	// §7 injection bound — identical cap to the deleted beatHandler.ServeHTTP (RULINGS-2026-07-24 §7).
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var in struct {
+		Text string `json:"text"`
 	}
+	if err := json.NewDecoder(r.Body).Decode(&in); err != nil {
+		http.Error(w, "bad body", http.StatusBadRequest)
+		return
+	}
+	playerText = in.Text
+	decomposeText = in.Text
 
 	// Raindrop/Workshop: ONE interaction per beat — the player's words in, the narration that
 	// actually reached them out. `delivered` is hoisted here (it used to be declared beside the
@@ -275,18 +258,13 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// (tests never run main()) skips cleanly; a disabled client's calls are no-ops.
 	var delivered []beatMessage
 	if raindropClient != nil {
-		rdInput := playerText
-		if continuePress {
-			rdInput = "[continue]"
-		}
 		interaction := raindropClient.Begin(ctx, raindrop.BeginOptions{
 			Event:   "world_beat",
 			UserID:  viewerID,
 			ConvoID: worldID,
-			Input:   rdInput,
+			Input:   playerText,
 			Properties: map[string]any{
 				"world_id": worldID,
-				"continue": continuePress,
 			},
 		})
 		// Every seat call downstream shares this ctx, so timedDriver (bridge.go) can attach one
@@ -327,9 +305,9 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() {
 		adj, fanout := orc.BeatCounters()
 		usd, tokIn, tokOut, cached, calls := costs.snapshot()
-		log.Printf("beat timing: total_ms=%d world=%s continue=%v adjudications=%d npc_fanout=%d "+
+		log.Printf("beat timing: total_ms=%d world=%s adjudications=%d npc_fanout=%d "+
 			"calls=%d tok_in=%d cached=%d tok_out=%d cost_usd=%.6f session_usd=%.4f",
-			time.Since(beatStart).Milliseconds(), worldID, continuePress, adj, fanout,
+			time.Since(beatStart).Milliseconds(), worldID, adj, fanout,
 			calls, tokIn, cached, tokOut, usd, sessionTotalUSD())
 		// Loud when a beat costs multiples of what a beat costs. A repair storm, a prompt that grew, or
 		// a seat quietly routed to an expensive model all show up here first — and the founder hears it
@@ -359,22 +337,20 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// reasoning tokens. Every other failure in this handler has emitted an honest `error` frame since
 	// the streaming design landed ("it just stops" is the bug this design exists to prevent); these
 	// two were simply on the wrong side of the line.
-	if !continuePress {
-		raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
-			GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, decomposeText), Schema: json.RawMessage(beatChainV2SchemaJSON)})
-		if err != nil {
-			log.Printf("beats stream: decompose error: %v", err)
-			_ = frames.emit("error", errorFrame{Message: "the world could not read that"})
-			return
-		}
-		chain, err = DecodeAndValidateChainV2(raw)
-		if err != nil {
-			// The leash refusing a chain is a REAL answer about this input, not a broken server, and
-			// the player is owed a sentence rather than a status code.
-			log.Printf("beats stream: decompose produced an invalid chain: %v", err)
-			_ = frames.emit("error", errorFrame{Message: "the world could not make sense of that — try saying it another way"})
-			return
-		}
+	raw, err := h.bridge.Driver(SeatDecompose.Name).Generate(ctx,
+		GenRequest{Payload: pre, Prompt: buildDecomposePrompt(pre, decomposeText), Schema: json.RawMessage(beatChainV2SchemaJSON)})
+	if err != nil {
+		log.Printf("beats stream: decompose error: %v", err)
+		_ = frames.emit("error", errorFrame{Message: "the world could not read that"})
+		return
+	}
+	chain, err = DecodeAndValidateChainV2(raw)
+	if err != nil {
+		// The leash refusing a chain is a REAL answer about this input, not a broken server, and
+		// the player is owed a sentence rather than a status code.
+		log.Printf("beats stream: decompose produced an invalid chain: %v", err)
+		_ = frames.emit("error", errorFrame{Message: "the world could not make sense of that — try saying it another way"})
+		return
 	}
 
 	// From here on, status 200 is already on the wire — every failure path chooses an `error` frame
@@ -402,6 +378,12 @@ func (h *beatsStreamHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if h.dbg {
 		trace = NewBeatTrace(chain)
 	}
+
+	// The parse record, written for EVERY beat including the ones that produced nothing — the empty
+	// parse is the row this exists for. Best-effort and never fatal: telemetry must not be able to
+	// fail a player's turn. It runs BEFORE the beat so a beat that errors out downstream still leaves
+	// evidence of what the player asked for.
+	recordBeatDerivation(ctx, h.pool, worldID, viewerID, startTick, playerText, chain)
 
 	var outcome BeatOutcome
 	if len(held) > 0 {

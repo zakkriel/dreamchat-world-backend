@@ -46,8 +46,11 @@ func persistTranscript(ctx context.Context, pool *pgxpool.Pool, worldID, viewerI
 			journeyJSON = nil
 		}
 	}
-	// A NULL `stated` means "he typed nothing this beat" (a continue press), which is a different fact
-	// from an empty string and is worth keeping distinguishable in the record.
+	// A NULL `stated` means "no text came in with this beat", which is a different fact from an empty
+	// string and is worth keeping distinguishable in the record. It was the ordinary case while the
+	// continue press existed; since that was deleted (2026-08-28) every beat carries a sentence, so a
+	// NULL here now marks either a historical continue row or a malformed client — and the published
+	// transcript/2 contract still declares the field nullable for exactly the historical rows.
 	var statedArg any
 	if stated != "" {
 		statedArg = stated
