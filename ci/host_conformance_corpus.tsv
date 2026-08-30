@@ -1,0 +1,24 @@
+# SPEC-039 conformance corpus — sentence <TAB> expected top-level attempt type.
+#
+# Every branch of beat_chain/2 that a player reaches by typing, because the failure being measured is
+# a host collapsing to the schema's FIRST branch (ActorMoved). A corpus of only movement sentences
+# would score a broken host 100%.
+#
+# "Expected" is the type the vocabulary has for that sentence — not a model's opinion. Each line was
+# confirmed against a host measured 24/24 before it was added. Keep this file small and fixed: it is a
+# ruler, and a ruler that changes between measurements measures nothing. Add a line only when a real
+# mis-parse is found that no existing line would have caught, and say so in SPEC-039.
+#
+# Ordered so the first two lines are the exact sentences that exposed Venice.
+I say 'Evening.'	Communicated
+I greet Mara	Communicated
+I walk over to Mara	ActorMoved
+I go to Dock Street	ActorMoved
+I cross to the bar	ActorMoved
+Mara, can I rest here?	Communicated
+I tell Mara my whole life story	Communicated
+How long to the bar?	QUERY
+Is the Front Door locked?	QUERY
+What is in the ballast crate?	QUERY
+I hand the Sealed Note to Mara	ObjectRelocated
+I lie hidden for two hours	AttributeChanged

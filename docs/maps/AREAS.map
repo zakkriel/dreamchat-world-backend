@@ -154,6 +154,7 @@ play-loop
   core/api/cognition*
   core/api/costsink*
   core/api/derivation*
+  core/api/hostconformance_test.go
   core/api/narrat*
   core/api/openaicompat*
   core/api/orchestrator*
