@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"log"
 	"strings"
+	"sync"
 	"unicode"
 )
 
@@ -405,7 +406,54 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	log.Printf("fill: descent authored %d place(s), %d faction(s), %d concept(s), %d person(s), %d object(s); ascent is %d item(s)",
 		len(doc.Places), len(doc.Factions), len(doc.Concepts), len(doc.Cast), len(doc.Objects), len(ascent))
 	_ = ascentFrom
-	for _, item := range append(ascent, arrivalWork()) {
+
+	// THE PER-PERSON CALLS ARE INDEPENDENT OF EACH OTHER, so they run at once.
+	//
+	// Each one authors one person's inner life from the same document, and nothing in it reads another
+	// person's answer — the interdependence is between LAYERS, not between people inside a layer. Run
+	// sequentially they were the largest avoidable cost in the build: measured 2026-08-28, seven people
+	// at ~30 s each was ~210 s of waiting for no reason, and it grows linearly with the roster while a
+	// parallel pass does not.
+	//
+	// I previously told the founder that parallelising "buys almost nothing". That was true of the
+	// layers and wrong about the items inside one, and this is the correction.
+	//
+	// Merging stays SERIAL, after the wave: mergeFill mutates the document and dedupes by name, and the
+	// ascent's own ordering (artifacts, then people, then concepts, then factions, then places) is
+	// preserved because only the person items are hoisted out.
+	people, rest := splitPersonWork(ascent)
+	if len(people) > 0 {
+		frags := make([]*fillFragment, len(people))
+		var wg sync.WaitGroup
+		for i, item := range people {
+			wg.Add(1)
+			go func(i int, item workItem) {
+				defer wg.Done()
+				frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+				if err != nil && IsGenesisRefusal(err) {
+					log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
+					frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
+				}
+				if err != nil {
+					log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
+					return
+				}
+				frags[i] = frag
+			}(i, item)
+		}
+		wg.Wait()
+		merged := 0
+		for i, frag := range frags {
+			if frag == nil {
+				continue
+			}
+			mergeFill(doc, frag, mergeTag(people[i]), &tags)
+			merged++
+		}
+		log.Printf("fill: %d person call(s) ran together, %d answered", len(people), merged)
+	}
+
+	for _, item := range append(rest, arrivalWork()) {
 		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
 		if err != nil && IsGenesisRefusal(err) {
 			log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
@@ -497,6 +545,19 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 
 // mergeTag names the work item a piece of content came from, for scoped retraction. Per-item work carries
 // its subject, so "person" becomes "person:Adaeze" and a review can name exactly which call to blame.
+// splitPersonWork separates the per-item person work from the layer work. Only the person items are
+// safe to run together — the layers above and below them are ordered by construction.
+func splitPersonWork(items []workItem) (people, rest []workItem) {
+	for _, it := range items {
+		if it.ID == "person" && strings.TrimSpace(it.Subject) != "" {
+			people = append(people, it)
+			continue
+		}
+		rest = append(rest, it)
+	}
+	return people, rest
+}
+
 func mergeTag(item workItem) string {
 	if s := strings.TrimSpace(item.Subject); s != "" {
 		return item.ID + ":" + s

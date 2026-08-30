@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -334,7 +335,10 @@ func TestFillPrompt_CanonsUnpaidNamesAreCarriedForward(t *testing.T) {
 // flakyFillDriver rejects once, then behaves. Stands in for the live failure of 2026-08-28, where the
 // revise batch spelled `places` as `place` and DisallowUnknownFields ended a 147-second build.
 type flakyFillDriver struct {
-	real  Driver
+	real Driver
+	// The ascent runs its per-person calls together, so a stand-in that counts them is shared across
+	// goroutines. The race detector caught this on the first run.
+	mu    sync.Mutex
 	calls int
 }
 
@@ -343,8 +347,11 @@ func (f *flakyFillDriver) Capabilities() CapabilitySet {
 	return CapabilitySet{CapStructuredOutput: true}
 }
 func (f *flakyFillDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	f.mu.Lock()
 	f.calls++
-	if f.calls == 1 {
+	n := f.calls
+	f.mu.Unlock()
+	if n == 1 {
 		// A key the schema does not name — exactly what DisallowUnknownFields refuses.
 		return `{"empty":false,"place":[{"canonical_name":"The Counting Room"}]}`, nil
 	}
@@ -365,8 +372,11 @@ func TestFillFromIdentity_OneMalformedBatchIsRetriedNotFatal(t *testing.T) {
 		t.Fatalf("the retried build is not playable: %v", err)
 	}
 	// 6 batches + 1 wasted first attempt. If this is 6, no retry happened and the test proves nothing.
-	if seat.calls < 7 {
-		t.Fatalf("expected a retry call, got %d generate calls", seat.calls)
+	seat.mu.Lock()
+	calls := seat.calls
+	seat.mu.Unlock()
+	if calls < 7 {
+		t.Fatalf("expected a retry call, got %d generate calls", calls)
 	}
 
 	// And the rejection must actually be quoted back to the seat, not silently retried.
@@ -444,7 +454,10 @@ func TestFillFromIdentity_ClosingPassAuthorsWhatCanonOwes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the build refused instead of authoring the owed place: %v", err)
 	}
-	if !seat.closed {
+	seat.mu.Lock()
+	closed := seat.closed
+	seat.mu.Unlock()
+	if !closed {
 		t.Fatal("the closing pass never ran")
 	}
 	if !hasPlace(doc, "Cola Baja") {
@@ -462,6 +475,7 @@ func TestFillFromIdentity_ClosingPassAuthorsWhatCanonOwes(t *testing.T) {
 // batch asks. Everything else delegates to the ordinary fake.
 type owingFillDriver struct {
 	real   Driver
+	mu     sync.Mutex
 	closed bool
 }
 
@@ -499,7 +513,9 @@ func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string,
 		}
 		return string(out), nil
 	case strings.Contains(req.Prompt, "\nid: closing\n"):
+		o.mu.Lock()
 		o.closed = true
+		o.mu.Unlock()
 		return `{"empty":false,"places":[{"descriptor":"the low tail, awash","canonical_name":"Cola Baja","kind":"district","description":"The tail drags and the water comes over it twice a day; nobody builds high here.","tension":"normal","extent_class":"small"}],"ways":[{"descriptor":"the climb up the spine","from_place":"Cola Baja","to_place":"The Counting Room","state":"open"}]}`, nil
 	}
 	return o.real.Generate(ctx, req)
