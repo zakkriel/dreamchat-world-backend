@@ -962,6 +962,26 @@ retires a category of per-entity model cost.
 
 **Status, newest first.**
 
+**CORRECTION 2026-08-30, hours after the table below was written: `deepinfra` IS NOT CLEAN.** The
+first run of the merged instrument against the post-removal allowlist caught it returning
+`Communicated` for `I hand the Sealed Note to Mara` — the same sentence, and the same wrong answer,
+that `parasail` was removed for. **Not reproduced:** eight further attempts on that sentence were all
+HTTP 429, so it could be neither confirmed nor refuted. One observation stands, and the row below
+claiming `deepinfra` costs "nothing on correctness" is **too strong — do not rely on it without
+re-measuring.**
+
+`I hand the Sealed Note to Mara` is this corpus's discriminator, and the numbers on it now read:
+`coreweave` correct on every one of ~23 samples across three runs; `parasail` wrong 6 of 6;
+`deepinfra` wrong 1 of the ~4 attempts that got past its rate limit. A weak prompt would fail on
+`coreweave` too, and it never has — so host-specific remains the better explanation than "the
+vocabulary struggles with handover". But this is a **degree**, not a clean binary, and treating the
+allowlist as "one bad host, the rest fine" is exactly the over-simple story this entry keeps having
+to correct.
+
+**What this says about the instrument: it works.** It caught a claim written into this file an hour
+earlier being too confident, on its first run from `main`, without anyone looking for the problem.
+That is the difference between an index and a measurement.
+
 **ACTION TAKEN 2026-08-30: `parasail` removed from `DREAMCHAT_PROVIDER_OPENROUTER_ROUTING.only`.**
 Founder call, on the numbers below. Live and verified, not staged: the variable set triggered a deploy
 (`15:20:34Z`, `reason: deploy`), the container booted `15:20:47Z` with seats `(routed)`, and production
@@ -975,7 +995,7 @@ widen the allowlist back to hosts that cannot serve the model at all. The rankin
 | if you need more capacity | do this | what it costs you |
 |---|---|---|
 | 1st | `parasail` back into `only` | object handover mis-parses: `I hand X to Y` becomes `Communicated` — the object never moves and the player is told they spoke. Everything else measured 33/36. |
-| 2nd | raise the `deepinfra` share (it is `sort: latency`, so it loses to `coreweave`) | nothing on correctness — it was 15/15 correct, its 21 misses were all HTTP 429. Capacity, not conformance. |
+| 2nd | raise the `deepinfra` share (it is `sort: latency`, so it loses to `coreweave`) | **See the correction above — one observed wrong answer on the discriminator sentence, unreproduced because it was rate-limited.** It was 15/15 correct in the earlier run and its 21 misses there were all HTTP 429. Re-measure before relying on it. |
 | never | `ionstream` | it does not serve `deepseek-v4-flash` at all — 36/36 HTTP 404. It stays in `only` harmlessly (the router skips it) but it is not capacity. |
 | never | `venice` | 6/24 wrong, the original defect. |
 
