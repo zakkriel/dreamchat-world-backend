@@ -77,6 +77,17 @@ mistake was made more than once.
   2026-08-25: it was a stale detached worktree of this repo, 78 commits behind and 0 ahead. Need an
   isolated tree? `git worktree add` a fresh one from current `main` — a long-lived worktree is a second
   copy of the law, and the copy is the one that goes stale.
+- **A seat answering wrongly? Suspect the HOST before the model or the prompt** (`SPEC-039`). The
+  aggregator does not run the model — it forwards your request to whichever allowlisted host wins
+  `sort: latency`, those hosts run different software, and one whose constrained decoding is broken
+  returns a **structurally valid** chain that says something the player never said. The gate cannot
+  catch that, and the seat log says `ok`. Two hosts have done it: `venice` (6 of 24 wrong) and
+  `parasail` (object handover became speech, 6 of 6). **Do not swap models to investigate** — every
+  model goes through the same router, so it isolates nothing. Run `ci/host_conformance.sh`: it
+  replays the real request bytes against each host separately and scores them, and it reports
+  `correct` / `wrong` / `unavailable` as three numbers because a rate-limited host and a mis-parsing
+  host are different facts. Which hosts are in `only` is a measurement with a date on it, never a
+  preference; the current ranking and what each removed host costs are in `SPEC-039`.
 - **Canon is written through `apply_event` / `apply_ruled_event`, never directly** (D-1, ADR-009).
   Genesis' `origin='fast_path'` is the one documented exception and it exists because the actors an
   event would reference do not exist yet. Bypassing the gate corrupts replay (I-1) and provenance (I-2).
