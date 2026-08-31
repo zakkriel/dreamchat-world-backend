@@ -110,6 +110,10 @@ type genesisPlace struct {
 }
 
 type genesisWay struct {
+	// Accepted and unread. A model told every entity carries a level applies it here too, and
+	// refusing a whole call over a field the belt ignores cost three calls of a live build.
+	Relevance  int    `json:"relevance,omitempty"`
+	Tag        string `json:"tag,omitempty"`
 	Descriptor string `json:"descriptor"`
 	FromPlace  string `json:"from_place"`
 	ToPlace    string `json:"to_place"`
@@ -229,6 +233,10 @@ type genesisArrival struct {
 }
 
 type genesisCandidate struct {
+	// Accepted and unread. A model told every entity carries a level applies it here too, and
+	// refusing a whole call over a field the belt ignores cost three calls of a live build.
+	Relevance     int    `json:"relevance,omitempty"`
+	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
 	CanonicalName string `json:"canonical_name"`
 	Why           string `json:"why"`

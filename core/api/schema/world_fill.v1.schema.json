@@ -169,6 +169,17 @@
               "shut",
               "locked"
             ]
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
