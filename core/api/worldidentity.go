@@ -934,7 +934,10 @@ func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 		// neither of them scales with relevance.
 		geography = append(geography, workItem{
 			ID: "geography", Kind: "content", Subject: top,
-			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts},
+			// The people standing in this tree, because this call authors the canon that happened here and
+			// an event needs somebody who knows it. Without them the mandate made the prompt's own rule
+			// unsatisfiable and the wave returned no history at all.
+			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts, People: peopleIn(doc, tree)},
 			Text: "Two jobs, and the first one is not optional.\n\n" +
 				"ONE — JOIN THEM UP. Author the `ways` that connect the locations listed below to each other and to " +
 				"their container, so that from any one of them a body can reach the others. A world where nothing " +
@@ -1094,6 +1097,23 @@ func locationTree(d *genesisDoc, top string) []string {
 	return out
 }
 
+// peopleIn names the cast standing anywhere in a tree of locations.
+func peopleIn(d *genesisDoc, tree []string) []string {
+	want := map[string]bool{}
+	for _, n := range tree {
+		want[n] = true
+	}
+	var out []string
+	for _, a := range d.Cast {
+		if want[strings.TrimSpace(a.StartsIn)] {
+			if n := strings.TrimSpace(a.CanonicalName); n != "" {
+				out = append(out, n)
+			}
+		}
+	}
+	return out
+}
+
 func placeNames(d *genesisDoc) []string {
 	var out []string
 	for _, p := range d.Places {
@@ -1140,7 +1160,7 @@ func factionMembers(d *genesisDoc, faction string) []string {
 // arrivalWork is the last layer: the world header, the region, and the way in. It runs after the ascent so
 // the visitor arrives somewhere already inhabited that already has a history.
 func arrivalWork() workItem {
-	return workItem{ID: "arrival", Kind: "arrival",
+	return workItem{ID: "arrival", Kind: "arrival", Scope: fillScope{Whole: true},
 		Text:      "Name the world and the region it sits in, and bring a stranger into it. Which of these places do they arrive in, what is the one sentence they know, and who is already there? THE ARRIVAL IS A STRANGER: a new name, appearing nowhere above, and never one of the world's own people.",
 		Therefore: "a visitor arrives among people, never into an empty place they must search"}
 }
@@ -1265,8 +1285,9 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 		log.Printf("closing pass %d: %d person and %d place reference(s) still unpaid", round+1, len(people), len(places))
 		item := workItem{
-			ID:   "closing",
-			Kind: "batch",
+			ID:    "closing",
+			Kind:  "batch",
+			Scope: fillScope{Whole: true},
 			Text: fmt.Sprintf("Author exactly these and nothing else: %d owed person(s) and %d owed place(s), listed under STILL OWED.\n\n"+
 				"ALL OF THEM AT RELEVANCE 1. Canon named them; nobody has met them. A name, a one-line descriptor, a "+
 				"kind or a place to stand, and a tag — and nothing more. Do not give them a standing, a manner, a "+
@@ -1305,8 +1326,9 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	reconcileDocument(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
-			ID:   "repair",
-			Kind: "batch",
+			ID:    "repair",
+			Kind:  "batch",
+			Scope: fillScope{Whole: true},
 			Text: "The belt refused the merged document: " + err.Error() +
 				"\n\nAnything you author here that the belt did not explicitly ask for goes in at relevance 1.",
 			Therefore: "emit only what the belt is missing; do not re-author names already listed",
@@ -2345,6 +2367,14 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	// The namespace calls see everything, because at that point everything is a handful of names.
 	scope := item.Scope
 	whole := scope.Whole
+	// A call that can see NOTHING is never intentional. Setting no Scope at all was three separate bugs
+	// in one round — closing, repair and arrival were each blind to the document they exist to work on,
+	// and the repair pass was told "do not re-author names already listed" while being shown no names.
+	// Blind is not a safe default, so it is not a default.
+	if !whole && len(scope.Places) == 0 && len(scope.Factions) == 0 && len(scope.Concepts) == 0 && len(scope.People) == 0 {
+		log.Printf("fill %s: the work item names no scope at all — showing it the whole document rather than nothing", mergeTag(item))
+		whole = true
+	}
 	want := func(names []string, n string) bool {
 		if whole {
 			return true

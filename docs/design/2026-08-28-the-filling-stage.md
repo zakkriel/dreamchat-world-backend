@@ -548,6 +548,34 @@ thing become one whole answer rather than one being thrown away.
 held by having been **told**, never `direct`, because direct knowledge is a claim about presence and
 defaulting to it would invent a witness at an event they missed.
 
+### SIXTH LIVE RUN, 2026-08-31 — three blind calls, all of them mine
+
+**21 calls, 45,567 output tokens, $0.044, refused at 950 s** on `nothing happened before the player
+arrived`. **Nothing was dropped** — the log shows no reconciliation removing a single event. The geography
+wave simply never authored any history, and it was right not to.
+
+**Its compiled mandate showed it no people.** `fillScope{Places: tree, Factions: …, Concepts: …}` — and
+the prompt's own rule is that every event needs a holder named below. Nobody was named below, so there was
+nothing an event could be attached to. The wave answered correctly and the world had no past.
+
+Checking the other items found the same mistake twice more: **`closing`, `repair` and `arrival` had no
+`Scope` at all**, so they saw an *empty document*. The repair pass was being told *"do not re-author names
+already listed"* while being shown no names, and the arrival had to place a visitor in a world it could not
+see.
+
+All three are the same error: when I introduced the compiled mandate I set `Scope` on the items I was
+thinking about, and the zero value means **blind**.
+
+**So blind is no longer a default.** A work item whose scope names nothing at all now falls back to the
+whole document and logs that it did — a call that can see nothing is never what anybody meant. The
+fallback deliberately does *not* trigger on a scope that names something but omits a kind, because that is
+a real choice (the faction-shaped `scaffold-2` item sees no people on purpose). Only *total* blindness is
+always a bug.
+
+**The lesson worth keeping is about the default, not the three sites.** A dangerous default produced three
+identical bugs in one round, in code I wrote the same afternoon, and none of them showed up in CI because
+the fake answers whatever it is asked regardless of what it was shown.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.
