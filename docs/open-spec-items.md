@@ -1726,3 +1726,164 @@ request that no tuning removes.
    the need?
 5. **Concepts layer position** — between factions and people is the natural reading, pending `SPEC-043`.
 
+
+---
+
+## SPEC-045 — Entering a location has a loading window, and that is where promotion happens
+
+**Status, newest first.**
+
+**OPEN. Founder-ruled 2026-08-31.** Depends on the relevance mechanic (ADR owed, see `SPEC-047`).
+
+Founder:
+
+> when switching locations we can give ourselves a loading time window to create and patch the location
+> (this is a game not a companion bot)
+
+That framing is the decision. A game may spend a few seconds on a loading screen; a chat may not. So the
+latency of promoting a location and the people in it stops being something to hide and becomes a budget
+to spend deliberately.
+
+**What happens inside the window.** On entering a location: raise the location's relevance, decide which
+of its people are *reachable* in this scene and raise theirs, and commission their images. Founder's own
+example — the one who serves you, the one on the door, the one demanding attention; not every extra in
+the room, who stay at relevance 1 with a description and are not offered as someone to speak to.
+
+**Measured 2026-08-31, against production:**
+
+| step | measured |
+|---|---|
+| visual identity created | 0.7 s |
+| generation accepted | 0.7 s |
+| **anchor image completed** | **6.04 s** |
+| cost | **$0.04 per image** |
+
+**A brand-new person needs two images, not one.** Generation is reference-conditioned (`image:ADR-017`):
+without an anchor it fails in 1.5 s with `missing_reference_assets`. So anchor → portrait is sequential
+*per person*, roughly 12 s. Across people it is fully parallel, so four people promote in ~12 s, not 48.
+
+**The window is only viable on a foreground art path.** Today art is a background sweep:
+`artCommissionInterval = 2 * time.Minute`, plus a poll backoff of 1 s ×1.8 capped at 15 s with full
+jitter. **A 6-second image can therefore take over two minutes to appear, and every bit of that delay is
+ours.** Promotion needs to commission immediately and poll tightly for the first ~10 s, falling back to
+the slow backoff afterwards. The sweep stays exactly as it is for everything nobody is looking at.
+
+### What has to be decided
+
+1. **How long is the window allowed to be?** ~12 s for a fresh cast is measured; unbudgeted so far.
+2. **Is the anchor alone good enough to speak with?** It is a real image. If yes, a new person costs one
+   generation and ~6 s instead of two and ~12 s — halving the most expensive part of promotion.
+3. **What does the surface show during it?** The founder's video/identity-reveal idea is the obvious
+   candidate: the world's condition, bargain and three voice lines already exist by then.
+4. **What if the player acts before it finishes?** Speaking to someone still at relevance 1 is the case,
+   and "wait" versus "the surface declines" is a product choice.
+
+---
+
+## SPEC-046 — One word for a place, and it is `location`
+
+**Status, newest first.**
+
+**OPEN. Founder-ruled 2026-08-31.**
+
+The engine says `location`: `entity_kind = ANY (ARRAY['actor','location','artifact','faction','group'])`,
+`location_state`, `fn_place_at`, `parent_location_id`. The genesis contracts say **`places`**
+(`world_fill.v1`, `world_genesis.v1`), and during the 2026-08-28/30 fill work I introduced **`region`**,
+**`sub-region`** and — worst — **`room`**, which appeared thirteen times in one prompt and narrowed every
+possible world to interior spaces until it was removed.
+
+Four words for one concept, in a project whose own law (`GA-2`) requires system vocabulary to be
+genre-agnostic and whose glossary exists to make terms singular.
+
+**The fix:** `location` everywhere, at every scale — an ocean, a continent, a living thing large enough
+to stand on, a city, a quarter, a building, a single lit table — with `extent_class` carrying the scale
+and `within` carrying containment.
+
+### This is not free, and that is the reason it needs a SPEC rather than a rename commit
+
+`places` is in **published** schemas that `dream-weaver-visuals` vendors byte-identically, and
+`../harness/check.sh contract-drift` is the only gate that sees both sides. So:
+
+1. `world_fill/1` → `world_fill/2`, or accept `places` as a legacy alias with a documented reason at the
+   code (the `narration` precedent in `beathandler.go`).
+2. `world_genesis/1` is the legacy seat and not the live path — decide whether it moves at all.
+3. Prompts, Go types, the domain package and the design docs move in the same round, or the vocabulary
+   splits again.
+
+**Do not start this inside another change.** It is a mechanical rename with a cross-repo contract in the
+middle of it.
+
+---
+
+## SPEC-047 — Reuse an existing asset by comparing entities, and transform it rather than generating anew
+
+**Status, newest first.**
+
+**OPEN. Founder-ruled 2026-08-31.** For **all** entity kinds, not only characters.
+
+Founder:
+
+> if a world is using one of the default art styles we can always save the art style with its description
+> and reuse it in this world or others with the same art style and world style (here is where the tags
+> matter) … match the character descriptions and tags, see if we have a good match, see if the image was
+> already used in this world … if the tags match above 70% we reuse the image and retweak it
+
+**The waste is already measurable.** Production, 2026-08-31:
+
+    28 style profiles, 4 distinct names
+       25x  dreamchat-default
+        1x  dreamchat-manhwa
+        1x  dreamchat-anime
+        1x  railway smoke style
+
+**Twenty-five identical default profiles** — one created per world instead of one reused per style. That
+alone is the first half of this SPEC.
+
+### Transformation is a real workflow, not a workaround
+
+Measured: `render.transform_only: true` returns **501 — not implemented**. Waiting for it is waiting for
+nothing.
+
+But **`subject.anchor_asset_id` is the supported path** and gives the same outcome: point a new
+generation at an *existing asset* as its reference. Reference-conditioning is the platform's actual
+design (`image:ADR-017`), so conditioning a new subject on a known asset **is** the transformation
+mechanism. It also skips the anchor bootstrap, so a reused face costs **one** generation (~6 s, $0.04)
+instead of two (~12 s, $0.08).
+
+**This belongs in the harness** so no future agent reaches for `transform_only`, finds a 501, and invents
+a workaround: *the transformation workflow is anchor conditioning.*
+
+### The matching surface exists
+
+`canonical_visual_traits` (build, hair, dress, …) is the durable description of a subject and already
+feeds the render. That is what a tag comparison compares. Locations and objects carry their own
+descriptors and kinds.
+
+### Relevance 4 — VIP
+
+Founder:
+
+> relevance 4 means NPC in the party, NPC that is your wife, a location that is your house … you don't
+> want the whole Pub wearing the same face as your wife just because their tags kinda look the same
+
+**Accepted, and it resolves an objection I raised.** I argued that asset exclusivity is not depth and did
+not belong on the relevance ladder. The pub-wearing-your-wife's-face example settles it: relevance 4 is
+defined by **being bound to the player**, which is the natural top of the same ladder — exists,
+referenced, interacted, *bound*. Something bound to the player needs both the deepest content and an
+asset that is theirs alone.
+
+So: **a relevance-4 asset is never reused, and never becomes another entity's anchor, in any world.**
+
+### What has to be decided
+
+1. **The match threshold.** 70% is the founder's starting figure; the metric over `canonical_visual_traits`
+   is undefined.
+2. **Scope of "already used in this world"** — per world, per tenant, or global? Reuse across *worlds* is
+   the cheap win; reuse *within* one is what the player notices.
+3. **Does a reused asset get recorded as such?** Without provenance nobody can answer "why do these two
+   people look alike".
+4. **Locations and objects** — same rules, or looser? A generic tavern interior reused across worlds is
+   probably fine; a landmark is not.
+5. **The relevance ADR is still owed.** Levels 1–4, the two mechanics (genesis assigns; play promotes),
+   and the law that promotion-created entities start at 1.
+
