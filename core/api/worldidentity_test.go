@@ -1492,3 +1492,142 @@ func TestFillFromIdentity_AWayToNowhereCostsTheEdgeNotTheWorld(t *testing.T) {
 		t.Error("every way was dropped — the good edges must survive with the bad one")
 	}
 }
+
+// ONE NAME BELONGS TO ONE THING, and precedence is by how much depends on the name. Measured live
+// 2026-08-31: refused at 1,460 s and $0.037 because "Colegio de Auscultadores de Ossa" arrived as both a
+// location and a person.
+func TestResolveNameCollisions_TheKindEverythingDependsOnKeepsTheName(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Colegio", Descriptor: "a hall", Kind: "hall", Relevance: 2, Description: "kept"},
+		{CanonicalName: "Colegio", Descriptor: "SHOULD LOSE", Kind: "hall", Relevance: 1, Tension: "calm"},
+		{CanonicalName: "Ossa", Descriptor: "a back", Kind: "back", Relevance: 1},
+	}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Colegio", Descriptor: "the institution, misfiled as a person", StartsIn: "Ossa", Relevance: 1, Tag: "t"},
+		{CanonicalName: "Del Vas", Descriptor: "a person", StartsIn: "Ossa", Relevance: 1, Tag: "t"},
+		{CanonicalName: "Del Vas", Descriptor: "the same person again", StartsIn: "Ossa", Relevance: 2, Tag: "t", Standing: "kept"},
+	}
+	doc.Factions = []genesisFaction{{CanonicalName: "Ossa", Descriptor: "clashes with a location", Kind: "faction", Relevance: 1, Tag: "t"}}
+	doc.Concepts = []genesisConcept{{CanonicalName: "Del Vas", WhatItIs: "clashes with a person", Relevance: 1}}
+	doc.Objects = []genesisObject{{CanonicalName: "Colegio", Descriptor: "clashes with a location", Kind: "thing", Relevance: 1}}
+
+	resolveNameCollisions(doc)
+
+	if len(doc.Places) != 2 {
+		t.Fatalf("locations = %d, want 2 — the duplicate must MERGE, not be dropped", len(doc.Places))
+	}
+	if doc.Places[0].Descriptor != "a hall" {
+		t.Errorf("the merge overwrote the first answer with %q", doc.Places[0].Descriptor)
+	}
+	if doc.Places[0].Tension != "calm" {
+		t.Error("the merge discarded what the second answer added — two half-answers must become one whole one")
+	}
+	if len(doc.Cast) != 1 || doc.Cast[0].CanonicalName != "Del Vas" {
+		t.Fatalf("cast = %+v, want only Del Vas: a location outranks a person for the same name", doc.Cast)
+	}
+	if doc.Cast[0].Standing != "kept" {
+		t.Error("the two Del Vas rows did not merge")
+	}
+	if len(doc.Factions) != 0 {
+		t.Error("a faction kept a name a location already owns")
+	}
+	if len(doc.Concepts) != 0 {
+		t.Error("a concept kept a name a person already owns")
+	}
+	if len(doc.Objects) != 0 {
+		t.Error("an object kept a name a location already owns")
+	}
+}
+
+// A synonym for a closed-set value is a fine English answer to a question with a fixed list of legal
+// ones. Snapping costs a shade of meaning; refusing costs the world.
+func TestNormaliseClosedSets_ASynonymIsNotABrokenWorld(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Region.ExtentClass = "enormous"
+	doc.Places = []genesisPlace{{CanonicalName: "P", Tension: "uneasy", ExtentClass: "tiny"}}
+	doc.Ways = []genesisWay{{Descriptor: "W", State: "ajar"}}
+	doc.Cast = []genesisActor{{CanonicalName: "A", Malleability: "unyielding",
+		Traits: []genesisTrait{{Key: "k", Strength: "overwhelming", Manner: "m"}}}}
+	doc.History = []genesisEvent{{WhatHappened: "x", Where: "P",
+		Knowledge: []genesisKnowledge{{Holder: "A", EpistemicType: "guessed", Content: "c"}}}}
+
+	normaliseClosedSets(doc)
+
+	for _, c := range []struct{ got, want, what string }{
+		{doc.Region.ExtentClass, "medium", "region extent_class"},
+		{doc.Places[0].Tension, "normal", "tension"},
+		{doc.Places[0].ExtentClass, "small", "place extent_class"},
+		{doc.Ways[0].State, "open", "way state"},
+		{doc.Cast[0].Malleability, "moderate", "malleability"},
+		{doc.Cast[0].Traits[0].Strength, "moderate", "trait strength"},
+		{doc.History[0].Knowledge[0].EpistemicType, "told", "epistemic_type"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s = %q, want %q", c.what, c.got, c.want)
+		}
+	}
+	// `direct` is a claim about PRESENCE. Defaulting to it would put someone at an event they missed.
+	if doc.History[0].Knowledge[0].EpistemicType == "direct" {
+		t.Error("an unknown epistemic type defaulted to `direct`, inventing a witness")
+	}
+}
+
+// collidingNameDriver reproduces the fifth live refusal: an institution filed as both a location and a
+// person, in the same build.
+type collidingNameDriver struct{ real Driver }
+
+func (d *collidingNameDriver) Name() string { return "colliding-name" }
+func (d *collidingNameDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *collidingNameDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if fillBatchID(req.Prompt) != "scaffold-2" || !strings.Contains(req.Prompt, "Name what sits inside") {
+		return raw, nil
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	subject := fillSubject(req.Prompt)
+	cast, _ := frag["cast"].([]any)
+	frag["cast"] = append(cast, map[string]any{
+		"canonical_name": subject, "descriptor": "the institution, misfiled as a person",
+		"starts_in": subject, "relevance": 1, "tag": "answers as an office",
+	})
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// The collision pass must be WIRED IN, and the world must survive the collision.
+func TestFillFromIdentity_AnInstitutionFiledTwiceDoesNotCostTheWorld(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &collidingNameDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("a name filed as both a location and a person cost the whole world: %v", err)
+	}
+	places := map[string]bool{}
+	for _, p := range doc.Places {
+		places[strings.TrimSpace(p.CanonicalName)] = true
+	}
+	for _, a := range doc.Cast {
+		if places[strings.TrimSpace(a.CanonicalName)] {
+			t.Errorf("%q survived as both a person and a location", a.CanonicalName)
+		}
+	}
+	if len(doc.Places) == 0 || len(doc.Cast) == 0 {
+		t.Error("the collision emptied the world instead of costing one row")
+	}
+}
