@@ -374,6 +374,38 @@ the first thing to measure on the next live run.
    everyone carried one; at relevance 1 nobody does. That put junk in the perception ledger which read as
    one secret shared by everybody who had none. A person who hides nothing now writes no secret.
 
+### FIRST LIVE RUN, 2026-08-31 — refused at 777 s, and what it taught
+
+Andantes brief, `deepseek-v4-flash` on `coreweave`, `json_schema` strict. **16 calls, 32,018 output
+tokens, $0.036, refused at 12 min 57 s** on *"nothing joins the places, so no one can leave the room you
+start in"*. Three defects, none of them the model's:
+
+**1. `unknown field "relevance"` killed 3 of 16 calls.** Told that every entity carries a level, the
+model applied it to `ways` and `arrival_candidates` too — whose Go shapes did not accept it. Refusing a
+four-minute call over a field the belt never reads is the expensive kind of pedantry, so both shapes now
+accept it, unread.
+
+**2. Connectivity and canon had no owner.** The scaffold returned every one of five locations at
+relevance 1, so nothing owed a description, so `anyPlaceOwing` skipped the geography wave entirely — and
+geography is the only thing that authors `ways` and `history`. **Neither of those scales with relevance:
+a relevance-1 location still has doors, and canon needs one event whoever is standing there.** The gate
+is gone; geography runs per top location, always.
+
+The residual risk this exposed is worse than the refusal that revealed it: the belt demands only *one*
+way and an exit from the arrival, so a partly-connected world **passes** while most of it is unreachable.
+The test now asserts **no orphan locations** — every location a wave named is joined to something.
+
+**3. A world can be coherently unplayable.** Five locations and ten people, all at relevance 1, is a
+correct reading of "most of what you name is relevance 1" and a world with no scene in it: nowhere
+described, nobody with a standing or anything they will not say. `ensurePlayableFloor` now guarantees the
+minimum — **one** location described, **one** person who can be dealt with — and runs *between* the
+namespace and the content waves so whatever it promotes actually gets authored. The prompt asks for the
+floor as well, because code stepping in should be the exception.
+
+**And a fake laxer than its seat hid one of these.** The fill fake emitted `ways` from the *scaffold*
+while the prompt says scaffold is names-only and geography joins things up. With the fake honest, deleting
+the geography gate fails loudly; before, it passed.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.

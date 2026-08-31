@@ -1114,10 +1114,6 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"kind": "yard", "extent_class": "small", "tension": "normal", "relevance": 2,
 				"tag": "nothing leaves without a line",
 			}},
-			"ways": []map[string]any{{
-				"descriptor": "the door to the yard", "from_place": "The Counting Room",
-				"to_place": "The Loading Yard", "state": "open",
-			}},
 			"factions": []map[string]any{{
 				"canonical_name": "The Tally", "descriptor": "the body that keeps the book",
 				"kind": "faction", "relevance": 2, "tag": "what is written arrived",
@@ -1154,10 +1150,6 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"kind": "annex", "extent_class": "intimate", "within": subject,
 				"tension": "calm", "relevance": 1, "tag": "nobody is sent here twice",
 			}},
-			"ways": []map[string]any{{
-				"descriptor": "the gap into the annex off " + subject, "from_place": subject,
-				"to_place": subject + " Annex", "state": "open",
-			}},
 			"cast": []map[string]any{{
 				"canonical_name": "Keeper Of " + subject, "descriptor": "the one who answers for " + subject,
 				"starts_in": subject, "relevance": 3, "tag": "speaks as if quoting",
@@ -1180,6 +1172,15 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door out. " +
 					"Everyone knows the window was painted shut the year the tally was disputed.",
 				"tension": "tense",
+			}},
+			"ways": []map[string]any{{
+				"descriptor": "the gap into the annex off " + subject, "from_place": subject,
+				"to_place": subject + " Annex", "state": "open",
+			}, {
+				// Out to the world beyond this tree. The other top location, unless this IS it — a way
+				// from a place to itself is a belt refusal, and the fake must not author one.
+				"descriptor": "the short street out of " + subject, "from_place": subject,
+				"to_place": otherTop(subject), "state": "open",
 			}},
 			"history": []map[string]any{{
 				"what_happened": "the tally for the night of the storm was disputed in " + subject,
@@ -1369,6 +1370,15 @@ func fillMembers(prompt string) []fillPackMember {
 
 // fillOwed reads the STILL OWED block: the names canon already references and the belt will refuse the
 // world without. The live seat reads the same block from the same prompt.
+// otherTop names the top location that is not this one, so the fake can join its trees together the way
+// the geography prompt asks a real seat to.
+func otherTop(subject string) string {
+	if subject == "The Loading Yard" {
+		return "The Counting Room"
+	}
+	return "The Loading Yard"
+}
+
 func fillOwed(prompt string) (people, places []string) {
 	_, rest, ok := strings.Cut(prompt, worldFillOwedMarker)
 	if !ok {

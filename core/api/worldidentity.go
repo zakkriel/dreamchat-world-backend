@@ -319,7 +319,11 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 				"RELEVANCE IS THE POINT OF THIS CALL. Most of what you name is relevance 1: it exists, it has a look and "+
 				"a tag, and that is complete. Give relevance 2 to what a visitor would plausibly deal with, and 3 only to "+
 				"the few who matter here — a keeper, a rival, the one who decides. A world of all-3s costs fifty times a "+
-				"world that is honest about who matters.",
+				"world that is honest about who matters.\n\n"+
+				"THERE IS A FLOOR, THOUGH: this place is somewhere a visitor may walk into, so give the location "+
+				"itself at least relevance 2, and give AT LEAST ONE person here relevance 3 — the one who keeps it, "+
+				"serves it, or decides here. A location where everything is relevance 1 is a world with no scene in "+
+				"it: nothing is described and nobody can be dealt with.",
 				top, b.SubPerTop, b.PeoplePerTop),
 			Therefore: "a name that exists cannot be a dangling reference later",
 		})
@@ -337,6 +341,73 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
+// ensurePlayableFloor guarantees the world has at least one scene in it.
+//
+// Measured live 2026-08-31 on the Andantes brief: the scaffold returned FIVE locations and TEN people,
+// every single one at relevance 1. That is a coherent answer to "most of what you name is relevance 1"
+// and a world nobody can play: nowhere has a description, and nobody has a standing, a manner or
+// anything they will not say. The prompt asks for a floor too, but a prompt is a request and this is a
+// guarantee — and assigning relevance is exactly what genesis is for (ADR-P027 §2).
+//
+// It runs BETWEEN the namespace and the content waves, so anything it promotes is then authored by the
+// waves rather than left owing. Promotion only ever raises (the ratchet), and it promotes the FEWEST
+// things that make a scene: one location, and one person standing in it.
+func ensurePlayableFloor(doc *genesisDoc) {
+	// The location with the most people in it is where a scene is most likely to happen.
+	best, bestCount := -1, -1
+	for i, p := range doc.Places {
+		n := 0
+		for _, a := range doc.Cast {
+			if strings.TrimSpace(a.StartsIn) == strings.TrimSpace(p.CanonicalName) {
+				n++
+			}
+		}
+		if n > bestCount {
+			best, bestCount = i, n
+		}
+	}
+	if best < 0 {
+		return // no locations at all; the belt refuses that on its own terms
+	}
+	described := false
+	for _, p := range doc.Places {
+		if p.Relevance >= 2 {
+			described = true
+			break
+		}
+	}
+	if !described {
+		log.Printf("fill: no location rose above relevance 1 — promoting %q to 2 so somewhere is described",
+			doc.Places[best].CanonicalName)
+		doc.Places[best].Relevance = 2
+	}
+	// Someone a scene can turn to, standing in a location that will be described.
+	speakable := false
+	for _, a := range doc.Cast {
+		if a.Relevance >= 3 {
+			speakable = true
+			break
+		}
+	}
+	if speakable {
+		return
+	}
+	where := strings.TrimSpace(doc.Places[best].CanonicalName)
+	for i, a := range doc.Cast {
+		if strings.TrimSpace(a.StartsIn) == where {
+			log.Printf("fill: nobody rose above relevance 1 — promoting %q in %q to 3 so the world has one person to deal with",
+				a.CanonicalName, where)
+			doc.Cast[i].Relevance = 3
+			return
+		}
+	}
+	if len(doc.Cast) > 0 {
+		log.Printf("fill: nobody rose above relevance 1 and nobody stands in %q — promoting %q to 3",
+			where, doc.Cast[0].CanonicalName)
+		doc.Cast[0].Relevance = 3
+	}
+}
+
 // contentSchedule is the parallel half: every wave authors to the relevance the scaffold assigned, and
 // entities left at relevance 1 are ALREADY COMPLETE and cost nothing here. That is the saving.
 //
@@ -347,18 +418,24 @@ func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 	var geography, factions []workItem
 	for _, top := range topLocations(doc) {
 		tree := locationTree(doc, top)
-		if !anyPlaceOwing(doc, tree) {
-			continue
-		}
+		// NOT gated on whether a description is owed. Measured live 2026-08-31: the scaffold returned
+		// every location at relevance 1, the wave was skipped, and the build was refused 13 minutes in
+		// for "nothing joins the places" — because connectivity and canon have no other owner, and
+		// neither of them scales with relevance.
 		geography = append(geography, workItem{
 			ID: "geography", Kind: "content", Subject: top,
 			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts},
-			Text: "Author the locations listed below and no others. Each is listed with the relevance it was given: " +
-				"a relevance-1 location is finished — do not touch it. For every location at relevance 2 or more, write " +
-				"its description (what it is, what it was, what it is for, what a stranger sees first) and its tension, " +
-				"and add the ways that join it to its neighbours. Author the canon that happened HERE only if the people " +
-				"who hold it are named below.",
-			Therefore: "a place is what happened in it, and depth belongs where someone will stand",
+			Text: "Two jobs, and the first one is not optional.\n\n" +
+				"ONE — JOIN THEM UP. Author the `ways` that connect the locations listed below to each other and to " +
+				"their container, so that from any one of them a body can reach the others. A world where nothing " +
+				"joins the places cannot be walked into and will be thrown away. This has nothing to do with " +
+				"relevance: a location at relevance 1 still has doors.\n\n" +
+				"TWO — AUTHOR WHAT HAPPENED HERE. At least one canon event, and every event needs at least one " +
+				"holder who is one of the people named below — a knower need never have been present.\n\n" +
+				"AND, where the level asks for it: each location listed at relevance 2 or more gets its description " +
+				"— what it is, what it was, what it is for, what a stranger sees first. A location listed at " +
+				"relevance 1 is FINISHED; do not describe it.",
+			Therefore: "a place is what happened in it, and a place nothing joins is not a place",
 		})
 	}
 	for _, f := range factionsOwing(doc) {
@@ -456,19 +533,6 @@ func personOwing(a genesisActor) bool {
 
 func placeOwing(p genesisPlace) bool {
 	return p.Relevance >= 2 && strings.TrimSpace(p.Description) == ""
-}
-
-func anyPlaceOwing(doc *genesisDoc, names []string) bool {
-	want := map[string]bool{}
-	for _, n := range names {
-		want[n] = true
-	}
-	for _, p := range doc.Places {
-		if want[strings.TrimSpace(p.CanonicalName)] && placeOwing(p) {
-			return true
-		}
-	}
-	return false
 }
 
 func factionsOwing(doc *genesisDoc) []string {
@@ -662,6 +726,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	}
 	log.Printf("fill: namespace is %d place(s) (%d top), %d faction(s), %d concept(s), %d person(s); depth %d (%s)",
 		len(doc.Places), len(topLocations(doc)), len(doc.Factions), len(doc.Concepts), len(doc.Cast), b.Level, b.Label)
+	ensurePlayableFloor(doc)
 	log.Printf("fill: owed at relevance 2+ — %d place(s), %d faction(s), %d person(s); everything else is complete at 1",
 		countPlacesOwing(doc), len(factionsOwing(doc)), countPeopleOwing(doc))
 

@@ -1036,3 +1036,135 @@ func TestBelt_ValidatesAgainstTheLevelNotOneFullness(t *testing.T) {
 		t.Errorf("a concept collided with a place name and was accepted: %v", err)
 	}
 }
+
+// A world where the scaffold left EVERYTHING at relevance 1 is coherent and unplayable: nowhere has a
+// description and nobody has a standing. Measured live 2026-08-31 on the Andantes brief — five
+// locations, ten people, every one at relevance 1. The prompt asks for a floor; this guarantees it.
+func TestEnsurePlayableFloor_PromotesTheFewestThingsThatMakeAScene(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Empty Ledge", Relevance: 1},
+		{CanonicalName: "The Crowded Hall", Relevance: 1},
+	}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "One", StartsIn: "The Crowded Hall", Relevance: 1},
+		{CanonicalName: "Two", StartsIn: "The Crowded Hall", Relevance: 1},
+	}
+	ensurePlayableFloor(doc)
+
+	if doc.Places[1].Relevance < 2 {
+		t.Error("the location with people in it was not promoted, so nowhere in this world is described")
+	}
+	if doc.Places[0].Relevance != 1 {
+		t.Error("an empty ledge was promoted too — the floor must promote the FEWEST things, not raise the world")
+	}
+	speakable := 0
+	for _, a := range doc.Cast {
+		if a.Relevance >= 3 {
+			speakable++
+		}
+	}
+	if speakable != 1 {
+		t.Errorf("%d people reached relevance 3, want exactly 1 — a floor is not a general promotion", speakable)
+	}
+
+	// Already playable: the floor must do NOTHING. It is a floor, not a policy.
+	rich := &genesisDoc{}
+	rich.Places = []genesisPlace{{CanonicalName: "A", Relevance: 2}, {CanonicalName: "B", Relevance: 1}}
+	rich.Cast = []genesisActor{{CanonicalName: "Keeper", StartsIn: "A", Relevance: 3}, {CanonicalName: "Thin", StartsIn: "A", Relevance: 1}}
+	ensurePlayableFloor(rich)
+	if rich.Places[1].Relevance != 1 || rich.Cast[1].Relevance != 1 {
+		t.Error("the floor promoted things in a world that already had a scene")
+	}
+}
+
+// thinScaffoldDriver answers the scaffold exactly as the live model did on 2026-08-31: everything at
+// relevance 1. Content calls it delegates, so whatever the floor promotes really does get authored.
+type thinScaffoldDriver struct{ real Driver }
+
+func (d *thinScaffoldDriver) Name() string { return "thin-scaffold" }
+func (d *thinScaffoldDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *thinScaffoldDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if id := fillBatchID(req.Prompt); id != "scaffold-1" && id != "scaffold-2" {
+		return raw, nil
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	for _, key := range []string{"places", "cast", "factions"} {
+		rows, _ := frag[key].([]any)
+		for _, r := range rows {
+			if m, ok := r.(map[string]any); ok {
+				m["relevance"] = 1
+			}
+		}
+	}
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// The floor must be WIRED IN, not merely present. Deleting the one call site left the direct unit test
+// green, which is the deletable-route failure AGENTS.md names — so this drives the real pipeline.
+func TestFillFromIdentity_AnAllThinScaffoldStillYieldsAPlayableWorld(t *testing.T) {
+	ctx := context.Background()
+	seat := &thinScaffoldDriver{real: NewFakeWorldFillDriver()}
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("a world whose scaffold named everything at relevance 1 was refused: %v", err)
+	}
+
+	described := 0
+	for _, p := range doc.Places {
+		if p.Relevance >= 2 && strings.TrimSpace(p.Description) != "" {
+			described++
+		}
+	}
+	if described == 0 {
+		t.Error("nowhere in this world is described, so the narrator has nothing to work from")
+	}
+	speakable := 0
+	for _, a := range doc.Cast {
+		if a.Relevance >= 3 && strings.TrimSpace(a.Goal) != "" {
+			speakable++
+		}
+	}
+	if speakable == 0 {
+		t.Error("nobody in this world can be dealt with, so it has no scene in it")
+	}
+	// Connectivity and canon are STRUCTURAL and must not depend on anyone's level. This is the exact
+	// refusal the live build hit: "nothing joins the places, so no one can leave the room they start in".
+	if len(doc.Ways) == 0 {
+		t.Error("nothing joins the places — connectivity was left to a level-gated wave")
+	}
+	if len(doc.History) == 0 {
+		t.Error("nothing happened before the player arrived — canon was left to a level-gated wave")
+	}
+	// NO ORPHANS. The belt only demands one way and an exit from the arrival, so a world can pass it
+	// while most of it is unreachable — quieter than a refusal and worse. Every location a wave named
+	// must be joined to something, which is only true if connectivity runs for EVERY tree rather than
+	// only the trees that happened to owe a description.
+	touched := map[string]bool{}
+	for _, w := range doc.Ways {
+		touched[strings.TrimSpace(w.FromPlace)] = true
+		touched[strings.TrimSpace(w.ToPlace)] = true
+	}
+	for _, p := range doc.Places {
+		if n := strings.TrimSpace(p.CanonicalName); !touched[n] {
+			t.Errorf("nothing joins %q — it exists and nobody can reach it", n)
+		}
+	}
+}
