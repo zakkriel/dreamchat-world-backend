@@ -918,6 +918,45 @@ func ensurePlayableFloor(doc *genesisDoc) {
 	}
 }
 
+// canonSchedule is the layer the founder's ordering put between the places and the lives: what already
+// happened here (2026-08-28 — "places -> key history -> lives -> objects").
+//
+// It was folded into the geography wave, as a second job after connectivity, and the measured result was
+// ONE event in a world of 71 entities (live run seven, 2026-08-31). A layer with two jobs does the first
+// one. So canon gets its own call per location tree, looking at nothing else.
+//
+// It runs after geography and before the people are authored, which is exactly where the ordering put it:
+// the holders already have NAMES from the scaffold, and their inner lives are written later knowing what
+// they lived through — rather than canon being invented afterwards to match a personality.
+func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
+	concepts := conceptNames(doc)
+	var items []workItem
+	for _, top := range topLocations(doc) {
+		tree := locationTree(doc, top)
+		who := peopleIn(doc, tree)
+		if len(who) == 0 {
+			// Canon needs somebody to hold it, and an event nobody knows cannot be perceived.
+			continue
+		}
+		items = append(items, workItem{
+			ID: "canon", Kind: "content", Subject: top,
+			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts, People: who},
+			Text: "AUTHOR WHAT ALREADY HAPPENED in the locations listed below, and nothing else. Several events — " +
+				"the ones this world's condition makes inevitable, the ones its factions are still arguing about, " +
+				"the one somebody has never told anyone.\n\n" +
+				"`who` IS NOT `knowledge`. `who` is who was there. `knowledge` is who KNOWS, and a knower need " +
+				"never have been present — that is what `told`, `overheard`, `public`, `rumor` and `inference` are " +
+				"for. USE THE GAP: an event with two people present and five who have heard some version of it is a " +
+				"world with lore. An event known only to the people in the room is a world where nothing travels.\n\n" +
+				"Every event needs at least one holder from the list below. Two people at one event never hold " +
+				"identical beliefs about it, and somebody should be wrong. Author no new people and no new " +
+				"locations: everyone and everywhere you need is already named.",
+			Therefore: "a place is what happened in it, and lore is what travelled from it",
+		})
+	}
+	return items
+}
+
 // contentSchedule is the parallel half: every wave authors to the relevance the scaffold assigned, and
 // entities left at relevance 1 are ALREADY COMPLETE and cost nothing here. That is the saving.
 //
@@ -938,17 +977,16 @@ func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 			// an event needs somebody who knows it. Without them the mandate made the prompt's own rule
 			// unsatisfiable and the wave returned no history at all.
 			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts, People: peopleIn(doc, tree)},
-			Text: "Two jobs, and the first one is not optional.\n\n" +
-				"ONE — JOIN THEM UP. Author the `ways` that connect the locations listed below to each other and to " +
-				"their container, so that from any one of them a body can reach the others. A world where nothing " +
-				"joins the places cannot be walked into and will be thrown away. This has nothing to do with " +
-				"relevance: a location at relevance 1 still has doors.\n\n" +
-				"TWO — AUTHOR WHAT HAPPENED HERE. At least one canon event, and every event needs at least one " +
-				"holder who is one of the people named below — a knower need never have been present.\n\n" +
-				"AND, where the level asks for it: each location listed at relevance 2 or more gets its description " +
+			Text: "JOIN THEM UP, first and above everything else. Author the `ways` that connect the locations " +
+				"listed below to each other and to their container, so that from any one of them a body can reach " +
+				"the others. A world where nothing joins the places cannot be walked into and will be thrown away. " +
+				"This has nothing to do with relevance: a location at relevance 1 still has doors.\n\n" +
+				"Then, where the level asks for it: each location listed at relevance 2 or more gets its description " +
 				"— what it is, what it was, what it is for, what a stranger sees first. A location listed at " +
-				"relevance 1 is FINISHED; do not describe it.",
-			Therefore: "a place is what happened in it, and a place nothing joins is not a place",
+				"relevance 1 is FINISHED; do not describe it.\n\n" +
+				"Author no canon here. What happened in these places is the next layer's whole job, and it can do it " +
+				"better than you can, because it will be looking at nothing else.",
+			Therefore: "a place nothing joins is not a place",
 		})
 	}
 	for _, f := range factionsOwing(doc) {
@@ -964,6 +1002,10 @@ func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 	waves := [][]workItem{}
 	if len(geography) > 0 {
 		waves = append(waves, geography)
+	}
+	// Canon between the places and the lives, which is where the founder's ordering put it.
+	if canon := canonSchedule(doc, b); len(canon) > 0 {
+		waves = append(waves, canon)
 	}
 	if len(factions) > 0 {
 		waves = append(waves, factions)
