@@ -65,6 +65,10 @@ Per kind, in full:
 | **object** | name, minimal descriptor, kind | whose hand, or which location | real description, canon, image |
 | **concept** | name, what it is, in a line | what is contested, who teaches it | who holds which position, and who is wrong |
 
+**Placement is structural, not depth.** A person's `starts_in`, an object's `where` and a location's
+`within` are required at *every* level, including 1: "exists" means exists somewhere in the world, and an
+entity the engine cannot place cannot be stored. Only *description* scales with relevance.
+
 **Relevance 4 adds no content class of its own.** Its whole content is exclusivity: a relevance-4 asset
 is never reused for another entity, and never borrowed as another entity's anchor, in any world
 (`SPEC-047`).
@@ -120,6 +124,15 @@ There is no thin conversation. Either an entity is at 3 with an image, or intera
 first. That single fact is what forces promotion onto a **foreground** art path inside the loading window
 (`SPEC-045`) — the 2-minute reconciler sweep (`ADR-P021`) remains correct for everything nobody is
 looking at, and wrong for the person standing in front of the player.
+
+**Evidence in code (`D-9`):**
+- `core/api/worldidentity.go` — the two-stage schedule, what each level owes (`personOwing`, `placeOwing`,
+  `factionsOwing`), the compiled mandate, and the deepening that lets a thin thing be filled in later
+  without being renamed or demoted.
+- `core/api/worldgenesis.go` — the belt, validating against the level rather than demanding one fullness of
+  everyone; `validRelevance` is the ladder.
+- `core/api/worldkickstart.go` — the §4 law where a creation path outside fill obeys it: kin the player names
+  enter at relevance 1, decided by code and not by a seat.
 
 ## Consequences
 

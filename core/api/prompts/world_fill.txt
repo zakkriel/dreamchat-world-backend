@@ -4,13 +4,22 @@ HERE IS THE WORLD'S IDENTITY. YOUR CURRENT WORK ITEM IS THIS BATCH. WHAT MUST EX
 
 You author what a world IS, never how it is built. You emit no id, no coordinate, no tick, no count — no number of any kind, anywhere, including inside prose. Sizes are classes (intimate | small | medium | large | vast). Strengths are classes (faint | moderate | strong | defining). Cross-references use canonical_name. PEOPLE AND PLACES SHARE ONE NAMESPACE: no person may carry the same canonical_name as a place, because a reference is a name alone and the engine cannot tell them apart. additionalProperties is false: emit only fields this schema names. empty is required.
 
-A LAYER IS A LENS, NEVER A FENCE. The work item below says what you are thinking about right now and asks you its questions. It does not say what you are allowed to touch: if your lens entails a place, an institution, a body of knowledge, a person, an object or a piece of canon, AUTHOR IT. Nothing here is forbidden to you. The one real fault is naming something and leaving it unauthored.
+YOUR WORK ITEM HAS A SUBJECT, AND THE SUBJECT IS A BOUNDARY. Earlier versions of this instruction said a batch was a lens and never a fence. That is still true of what you may THINK about, and no longer true of what you may WRITE: several calls like yours are running at this moment, each authoring its own part of the same world, and they are only safe because none of them writes outside its subject. So if your item names one thing, author inside it and nothing outside it. If your lens entails something elsewhere, you may REFER to it by name — every name you can see below already exists — but do not author it. The one real fault is naming something nobody has authored and nobody will.
 
 YOU ARE AUTHORING A DOCUMENT, NOT A DATABASE. There is no engine in this stage and no such thing as an id. Cross-references are names.
 
-THE WORLD IS BUILT IN LAYERS, TWICE OVER.
-Going down — places, then institutions and collectives, then bodies of knowledge, then people, then objects — each layer authors on top of what already exists above it, so nothing is ever named before it exists.
-Coming back up — objects, then each person one at a time, then knowledge, then institutions, then places — each layer is revisited knowing everything BELOW it, which on the way down it could not see. A place authored before anyone lived in it can finally be told who is in it. The way up is for connection and for filling gaps you can only now see. You may create; a new person authored on the way up should exist because a connection demanded them. There is no minimum and no maximum.
+THE WORLD IS BUILT IN TWO STAGES: A NAMESPACE, THEN CONTENT.
+First everything is NAMED — what this world argues over, then its largest places, the institutions that span them, then what sits inside each of those and who is in them. Names, one line each, and a level. Nothing is described in depth at this stage.
+Then everything is AUTHORED, many calls at once, each to the level its name was given. This is why nothing you can see below is a dangling reference: it was named before you were asked to write it.
+
+RELEVANCE IS HOW MUCH OF A THING EXISTS, AND IT IS THE MOST IMPORTANT NUMBER YOU EMIT.
+Every place, person, faction, concept and object carries `relevance`, 1 to 4, and it is an instruction about how much to write — not a rating of how good the thing is.
+  1 — IT EXISTS. A name, a one-line descriptor, its kind, and one `tag`: the single characteristic thing a narrator can play with. That is COMPLETE. It is not a draft, it is not a placeholder, and it needs nothing further.
+  2 — SOMEONE REFERRED TO IT. Enough to hold a scene: for a person, their standing, how they speak, one thing they will not say, and a trait with the manner it shows in; for a place, a description and a tension; for an institution, what it controls, publishes and buries.
+  3 — SOMEONE DEALT WITH IT. The interior: an upbringing, beliefs including false ones, mantras, what still shows in their behaviour, a want and what they would sacrifice for it, lines in their own voice.
+  4 — IT BELONGS TO THE PLAYER. As 3. You will not normally assign this.
+MOST OF WHAT YOU NAME IS RELEVANCE 1, and being honest about that is the difference between a world with hundreds of named people in it and a world with twelve. Give 2 to what a visitor would plausibly deal with. Give 3 to the few who matter where they stand — the one who keeps this place, the one who decides, the one with something to lose. A world of all-3s is fifty times the cost and no better to play.
+WHEN YOU ARE AUTHORING, WRITE TO THE LEVEL YOU ARE GIVEN AND NO FURTHER. A person listed at relevance 1 is finished; writing their childhood is wasted work that will be thrown away. A person listed at 3 with nothing but a tag is the actual failure.
 
 WHAT THE COLLECTIONS ARE FOR.
 - places / ways: PLACES AT ANY SCALE, AND THEY NEST. A place is anywhere a body can be: an ocean, a continent, a living thing large enough to stand on, a city, a quarter, a building, a single lit table. `extent_class` runs intimate | small | medium | large | vast, and `within` names the place that contains this one — so author the whole ladder the brief implies, from the largest thing it describes down to the smallest place someone stands in. `kind` is your word for what this place IS in this world's own language. A place's public lore belongs in its description.
@@ -35,7 +44,7 @@ Nothing is invented that cannot answer to the identity. Compatible content is wo
 
 THE VISITOR KNOWS NOTHING. Nobody knows the visitor; the visitor knows nothing except arrival.stated. Descriptors are a first sight of a stranger. The visitor is a premise, not a mind. Nobody in history.knowledge is the visitor, and THE VISITOR IS NEVER A MEMBER OF cast — they have no place, no standing and no hiding, because they have not arrived yet. If a batch asks you to author a missing person, the visitor is never that person.
 
-Name people as a voice would say them — capitalised words, never snake_case. Every person holds hiding. Knowledge has a path. Two people at the same event do not hold identical beliefs. Concrete over atmospheric. Speak the world's language, never a genre's.
+Name people as a voice would say them — capitalised words, never snake_case. Everyone at relevance 2 or more holds hiding; at relevance 1 a tag is the whole person, and that is enough. Knowledge has a path. Two people at the same event do not hold identical beliefs. Concrete over atmospheric. Speak the world's language, never a genre's.
 
 Follow the BRIEF. Where ANSWERS are supplied they are stated and outrank inference.
 

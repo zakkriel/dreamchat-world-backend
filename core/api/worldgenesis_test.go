@@ -31,7 +31,7 @@ func genesisFixture(t *testing.T) (pgx.Tx, string, *genesisDoc) {
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
 
-	doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
+	doc, _, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -303,7 +303,7 @@ func TestWorldGenesis_NothingButNamesHangsOffTheNamingEvent(t *testing.T) {
 			worldID, actorID).Scan(&shown); err != nil {
 			t.Fatalf("perceived name of %q to themselves: %v", a.CanonicalName, err)
 		}
-		if shown == strings.TrimSpace(a.Hiding) {
+		if s := strings.TrimSpace(a.Hiding); s != "" && shown == s {
 			t.Errorf("%q's own perceived name is their secret", a.CanonicalName)
 		}
 	}
@@ -316,6 +316,21 @@ func TestWorldGenesis_EverySecretIsPrivateToItsHolder(t *testing.T) {
 	tx, worldID, doc := genesisFixture(t)
 
 	for _, a := range doc.Cast {
+		if strings.TrimSpace(a.Hiding) == "" {
+			// Relevance 1 is a name, a look and a tag; hiding is what being REFERENCED buys
+			// (ADR-P027). So a thin person holds no secret — and must hold no EMPTY one either,
+			// which is the bug this assertion locks down.
+			var junk int
+			if err := tx.QueryRow(ctx,
+				`SELECT count(*) FROM perception_record WHERE world_id=$1::uuid AND trim(content)=''`,
+				worldID).Scan(&junk); err != nil {
+				t.Fatalf("empty-content perceptions: %v", err)
+			}
+			if junk != 0 {
+				t.Errorf("%d perception(s) carry no content — a person who hides nothing must write no secret", junk)
+			}
+			continue
+		}
 		holderID := castID(t, ctx, tx, worldID, a.CanonicalName)
 		var holders int
 		if err := tx.QueryRow(ctx,
@@ -355,7 +370,7 @@ func castID(t *testing.T, ctx context.Context, tx pgx.Tx, worldID, canonicalName
 // authoredWorld returns the fake's document, decoded — the starting point for corruption tests.
 func authoredWorld(t *testing.T) *genesisDoc {
 	t.Helper()
-	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
+	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -440,7 +455,7 @@ func TestWorldGenesis_TheBriefReachesTheSeat(t *testing.T) {
 	if !strings.Contains(strings.ToLower(doc.World.DisplayName), "cargo") {
 		t.Errorf("display_name = %q, want it derived from the brief", doc.World.DisplayName)
 	}
-	if _, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "   ", nil, nil, nil); err == nil {
+	if _, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "   ", nil, nil, nil, 0); err == nil {
 		t.Error("an empty brief was accepted; there is nothing to build from")
 	}
 }
@@ -581,14 +596,14 @@ func TestValidateArrivalCandidates(t *testing.T) {
 }
 
 func TestFakeGenesisEmitsCandidatesUnlessIdentityStated(t *testing.T) {
-	open, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "a harbour town at closing time", nil, nil, nil)
+	open, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "a harbour town at closing time", nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(open.ArrivalCandidates) != 3 {
 		t.Fatalf("identity-open brief: %d candidates, want 3", len(open.ArrivalCandidates))
 	}
-	stated, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "a harbour town; I am the debt collector", nil, nil, nil)
+	stated, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), "a harbour town; I am the debt collector", nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

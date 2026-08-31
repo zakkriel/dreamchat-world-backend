@@ -32,6 +32,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 )
 
@@ -41,15 +42,33 @@ import (
 // what the seat's own commit path decoded.
 type recordingDriver struct {
 	Driver
+	mu   sync.Mutex
 	last string
+	// richest is the longest answer this seat gave. SPEC-011 exists so that a published schema has a
+	// REAL payload behind it, and `last` stopped being one: under the flat schedule the final call was
+	// the sufficiency batch that carried the whole world, and under the layered fill it is the arrival —
+	// a fragment with no places, no cast and therefore no `relevance` or `tag` in it at all. The gate
+	// stayed green on a payload that proved nothing about the fields this round added.
+	//
+	// Longest is a proxy for richest, and it is deliberately not "the call with id X": pinning the
+	// payload to one work item would break silently the next time the schedule changes, which is the
+	// same failure in a new costume.
+	richest string
 }
 
+// The layered fill runs waves of calls AT ONCE (runWave), so a recording seat is written to from several
+// goroutines. Unsynchronised, this was a race the detector finds.
 func (r *recordingDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	raw, err := r.Driver.Generate(ctx, req)
 	if err != nil {
 		return "", err
 	}
+	r.mu.Lock()
 	r.last = raw
+	if len(raw) > len(r.richest) {
+		r.richest = raw
+	}
+	r.mu.Unlock()
 	return raw, nil
 }
 

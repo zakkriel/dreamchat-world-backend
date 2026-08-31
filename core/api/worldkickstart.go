@@ -1,3 +1,5 @@
+// Governed-by: ADR-P027 — new entities enter at relevance 1, the law that makes promotion terminate;
+// kickstart materialises the player's kin under it.
 package main
 
 // worldkickstart.go — the seat that turns a chosen identity into a chosen opening.
@@ -170,6 +172,18 @@ func (k *kickstartDoc) validate(doc *genesisDoc, wantOptions bool) error {
 		where := strings.TrimSpace(a.StartsIn)
 		if !places[where] {
 			return refuse("%q starts in %q, which is not a place this world has", name, a.StartsIn)
+		}
+		// NEW ENTITIES ENTER AT RELEVANCE 1, and that is code's decision rather than the seat's
+		// (ADR-P027 §4): it is the law that makes the whole model terminate, so it may not depend on a
+		// model remembering to say so. Kin the player names — "son of Dalma and Harry" — exist, are
+		// placed, and are complete at that level; play promotes them if the player ever reaches them.
+		//
+		// The tag is the one line a thin person answers from, and the kickstart seat has no field for
+		// it. The descriptor IS that line here, so it stands in rather than Go inventing a temperament
+		// it has no business authoring.
+		a.Relevance = 1
+		if strings.TrimSpace(a.Tag) == "" {
+			a.Tag = strings.TrimSpace(a.Descriptor)
 		}
 		kept = append(kept, a)
 		populated[where] = true

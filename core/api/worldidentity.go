@@ -1,3 +1,5 @@
+// Governed-by: ADR-P027 — relevance is how much of a thing exists; genesis assigns it and the fill
+// authors to the level, rather than to one fullness for everyone.
 package main
 
 // worldidentity.go — the understanding pass and the fill it governs.
@@ -19,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -162,9 +165,13 @@ type workItem struct {
 	Kind      string
 	Text      string
 	Therefore string
-	// Subject names the one thing this item is about, when the item is per-item rather than per-layer.
-	// The ascent authors one call per person, and that person's name travels here.
+	// Subject names the one thing this item is about: a top location, a faction, or the group a pack of
+	// people shares. Per-item work carries it so a review can name exactly which call to blame.
 	Subject string
+	// Members are the entities a pack call authors, and nobody else.
+	Members []string
+	// Scope is the compiled mandate — the only already-authored names this call is shown.
+	Scope fillScope
 }
 
 func (id *worldIdentity) validate() error {
@@ -218,84 +225,342 @@ func (id *worldIdentity) validate() error {
 	return nil
 }
 
-// descentSchedule is the way down: each layer authors from what is already above it, so nothing is ever
-// named before it exists (design 2026-08-28 §1.2). Static, because the descent cannot know what it has
-// not authored yet.
+// A build is a namespace, then content. The namespace is three cheap sequential calls that name
+// everything; the content is parallel waves that author it. Nothing in a content wave can invent a
+// dangling reference, because every name it could refer to already exists — which is the whole reason
+// the waves are safe to run at once (design 2026-08-31, ADR-P027).
 //
-// This replaced a flat six-batch schedule whose single `history` layer ran BEFORE people existed, so canon
-// named people who did not. That one ordering error cost eleven failed production builds and three
-// mechanisms built to survive it.
-func descentSchedule() []workItem {
-	return []workItem{
-		{ID: "places", Kind: "descent",
-			Text:      "What places does this world's condition force into existence, AT EVERY SCALE THE BRIEF IMPLIES, and what joins them? Read the scale off the brief: the largest thing it describes, then what sits inside that, down to the smallest place a body can stand in — and use `within` to say what contains what. What does a stranger see first? Put each place's public lore INTO its description — what it is, what it was, what it is for. Do not author canon events yet: an event needs someone who knows it, and nobody exists yet.",
-			Therefore: "geography exists before anyone stands in it"},
-		{ID: "factions", Kind: "descent",
-			Text:      "Who organises here? What do they control, what do they publish, and what do they bury? Which are organised bodies with a command structure (kind: faction) and which are bare collectives with none (kind: group)? Their lore goes in their own fields. Still no canon events — there is nobody to hold them.",
-			Therefore: "an institution exists before the person who serves or resents it"},
-		{ID: "concepts", Kind: "descent",
-			Text:      "What bodies of knowledge does this world argue over — schools of thought, doctrines, a trade's craft? What is each one actually, and what is contested about it? Which faction teaches or owns it? Still no canon events.",
-			Therefore: "a school of thought exists before the apprentice who is wrong about it"},
-		{ID: "people", Kind: "descent",
-			Text:      "Who is in these places? For each: what they are to the place they are in, how they speak, what they carry that they will not say, and which factions or groups they belong to. Name the roster fully; each person's inner life is authored separately later. THIS IS ALSO WHERE CANON STARTS: now that there are people, author what has already happened here, and for each event who was there and who KNOWS — and a knower need never have been present. Every event needs at least one holder who is one of these people.",
-			Therefore: "the world needs its people before it can have their secrets, and canon needs someone to carry it"},
-		{ID: "artifacts", Kind: "descent",
-			Text:      "What does a body touch here? What sits in these places and what is carried in these hands? Who knows where each one is, and who thinks it is somewhere else?",
-			Therefore: "a world with nothing to pick up is a diorama"},
+// This replaced a descent/ascent pair that authored every entity to the same fullness. Measured
+// 2026-08-30: 33 entities cost 76,288 output tokens — 2,312 per entity — because a location-keeper was
+// written as richly as a city's ruler. Relevance is the fix, and it is an instruction given BEFORE
+// authoring, never a filter applied after.
+
+// depthBudget turns the author-facing `depth` (1-5) into breadth. Depth buys MORE WORLD, never deeper
+// entities: how rich a single thing gets is relevance's job, not depth's.
+type depthBudget struct {
+	Level        int
+	TopLocations int
+	SubPerTop    int
+	PeoplePerTop int
+	Label        string
+}
+
+func budgetForDepth(d int) depthBudget {
+	switch {
+	case d <= 1:
+		return depthBudget{1, 2, 5, 7, "a locality: one or two places and what sits inside them"}
+	case d == 2:
+		return depthBudget{2, 3, 6, 12, "a town and its quarters"}
+	case d == 3:
+		return depthBudget{3, 6, 8, 15, "a city and its region"}
+	case d == 4:
+		return depthBudget{4, 12, 8, 15, "a province and the cities in it"}
+	default:
+		return depthBudget{5, 24, 10, 15, "continents and the cities on them"}
 	}
 }
 
-// ascentSchedule is the way back up: every layer revisited knowing everything BELOW it, which on the way
-// down it could not see (design §1.2.1). A place authored before anyone was in it can finally be told who
-// is there.
+// fillScope is the COMPILED MANDATE: exactly which already-authored names this one call may see.
+// Assembled by code, so a call carries the identity, the concepts, its own slice of the namespace and
+// nothing else — instead of the whole growing document restated at every step. That restatement is what
+// made every call cost the world all over again.
 //
-// Its job is connection and gap-filling. Creation is not forbidden, but a person invented here should
-// exist because a connection demanded them. Founder 2026-08-28: "there is no minimum or maximum".
+// Whole is for the namespace calls, where there is barely anything to see yet.
+type fillScope struct {
+	Whole    bool
+	Places   []string
+	Factions []string
+	Concepts []string
+	People   []string
+}
+
+// conceptsWork runs first and alone. What a world argues over decides what its regions, factions and
+// people even ARE, so it sits above geography the way the identity sits above everything.
+func conceptsWork() workItem {
+	return workItem{ID: "concepts", Kind: "namespace", Scope: fillScope{Whole: true},
+		Text: "What bodies of knowledge does this world argue over — schools of thought, doctrines, a trade's craft, " +
+			"a contested history? For each: its name, what it actually is in a line, and what is contested about it. " +
+			"Nothing below this call may contradict what you write here. Set relevance 2 for the ones this world " +
+			"turns on and 1 for the rest. Author no places, people, factions or events.",
+		Therefore: "what a world argues over decides what everything in it is"}
+}
+
+// scaffoldOneWork names the top of the world: the largest places, the factions that span them, and any
+// object the brief makes structural. Names and one-line briefs only — links live IN the description.
+func scaffoldOneWork(b depthBudget) workItem {
+	return workItem{ID: "scaffold-1", Kind: "namespace", Scope: fillScope{Whole: true},
+		Text: fmt.Sprintf("Name the top of this world and nothing more. About %d location(s) at the LARGEST scale the "+
+			"brief implies — read the scale off the brief: %s. Then the factions that span them, and any object the "+
+			"brief makes structural. For each, emit only: canonical_name, descriptor, kind, extent_class, tension, a tag, and "+
+			"relevance. Leave `within` empty on these — they are the top. NO sub-locations, NO people, NO canon "+
+			"events: the next call does that. Set relevance 1 unless the brief makes something central.",
+			b.TopLocations, b.Label),
+		Therefore: "everything below has to hang off names that already exist"}
+}
+
+// scaffoldTwoSchedule fixes the ENTIRE namespace before any content call runs: one item per top location
+// and per world faction, each naming what sits inside it. After this wave every location, faction and
+// person in the world has a name, so a later parallel call referencing one resolves by construction.
 //
-// PEOPLE ARE PER-ITEM. One call per person, because a person's inner life has to reason about the specific
-// places, factions, concepts and other people that exist by name — a single call averaging over everyone is
-// how you get twelve variations of the same person. This is the expensive part and it is deliberate.
-func ascentSchedule(doc *genesisDoc) []workItem {
-	items := []workItem{
-		{ID: "artifacts-connect", Kind: "ascent",
-			Text:      "Everything now exists. Which of these people knows where each object is, which of them is wrong about it, and which object should belong to someone who has no reason to hold it? Fill the gaps you can now see.",
-			Therefore: "an object nobody has an opinion about is scenery"},
-	}
-	for _, a := range doc.Cast {
-		name := strings.TrimSpace(a.CanonicalName)
-		if name == "" {
-			continue
-		}
+// This is the correction the founder made to my design: I had proposed one thread per region owning
+// everything in it, which made factions second-class and grouped people by geography rather than by who
+// they belong to. Naming everything first means a content call's unit can differ by type.
+func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
+	var items []workItem
+	concepts := conceptNames(doc)
+	for _, top := range topLocations(doc) {
 		items = append(items, workItem{
-			ID:      "person",
-			Kind:    "ascent",
-			Subject: name,
-			Text: "Author this one person's inner life, and nobody else's. What happened to them growing up? " +
-				"What do they believe, including what they believe that is not true? What do they say to themselves? " +
-				"What happened to them that still shows in how they behave? What do they want, and what would they " +
-				"give up for it? And three or four lines in their own voice. Their upbringing and their temperament " +
-				"are allowed to disagree — the worst life and an optimistic disposition is a person, not a mistake. " +
-				"AND WHAT THIS PERSON KNOWS ABOUT THE OTHERS: every other person is listed below with what they hide " +
-				"and where they stand, so give this one their beliefs about them — what they have right, what they " +
-				"have wrong, what they suspect and cannot prove. A perception belongs to ONE holder, so yours may " +
-				"contradict theirs; that disagreement is the world working. " +
-				"DO NOT INVENT NEW CANON. The events already exist — attach this person's knowledge to them rather " +
-				"than authoring the night again from their side.",
-			Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
+			ID: "scaffold-2", Kind: "namespace", Subject: top,
+			Scope: fillScope{Places: append(topLocations(doc), top), Factions: factionNames(doc), Concepts: concepts},
+			Text: fmt.Sprintf("Name what sits inside %q, and nothing outside it. About %d location(s) at smaller scales, "+
+				"each with `within` naming what contains it — nest as deep as the place deserves, down to the smallest "+
+				"place a body can stand in. Then about %d people, each in one of these locations, and any faction local "+
+				"to here. Names, descriptors, kinds, extents, tensions, tags and RELEVANCE only.\n\n"+
+				"RELEVANCE IS THE POINT OF THIS CALL. Most of what you name is relevance 1: it exists, it has a look and "+
+				"a tag, and that is complete. Give relevance 2 to what a visitor would plausibly deal with, and 3 only to "+
+				"the few who matter here — a keeper, a rival, the one who decides. A world of all-3s costs fifty times a "+
+				"world that is honest about who matters.",
+				top, b.SubPerTop, b.PeoplePerTop),
+			Therefore: "a name that exists cannot be a dangling reference later",
 		})
 	}
-	items = append(items,
-		workItem{ID: "concepts-connect", Kind: "ascent",
-			Text:      "Now that these people exist, who holds which position on each of these bodies of knowledge? Who is orthodox, who is heretical, who is simply mistaken and acting on it?",
-			Therefore: "a doctrine with no adherents and no dissenters is a dictionary entry"},
-		workItem{ID: "factions-connect", Kind: "ascent",
-			Text:      "Connect the institutions to the people who serve, resent, left, or were expelled from them. What does each faction know about the others? What did one of them do that its own members disagree about?",
-			Therefore: "an institution is its people's arguments about it"},
-		workItem{ID: "places-connect", Kind: "ascent",
-			Text:      "Return to the places knowing who is in them, what happened in them, and what sits in them. What does each place now need that it lacked when nothing was in it? What happened here that the people here remember differently? If the brief implies a scale nobody has authored yet, author it now and say what it contains.",
-			Therefore: "a place is what happened in it"},
-	)
+	for _, f := range factionNames(doc) {
+		items = append(items, workItem{
+			ID: "scaffold-2", Kind: "namespace", Subject: f,
+			Scope: fillScope{Places: topLocations(doc), Factions: factionNames(doc), Concepts: concepts},
+			Text: "Name the people who make up " + f + ": who leads it, who serves it, who resents it, who left. Each " +
+				"needs a name, a descriptor, a tag, `belongs_to` naming this faction, `starts_in` naming one of the " +
+				"locations above, and RELEVANCE. Most are relevance 1. Name no new locations.",
+			Therefore: "an institution is the people in it, and they have to exist before they can be authored",
+		})
+	}
 	return items
+}
+
+// contentSchedule is the parallel half: every wave authors to the relevance the scaffold assigned, and
+// entities left at relevance 1 are ALREADY COMPLETE and cost nothing here. That is the saving.
+//
+// Waves run in order; items inside a wave run at once. Geography precedes people only so that a person's
+// location has its description by the time anyone stands in it.
+func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
+	concepts := conceptNames(doc)
+	var geography, factions []workItem
+	for _, top := range topLocations(doc) {
+		tree := locationTree(doc, top)
+		if !anyPlaceOwing(doc, tree) {
+			continue
+		}
+		geography = append(geography, workItem{
+			ID: "geography", Kind: "content", Subject: top,
+			Scope: fillScope{Places: tree, Factions: factionNames(doc), Concepts: concepts},
+			Text: "Author the locations listed below and no others. Each is listed with the relevance it was given: " +
+				"a relevance-1 location is finished — do not touch it. For every location at relevance 2 or more, write " +
+				"its description (what it is, what it was, what it is for, what a stranger sees first) and its tension, " +
+				"and add the ways that join it to its neighbours. Author the canon that happened HERE only if the people " +
+				"who hold it are named below.",
+			Therefore: "a place is what happened in it, and depth belongs where someone will stand",
+		})
+	}
+	for _, f := range factionsOwing(doc) {
+		factions = append(factions, workItem{
+			ID: "faction", Kind: "content", Subject: f,
+			Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: factionMembers(doc, f)},
+			Text: "Author " + f + " and nothing else. What it controls, what it publishes, what it buries. If it is " +
+				"relevance 3, also what it wants, what it would sacrifice for that, and where it sits. Its position on " +
+				"the concepts above, and what it did that its own members disagree about.",
+			Therefore: "an institution is its people's arguments about it",
+		})
+	}
+	waves := [][]workItem{}
+	if len(geography) > 0 {
+		waves = append(waves, geography)
+	}
+	if len(factions) > 0 {
+		waves = append(waves, factions)
+	}
+	if people := peoplePacks(doc, concepts); len(people) > 0 {
+		waves = append(waves, people)
+	}
+	return waves
+}
+
+// peoplePacks groups the people who are OWED content — relevance 2 and up — into packs of about ten,
+// grouped by faction where they have one and by location otherwise, so a pack shares a context and the
+// unique part of its prompt is small.
+//
+// Ten is the founder's number and it is a cost decision, not a quality one: a person authored alone got
+// the best answers and cost ~2,300 output tokens; a pack shares one prompt head. People at relevance 1
+// appear in no pack at all, because they are already complete.
+func peoplePacks(doc *genesisDoc, concepts []string) []workItem {
+	const packSize = 10
+	groups := map[string][]string{}
+	var order []string
+	for _, a := range doc.Cast {
+		name := strings.TrimSpace(a.CanonicalName)
+		if name == "" || !personOwing(a) {
+			continue
+		}
+		key := strings.TrimSpace(a.StartsIn)
+		if len(a.BelongsTo) > 0 && strings.TrimSpace(a.BelongsTo[0]) != "" {
+			key = strings.TrimSpace(a.BelongsTo[0])
+		}
+		if _, seen := groups[key]; !seen {
+			order = append(order, key)
+		}
+		groups[key] = append(groups[key], name)
+	}
+	var items []workItem
+	for _, key := range order {
+		names := groups[key]
+		for len(names) > 0 {
+			n := packSize
+			if len(names) < n {
+				n = len(names)
+			}
+			pack := names[:n]
+			names = names[n:]
+			items = append(items, workItem{
+				ID: "people", Kind: "content", Subject: key, Members: pack,
+				Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: pack},
+				Text: "Author exactly the people named in THIS ITEM and nobody else, each to the relevance they were " +
+					"given.\n\nRelevance 2: what they are to the place they are in, how they speak, one thing they " +
+					"will not say, and at least one trait with the manner it shows in.\n\nRelevance 3: all of that, " +
+					"plus the interior — what happened to them growing up, what they believe including what they " +
+					"believe that is false, what they say to themselves, what still shows in how they behave, what " +
+					"they want and what they would give up for it, and three or four lines in their own voice. Their " +
+					"upbringing and their temperament are allowed to disagree: the worst life and an optimistic " +
+					"disposition is a person, not a mistake.\n\nAND WHAT THEY KNOW ABOUT THE OTHERS in this pack — " +
+					"what they have right, what they have wrong, what they suspect and cannot prove. A perception " +
+					"belongs to ONE holder, so two of them may contradict each other; that disagreement is the world " +
+					"working. DO NOT INVENT NEW CANON and do not author anyone not named here.",
+				Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
+			})
+		}
+	}
+	return items
+}
+
+// --- what is still owed, per level (ADR-P027 §5) --------------------------------------------------
+
+func personOwing(a genesisActor) bool {
+	if a.Relevance >= 2 && (strings.TrimSpace(a.Standing) == "" || strings.TrimSpace(a.SpeechManner) == "" ||
+		strings.TrimSpace(a.Hiding) == "" || len(a.Traits) == 0) {
+		return true
+	}
+	if a.Relevance >= 3 && (strings.TrimSpace(a.Goal) == "" ||
+		len(a.Beliefs)+len(a.Mantras)+len(a.Traumas)+len(a.ExamplePhrases) == 0 && strings.TrimSpace(a.Upbringing) == "") {
+		return true
+	}
+	return false
+}
+
+func placeOwing(p genesisPlace) bool {
+	return p.Relevance >= 2 && strings.TrimSpace(p.Description) == ""
+}
+
+func anyPlaceOwing(doc *genesisDoc, names []string) bool {
+	want := map[string]bool{}
+	for _, n := range names {
+		want[n] = true
+	}
+	for _, p := range doc.Places {
+		if want[strings.TrimSpace(p.CanonicalName)] && placeOwing(p) {
+			return true
+		}
+	}
+	return false
+}
+
+func factionsOwing(doc *genesisDoc) []string {
+	var out []string
+	for _, f := range doc.Factions {
+		owed := f.Relevance >= 2 && (strings.TrimSpace(f.Controls) == "" ||
+			strings.TrimSpace(f.Publishes) == "" || strings.TrimSpace(f.Buries) == "")
+		if f.Relevance >= 3 && strings.TrimSpace(f.Goal) == "" {
+			owed = true
+		}
+		if owed {
+			out = append(out, strings.TrimSpace(f.CanonicalName))
+		}
+	}
+	return out
+}
+
+// --- namespace readers ----------------------------------------------------------------------------
+
+// topLocations are the places nothing contains: the roots of the tree, and the unit the scaffold and the
+// geography wave are sliced by.
+func topLocations(d *genesisDoc) []string {
+	var out []string
+	for _, p := range d.Places {
+		if strings.TrimSpace(p.Within) == "" && strings.TrimSpace(p.CanonicalName) != "" {
+			out = append(out, strings.TrimSpace(p.CanonicalName))
+		}
+	}
+	return out
+}
+
+// locationTree is a top location and everything nested under it, to any depth.
+func locationTree(d *genesisDoc, top string) []string {
+	inside := map[string][]string{}
+	for _, p := range d.Places {
+		w := strings.TrimSpace(p.Within)
+		if w != "" {
+			inside[w] = append(inside[w], strings.TrimSpace(p.CanonicalName))
+		}
+	}
+	out := []string{top}
+	for i := 0; i < len(out); i++ {
+		for _, child := range inside[out[i]] {
+			if child != "" {
+				out = append(out, child)
+			}
+		}
+	}
+	return out
+}
+
+func placeNames(d *genesisDoc) []string {
+	var out []string
+	for _, p := range d.Places {
+		if n := strings.TrimSpace(p.CanonicalName); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func factionNames(d *genesisDoc) []string {
+	var out []string
+	for _, f := range d.Factions {
+		if n := strings.TrimSpace(f.CanonicalName); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func conceptNames(d *genesisDoc) []string {
+	var out []string
+	for _, c := range d.Concepts {
+		if n := strings.TrimSpace(c.CanonicalName); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func factionMembers(d *genesisDoc, faction string) []string {
+	var out []string
+	for _, a := range d.Cast {
+		for _, b := range a.BelongsTo {
+			if strings.TrimSpace(b) == faction {
+				out = append(out, strings.TrimSpace(a.CanonicalName))
+				break
+			}
+		}
+	}
+	return out
 }
 
 // arrivalWork is the last layer: the world header, the region, and the way in. It runs after the ascent so
@@ -307,7 +572,7 @@ func arrivalWork() workItem {
 }
 
 // authorWorld infers identity, then fills under it, and returns a document that has passed every belt check.
-func authorWorld(ctx context.Context, understanding, fill, review Driver, brief string, answers []InterviewAnswer, confirmed json.RawMessage, voice []string) (*genesisDoc, *worldIdentity, error) {
+func authorWorld(ctx context.Context, understanding, fill, review Driver, brief string, answers []InterviewAnswer, confirmed json.RawMessage, voice []string, depth int) (*genesisDoc, *worldIdentity, error) {
 	var id *worldIdentity
 	var err error
 	if len(confirmed) > 0 && string(confirmed) != "null" {
@@ -336,7 +601,7 @@ func authorWorld(ctx context.Context, understanding, fill, review Driver, brief 
 			id.Voice = voice
 		}
 	}
-	doc, err := fillFromIdentity(ctx, fill, review, id, brief, answers)
+	doc, err := fillFromIdentity(ctx, fill, review, id, brief, answers, depth)
 	if err != nil {
 		return nil, id, err
 	}
@@ -368,119 +633,52 @@ func inferIdentity(ctx context.Context, seat Driver, brief string, answers []Int
 	return &id, nil
 }
 
-func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentity, brief string, answers []InterviewAnswer) (*genesisDoc, error) {
+func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentity, brief string, answers []InterviewAnswer, depth int) (*genesisDoc, error) {
 	if seat == nil {
 		return nil, fmt.Errorf("fillFromIdentity: no world_fill seat bound")
 	}
 	doc := &genesisDoc{}
 	var tags []taggedName
-	// The loop runs twice in opposite directions (design 2026-08-28 §1.2.1). Down: each layer authors
-	// from what is above it. Up: each layer is revisited knowing everything below it. Then the arrival.
-	schedule := descentSchedule()
-	ascentFrom := len(schedule)
-	for _, item := range schedule {
-		// One retry per batch, with the rejection fed back. A single malformed answer must not throw
-		// away every batch before it: measured live 2026-08-28, the revise batch spelled `places` as
-		// `place` and DisallowUnknownFields ended a 147-second build. The belt is NOT loosened — the
-		// fragment still has to parse and validate; it just gets told what was wrong and asked once
-		// more. Costs one call in the failure case and nothing in the happy path.
-		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
-		if err != nil && IsGenesisRefusal(err) {
-			log.Printf("fill %s rejected, retrying once: %v", item.ID, err)
-			frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
-		}
+	b := budgetForDepth(depth)
+
+	// THE NAMESPACE. Three sequential calls, and they must be sequential: each one decides what the next
+	// is allowed to name. Concepts first, because what a world argues over decides what its places,
+	// factions and people even are. These are the only calls that see the whole document, and there is
+	// barely anything in it to see.
+	for _, item := range []workItem{conceptsWork(), scaffoldOneWork(b)} {
+		frag, err := fillOnce(ctx, seat, id, item, brief, answers, doc)
 		if err != nil {
 			return nil, err
 		}
-		// An unpaid reference gets ONE nudge, in context, at the batch that made it — cheapest place to
-		// fix it. If the second answer still dangles we keep the better of the two anyway: the debt is
-		// carried forward and the closing pass authors it. A good invention is never discarded for
-		// arriving before the place it needs.
-		if bad := frag.danglingRefs(doc); len(bad) > 0 {
-			log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", item.ID, len(bad), strings.Join(bad, "; "))
-			again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
-				"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
-			if aerr == nil && fillHasContent(again) {
-				frag = again
-			}
-		}
 		mergeFill(doc, frag, mergeTag(item), &tags)
 	}
-	// The ascent can only be built once the descent has said who exists — that is the whole reason it is
-	// a second pass and not more layers. People are per-item here.
-	ascent := ascentSchedule(doc)
-	log.Printf("fill: descent authored %d place(s), %d faction(s), %d concept(s), %d person(s), %d object(s); ascent is %d item(s)",
-		len(doc.Places), len(doc.Factions), len(doc.Concepts), len(doc.Cast), len(doc.Objects), len(ascent))
-	_ = ascentFrom
+	// Scaffold 2 fixes the ENTIRE namespace, one call per top location and per faction, in parallel.
+	// They cannot invent each other's names because scaffold 1 already fixed the names above them, and
+	// they name nothing outside their own subject. After this wave every entity in the world has a name
+	// and a relevance — so every later call resolves by construction rather than by luck.
+	if items := scaffoldTwoSchedule(doc, b); len(items) > 0 {
+		answered := runWave(ctx, seat, id, items, brief, answers, doc, &tags)
+		log.Printf("fill: scaffold 2 ran %d call(s) together, %d answered", len(items), answered)
+	}
+	log.Printf("fill: namespace is %d place(s) (%d top), %d faction(s), %d concept(s), %d person(s); depth %d (%s)",
+		len(doc.Places), len(topLocations(doc)), len(doc.Factions), len(doc.Concepts), len(doc.Cast), b.Level, b.Label)
+	log.Printf("fill: owed at relevance 2+ — %d place(s), %d faction(s), %d person(s); everything else is complete at 1",
+		countPlacesOwing(doc), len(factionsOwing(doc)), countPeopleOwing(doc))
 
-	// THE PER-PERSON CALLS ARE INDEPENDENT OF EACH OTHER, so they run at once.
-	//
-	// Each one authors one person's inner life from the same document, and nothing in it reads another
-	// person's answer — the interdependence is between LAYERS, not between people inside a layer. Run
-	// sequentially they were the largest avoidable cost in the build: measured 2026-08-28, seven people
-	// at ~30 s each was ~210 s of waiting for no reason, and it grows linearly with the roster while a
-	// parallel pass does not.
-	//
-	// I previously told the founder that parallelising "buys almost nothing". That was true of the
-	// layers and wrong about the items inside one, and this is the correction.
-	//
-	// Merging stays SERIAL, after the wave: mergeFill mutates the document and dedupes by name, and the
-	// ascent's own ordering (artifacts, then people, then concepts, then factions, then places) is
-	// preserved because only the person items are hoisted out.
-	people, rest := splitPersonWork(ascent)
-	if len(people) > 0 {
-		frags := make([]*fillFragment, len(people))
-		var wg sync.WaitGroup
-		for i, item := range people {
-			wg.Add(1)
-			go func(i int, item workItem) {
-				defer wg.Done()
-				frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
-				if err != nil && IsGenesisRefusal(err) {
-					log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
-					frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
-				}
-				if err != nil {
-					log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
-					return
-				}
-				frags[i] = frag
-			}(i, item)
-		}
-		wg.Wait()
-		merged := 0
-		for i, frag := range frags {
-			if frag == nil {
-				continue
-			}
-			mergeFill(doc, frag, mergeTag(people[i]), &tags)
-			merged++
-		}
-		log.Printf("fill: %d person call(s) ran together, %d answered", len(people), merged)
+	// THE CONTENT. Waves in order, items inside a wave at once. Every call authors to the relevance the
+	// scaffold assigned, and an entity left at relevance 1 appears in no call at all — that absence is
+	// the saving, and it is why depth is affordable at all.
+	for wi, wave := range contentSchedule(doc, b) {
+		answered := runWave(ctx, seat, id, wave, brief, answers, doc, &tags)
+		log.Printf("fill: content wave %d (%s) ran %d call(s) together, %d answered", wi+1, wave[0].ID, len(wave), answered)
 	}
 
-	for _, item := range append(rest, arrivalWork()) {
-		frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
-		if err != nil && IsGenesisRefusal(err) {
-			log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
-			frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
-		}
-		if err != nil {
-			// The ascent connects and completes; it is not the pass that makes a world exist. One layer
-			// failing to answer costs that layer, never the build. The arrival is the exception the belt
-			// enforces for us: without it the document simply will not validate.
-			log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
-			continue
-		}
-		if bad := frag.danglingRefs(doc); len(bad) > 0 {
-			log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", mergeTag(item), len(bad), strings.Join(bad, "; "))
-			again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
-				"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
-			if aerr == nil && fillHasContent(again) {
-				frag = again
-			}
-		}
-		mergeFill(doc, frag, mergeTag(item), &tags)
+	// The arrival is last and alone: the world header, the region, and the way in, into somewhere already
+	// inhabited that already has a history.
+	if frag, err := fillOnce(ctx, seat, id, arrivalWork(), brief, answers, doc); err != nil {
+		log.Printf("fill arrival could not answer: %v", err)
+	} else {
+		mergeFill(doc, frag, "arrival", &tags)
 	}
 	// Closing passes: pay what canon owes instead of refusing it. Two rounds, because authoring the
 	// owed places can itself name a person, and that person is then owed. Founder 2026-08-28: a gap is
@@ -551,6 +749,87 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 
 // mergeTag names the work item a piece of content came from, for scoped retraction. Per-item work carries
 // its subject, so "person" becomes "person:Adaeze" and a review can name exactly which call to blame.
+// fillOnce is one work item with the pipeline's two mercies. A malformed answer gets ONE retry, told
+// exactly what was wrong: measured live 2026-08-28, a batch spelled `places` as `place` and
+// DisallowUnknownFields ended a 147-second build. An unpaid reference gets ONE nudge at the call that
+// made it, which is the cheapest place to fix it. Neither loosens the belt — the fragment still has to
+// parse and validate.
+func fillOnce(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, doc *genesisDoc) (*fillFragment, error) {
+	frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
+	if err != nil && IsGenesisRefusal(err) {
+		log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
+		frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
+	}
+	if err != nil {
+		return nil, err
+	}
+	if bad := frag.danglingRefs(doc); len(bad) > 0 {
+		log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", mergeTag(item), len(bad), strings.Join(bad, "; "))
+		again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
+			"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
+		if aerr == nil && fillHasContent(again) {
+			frag = again
+		}
+	}
+	return frag, nil
+}
+
+// runWave runs every item in a wave at once and merges them serially afterwards.
+//
+// The concurrency is safe by construction, not by hope: each call READS the document to build its prompt
+// and check its references, and nothing writes until the wave has finished. Merging cannot be concurrent
+// — mergeFill mutates the document and dedupes by name, and two writers would produce the duplicated
+// canon that a blind append already cost us once.
+//
+// One item failing costs that item, never the build. The belt is what refuses a world, and the arrival
+// is the one thing it cannot do without.
+func runWave(ctx context.Context, seat Driver, id *worldIdentity, items []workItem, brief string, answers []InterviewAnswer, doc *genesisDoc, tags *[]taggedName) int {
+	frags := make([]*fillFragment, len(items))
+	var wg sync.WaitGroup
+	for i, item := range items {
+		wg.Add(1)
+		go func(i int, item workItem) {
+			defer wg.Done()
+			frag, err := fillOnce(ctx, seat, id, item, brief, answers, doc)
+			if err != nil {
+				log.Printf("fill %s could not answer, continuing without it: %v", mergeTag(item), err)
+				return
+			}
+			frags[i] = frag
+		}(i, item)
+	}
+	wg.Wait()
+	merged := 0
+	for i, frag := range frags {
+		if frag == nil {
+			continue
+		}
+		mergeFill(doc, frag, mergeTag(items[i]), tags)
+		merged++
+	}
+	return merged
+}
+
+func countPlacesOwing(d *genesisDoc) int {
+	n := 0
+	for _, p := range d.Places {
+		if placeOwing(p) {
+			n++
+		}
+	}
+	return n
+}
+
+func countPeopleOwing(d *genesisDoc) int {
+	n := 0
+	for _, a := range d.Cast {
+		if personOwing(a) {
+			n++
+		}
+	}
+	return n
+}
+
 // splitPersonWork separates the per-item person work from the layer work. Only the person items are
 // safe to run together — the layers above and below them are ordered by construction.
 func splitPersonWork(items []workItem) (people, rest []workItem) {
@@ -606,41 +885,44 @@ func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem,
 //
 // Nothing is weakened by this. The real guard is genesisDoc.validate() on the merged document, which
 // is what refuses a world that is actually missing something, and it still runs.
+// validate is the FRAGMENT belt, and it may only check what is true of any answer at any stage. Depth
+// is NOT checked here: the scaffold names a relevance-3 person before anybody authors them, and the
+// people wave fills them in — that two-stage split is the whole design (ADR-P027), so a fragment-level
+// depth check would refuse the scaffold for doing its job. It cost a run to find out.
+//
+// The join-key check is not repeated here either. It lives at the belt, and normalisePersonNames runs
+// before the belt to title-case a name that is merely uncapitalised — rewriting every reference to it as
+// it goes. Checking here fired FIRST and harder: measured live 2026-08-28, an 803-second build was
+// refused for the cast name "un aprendiz de 27 años" ("a 27-year-old apprentice"), which the
+// document-level normaliser would have turned into a speakable name a moment later. A fragment-level
+// copy of a document-level rule just means the repair never gets to run.
+//
+// What IS local: the level itself, and the one line a person at any level answers from.
 func (f *fillFragment) validate() error {
 	if !fillHasContent(f) {
 		return nil
 	}
 	for _, a := range f.Cast {
-		if strings.TrimSpace(a.Hiding) == "" {
-			return refuse("%q has no hiding — depth is the private cost", a.CanonicalName)
+		if !validRelevance(a.Relevance) {
+			return refuse("%q arrived with relevance %d — say how much of this person exists, 1 to 4", a.CanonicalName, a.Relevance)
 		}
-		// The join-key check is NOT repeated here. It lives at the belt, and normalisePersonNames runs
-		// before the belt to title-case a name that is merely uncapitalised — rewriting every reference
-		// to it as it goes. Checking here fired FIRST and harder: measured live 2026-08-28, an 803-second
-		// build was refused for the cast name "un aprendiz de 27 años" ("a 27-year-old apprentice"),
-		// which the document-level normaliser would have turned into a speakable name a moment later.
-		// A fragment-level copy of a document-level rule just means the repair never gets to run.
+		if strings.TrimSpace(a.Tag) == "" {
+			return refuse("%q has no tag — one line of temperament is the whole personality of someone nobody has met yet", a.CanonicalName)
+		}
+	}
+	for _, p := range f.Places {
+		if !validRelevance(p.Relevance) {
+			return refuse("the location %q arrived with relevance %d — say how much of it exists, 1 to 4", p.CanonicalName, p.Relevance)
+		}
+	}
+	for _, fa := range f.Factions {
+		if !validRelevance(fa.Relevance) {
+			return refuse("the faction %q arrived with relevance %d — say how much of it exists, 1 to 4", fa.CanonicalName, fa.Relevance)
+		}
 	}
 	return nil
 }
 
-// danglingRefs reports references this fragment makes that resolve NOWHERE — neither in the document
-// so far nor inside the fragment itself.
-//
-// Why this exists at the batch instead of only at the belt. Seven of the eight live refusals on
-// 2026-08-28 were one class of fault: a cross-batch reference that did not resolve. Every one was
-// discovered by genesisDoc.validate() two to four minutes in, naming one bad reference at a time,
-// with the batch that made it long finished. Checking here means the batch that wrote the reference is
-// the batch asked to fix it, twenty seconds later, with the offending name quoted — and the existing
-// one-shot retry does the asking.
-//
-// This is NOT a check on whether an invention is welcome. A batch that decides this world needs a
-// low-tail district is doing the job fill exists to do, and the prompt now tells lives and objects to
-// author the places they need. The only fault this reports is a reference left UNPAID — named by nobody,
-// authored by nobody — which the engine cannot store and the retry is asked to fix by authoring it.
-//
-// PEOPLE named by history are exempt: history deliberately runs before lives and names the people lives
-// will author. That forward debt is fillDebts()' job, not an error.
 func (f *fillFragment) danglingRefs(doc *genesisDoc) []string {
 	places := map[string]bool{}
 	for _, p := range doc.Places {
@@ -730,11 +1012,18 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 	if len(frag.RegionRaw) > 0 && strings.TrimSpace(doc.Region.Descriptor) == "" {
 		_ = json.Unmarshal(frag.RegionRaw, &doc.Region)
 	}
+	// Deepening, not just adding. The scaffold names a thing thin and a later wave fills it in, so a
+	// second mention of an existing name is the NORMAL case and dropping it would silently discard the
+	// content the belt is about to demand. Before relevance existed every layer authored everything at
+	// once, so skipping a duplicate was right; under the layered fill it would refuse a world for a
+	// description that was in fact written.
 	for _, p := range frag.Places {
-		if !hasPlace(doc, p.CanonicalName) {
-			doc.Places = append(doc.Places, p)
-			*tags = append(*tags, taggedName{Kind: "place", Name: p.CanonicalName, Rule: ruleID})
+		if have := findPlace(doc, p.CanonicalName); have != nil {
+			deepenPlace(have, p)
+			continue
 		}
+		doc.Places = append(doc.Places, p)
+		*tags = append(*tags, taggedName{Kind: "place", Name: p.CanonicalName, Rule: ruleID})
 	}
 	for _, w := range frag.Ways {
 		if !hasWay(doc, w) {
@@ -743,16 +1032,20 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 		}
 	}
 	for _, f := range frag.Factions {
-		if !hasFaction(doc, f.CanonicalName) {
+		if have := findFaction(doc, f.CanonicalName); have != nil {
+			deepenFaction(have, f)
+		} else {
 			doc.Factions = append(doc.Factions, f)
 			*tags = append(*tags, taggedName{Kind: "faction", Name: f.CanonicalName, Rule: ruleID})
 		}
 	}
 	for _, c := range frag.Concepts {
-		if !hasConcept(doc, c.CanonicalName) {
-			doc.Concepts = append(doc.Concepts, c)
-			*tags = append(*tags, taggedName{Kind: "concept", Name: c.CanonicalName, Rule: ruleID})
+		if have := findConcept(doc, c.CanonicalName); have != nil {
+			deepenConcept(have, c)
+			continue
 		}
+		doc.Concepts = append(doc.Concepts, c)
+		*tags = append(*tags, taggedName{Kind: "concept", Name: c.CanonicalName, Rule: ruleID})
 	}
 	for _, a := range frag.Cast {
 		if !hasActor(doc, a.CanonicalName) {
@@ -770,10 +1063,12 @@ func mergeFill(doc *genesisDoc, frag *fillFragment, ruleID string, tags *[]tagge
 		}
 	}
 	for _, o := range frag.Objects {
-		if !hasObject(doc, o.CanonicalName) {
-			doc.Objects = append(doc.Objects, o)
-			*tags = append(*tags, taggedName{Kind: "object", Name: o.CanonicalName, Rule: ruleID})
+		if have := findObject(doc, o.CanonicalName); have != nil {
+			deepenObject(have, o)
+			continue
 		}
+		doc.Objects = append(doc.Objects, o)
+		*tags = append(*tags, taggedName{Kind: "object", Name: o.CanonicalName, Rule: ruleID})
 	}
 	// Canon dedupes on (what happened, where). This was a blind append, which was already wrong — the
 	// ascent revisits layers and a repair pass re-answers — and became a hazard the moment the
@@ -866,6 +1161,8 @@ func hasConcept(d *genesisDoc, name string) bool {
 // authored on the way down keeps their hiding and their goal, and gains the beliefs, mantras, traumas and
 // phrases the way back up had space for.
 func deepenActor(have *genesisActor, add genesisActor) {
+	ratchetRelevance(&have.Relevance, add.Relevance)
+	fillIfEmpty(&have.Tag, add.Tag)
 	str := func(dst *string, src string) {
 		if strings.TrimSpace(*dst) == "" && strings.TrimSpace(src) != "" {
 			*dst = src
@@ -1444,9 +1741,18 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	sb.WriteString("\nkind: ")
 	sb.WriteString(item.Kind)
 	if s := strings.TrimSpace(item.Subject); s != "" {
-		sb.WriteString("\nthis item is about exactly one person: \"")
+		sb.WriteString("\nthis item is about exactly one thing: \"")
 		sb.WriteString(s)
-		sb.WriteString("\" — author them and nobody else")
+		sb.WriteString("\" — author within it and nothing outside it")
+	}
+	if len(item.Members) > 0 {
+		sb.WriteString("\nauthor exactly these and nobody else:")
+		for _, m := range item.Members {
+			sb.WriteString("\n  - \"")
+			sb.WriteString(m)
+			sb.WriteString("\" at relevance ")
+			sb.WriteString(strconv.Itoa(relevanceOfPerson(soFar, m)))
+		}
 	}
 	sb.WriteString("\ntext: ")
 	sb.WriteString(item.Text)
@@ -1455,6 +1761,25 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	sb.WriteString("\n\n")
 	sb.WriteString(worldFillAlreadyMarker)
 	sb.WriteString("\n")
+	// THE COMPILED MANDATE. A call is shown its own slice of the namespace, never the whole growing
+	// document. Measured 2026-08-30: every call received the entire ALREADY AUTHORED block, so a build
+	// cost ~13,300 input tokens per call and re-sent the world nineteen times — and the output was worse
+	// for it, because restating what exists crowds out authoring what does not.
+	//
+	// The namespace calls see everything, because at that point everything is a handful of names.
+	scope := item.Scope
+	whole := scope.Whole
+	want := func(names []string, n string) bool {
+		if whole {
+			return true
+		}
+		for _, x := range names {
+			if x == n {
+				return true
+			}
+		}
+		return false
+	}
 	// Quote the canonical_name and put every other field on its own labelled line. The first version
 	// rendered `- place <name> — <descriptor>`, and a live Andantes build (2026-08-28) came back with
 	// starts_in set to the ENTIRE line: "Colegio de Auscultadores — Sede del Colegio de
@@ -1462,41 +1787,69 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 	// be a boundary when the names in a world legitimately contain dashes and commas — so the name
 	// gets quotes, and nothing shares its line.
 	for _, p := range soFar.Places {
-		sb.WriteString("- place \"")
+		if !want(scope.Places, strings.TrimSpace(p.CanonicalName)) {
+			continue
+		}
+		sb.WriteString("- location \"")
 		sb.WriteString(p.CanonicalName)
-		sb.WriteString("\"\n    looks like: ")
+		sb.WriteString("\"\n    relevance: ")
+		sb.WriteString(strconv.Itoa(p.Relevance))
+		sb.WriteString("\n    looks like: ")
 		sb.WriteString(p.Descriptor)
+		if w := strings.TrimSpace(p.Within); w != "" {
+			sb.WriteString("\n    within: \"")
+			sb.WriteString(w)
+			sb.WriteString("\"")
+		}
+		if placeOwing(p) {
+			sb.WriteString("\n    OWED: a description")
+		}
 		sb.WriteString("\n")
 	}
 	for _, f := range soFar.Factions {
+		if !want(scope.Factions, strings.TrimSpace(f.CanonicalName)) {
+			continue
+		}
 		sb.WriteString("- ")
 		sb.WriteString(f.Kind)
 		sb.WriteString(" \"")
 		sb.WriteString(f.CanonicalName)
-		sb.WriteString("\"\n    controls: ")
-		sb.WriteString(f.Controls)
-		sb.WriteString("\n    publishes: ")
-		sb.WriteString(f.Publishes)
-		sb.WriteString("\n    buries: ")
-		sb.WriteString(f.Buries)
-		sb.WriteString("\n    wants: ")
-		sb.WriteString(f.Goal)
+		sb.WriteString("\"\n    relevance: ")
+		sb.WriteString(strconv.Itoa(f.Relevance))
+		sb.WriteString("\n    tag: ")
+		sb.WriteString(f.Tag)
+		if strings.TrimSpace(f.Controls) != "" {
+			sb.WriteString("\n    controls: ")
+			sb.WriteString(f.Controls)
+		}
 		sb.WriteString("\n")
 	}
+	// Concepts travel with every scoped call: they are what the world argues over, they are few, and a
+	// person authored without them is a person with no position on anything.
 	for _, c := range soFar.Concepts {
+		if !want(scope.Concepts, strings.TrimSpace(c.CanonicalName)) {
+			continue
+		}
 		sb.WriteString("- concept \"")
 		sb.WriteString(c.CanonicalName)
 		sb.WriteString("\"\n    is: ")
 		sb.WriteString(c.WhatItIs)
-		sb.WriteString("\n    contested: ")
-		sb.WriteString(c.Contested)
+		if strings.TrimSpace(c.Contested) != "" {
+			sb.WriteString("\n    contested: ")
+			sb.WriteString(c.Contested)
+		}
 		sb.WriteString("\n")
 	}
 	for _, a := range soFar.Cast {
+		if !want(scope.People, strings.TrimSpace(a.CanonicalName)) {
+			continue
+		}
 		sb.WriteString("- person \"")
 		sb.WriteString(a.CanonicalName)
-		sb.WriteString("\"\n    hiding: ")
-		sb.WriteString(a.Hiding)
+		sb.WriteString("\"\n    relevance: ")
+		sb.WriteString(strconv.Itoa(a.Relevance))
+		sb.WriteString("\n    tag: ")
+		sb.WriteString(a.Tag)
 		sb.WriteString("\n    starts_in: \"")
 		sb.WriteString(a.StartsIn)
 		sb.WriteString("\"")
@@ -1504,15 +1857,14 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 			sb.WriteString("\n    belongs to: ")
 			sb.WriteString(strings.Join(a.BelongsTo, ", "))
 		}
-		// Whether the inner life is already authored is the ascent's map of what is left to do.
-		if strings.TrimSpace(a.Goal) != "" {
-			sb.WriteString("\n    wants: ")
-			sb.WriteString(a.Goal)
+		if strings.TrimSpace(a.Hiding) != "" {
+			sb.WriteString("\n    hiding: ")
+			sb.WriteString(a.Hiding)
 		}
-		if len(a.Beliefs) > 0 || len(a.Traumas) > 0 || len(a.ExamplePhrases) > 0 {
-			sb.WriteString("\n    inner life: authored")
-		} else {
-			sb.WriteString("\n    inner life: NOT YET AUTHORED")
+		if personOwing(a) {
+			sb.WriteString("\n    OWED: the content relevance ")
+			sb.WriteString(strconv.Itoa(a.Relevance))
+			sb.WriteString(" demands")
 		}
 		sb.WriteString("\n")
 	}
@@ -1551,4 +1903,108 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 		}
 	}
 	return sb.String()
+}
+
+// relevanceOfPerson reads the level the scaffold assigned, so a pack prompt can name it per person
+// rather than telling the model to work it out.
+func relevanceOfPerson(d *genesisDoc, name string) int {
+	for _, a := range d.Cast {
+		if strings.TrimSpace(a.CanonicalName) == name {
+			return a.Relevance
+		}
+	}
+	return 1
+}
+
+// --- deepening ------------------------------------------------------------------------------------
+//
+// A later wave adds to a thing the scaffold named thin. Every one of these takes what is missing and
+// NEVER overwrites what is there: the scaffold's name, kind and placement are the namespace everything
+// else resolved against, so a content call that renames a location would break every reference to it.
+//
+// Relevance RATCHETS. A later answer may raise a level (play promotes, and a wave may find something
+// matters more than the scaffold thought) but never lower one, because content already authored at the
+// higher level would become unvalidatable — and ADR-P027 makes the ratchet law for play as well.
+
+func ratchetRelevance(have *int, add int) {
+	if validRelevance(add) && add > *have {
+		*have = add
+	}
+}
+
+func fillIfEmpty(have *string, add string) {
+	if strings.TrimSpace(*have) == "" && strings.TrimSpace(add) != "" {
+		*have = add
+	}
+}
+
+func findPlace(d *genesisDoc, name string) *genesisPlace {
+	for i := range d.Places {
+		if d.Places[i].CanonicalName == name {
+			return &d.Places[i]
+		}
+	}
+	return nil
+}
+
+func findFaction(d *genesisDoc, name string) *genesisFaction {
+	for i := range d.Factions {
+		if d.Factions[i].CanonicalName == name {
+			return &d.Factions[i]
+		}
+	}
+	return nil
+}
+
+func findConcept(d *genesisDoc, name string) *genesisConcept {
+	for i := range d.Concepts {
+		if d.Concepts[i].CanonicalName == name {
+			return &d.Concepts[i]
+		}
+	}
+	return nil
+}
+
+func findObject(d *genesisDoc, name string) *genesisObject {
+	for i := range d.Objects {
+		if d.Objects[i].CanonicalName == name {
+			return &d.Objects[i]
+		}
+	}
+	return nil
+}
+
+func deepenPlace(have *genesisPlace, add genesisPlace) {
+	ratchetRelevance(&have.Relevance, add.Relevance)
+	fillIfEmpty(&have.Description, add.Description)
+	fillIfEmpty(&have.Tension, add.Tension)
+	fillIfEmpty(&have.Tag, add.Tag)
+	// `within` is the namespace's tree. A content call may only ATTACH a place that was floating, never
+	// re-parent one, or the geography wave's own scope stops meaning anything.
+	fillIfEmpty(&have.Within, add.Within)
+}
+
+func deepenFaction(have *genesisFaction, add genesisFaction) {
+	ratchetRelevance(&have.Relevance, add.Relevance)
+	fillIfEmpty(&have.Tag, add.Tag)
+	fillIfEmpty(&have.Controls, add.Controls)
+	fillIfEmpty(&have.Publishes, add.Publishes)
+	fillIfEmpty(&have.Buries, add.Buries)
+	fillIfEmpty(&have.Goal, add.Goal)
+	fillIfEmpty(&have.Sacrifice, add.Sacrifice)
+	fillIfEmpty(&have.Seat, add.Seat)
+}
+
+func deepenConcept(have *genesisConcept, add genesisConcept) {
+	ratchetRelevance(&have.Relevance, add.Relevance)
+	fillIfEmpty(&have.Tag, add.Tag)
+	fillIfEmpty(&have.Contested, add.Contested)
+	fillIfEmpty(&have.TaughtBy, add.TaughtBy)
+}
+
+func deepenObject(have *genesisObject, add genesisObject) {
+	ratchetRelevance(&have.Relevance, add.Relevance)
+	fillIfEmpty(&have.Tag, add.Tag)
+	// Placement is not deepened: an object is in exactly one somewhere, and two waves disagreeing about
+	// where is a conflict the belt should see rather than a gap to fill.
 }

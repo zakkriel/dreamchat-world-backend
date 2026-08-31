@@ -1,3 +1,5 @@
+// Governed-by: ADR-P027 — the belt validates against an entity's relevance, so a thin entity is
+// complete rather than defective, and one claiming a level it did not earn is refused.
 package main
 
 // worldgenesis.go — authoring one world's FICTION from a user's brief (PRD: World Creation).
@@ -92,6 +94,8 @@ type genesisDoc struct {
 }
 
 type genesisPlace struct {
+	Relevance     int    `json:"relevance"`
+	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
 	CanonicalName string `json:"canonical_name"`
 	Kind          string `json:"kind"`
@@ -119,6 +123,8 @@ type genesisTrait struct {
 }
 
 type genesisActor struct {
+	Relevance     int            `json:"relevance"`
+	Tag           string         `json:"tag,omitempty"`
 	Descriptor    string         `json:"descriptor"`
 	CanonicalName string         `json:"canonical_name"`
 	Standing      string         `json:"standing"`
@@ -160,6 +166,8 @@ type genesisTrauma struct {
 // families, the survivors of an outbreak). Live builds with no slot for either crammed them into `cast`
 // and produced descriptor-shaped names — a missing content class, not a naming bug.
 type genesisFaction struct {
+	Relevance     int    `json:"relevance"`
+	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
 	CanonicalName string `json:"canonical_name"`
 	Kind          string `json:"kind"`
@@ -178,6 +186,8 @@ type genesisFaction struct {
 // There is no engine in this stage, so a concept is a document entry like any other (design §2.4). How it
 // becomes a row is stage 3's question (SPEC-043).
 type genesisConcept struct {
+	Relevance     int    `json:"relevance"`
+	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
 	CanonicalName string `json:"canonical_name"`
 	WhatItIs      string `json:"what_it_is"`
@@ -186,6 +196,8 @@ type genesisConcept struct {
 }
 
 type genesisObject struct {
+	Relevance     int    `json:"relevance"`
+	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
 	CanonicalName string `json:"canonical_name"`
 	Kind          string `json:"kind"`
@@ -307,14 +319,22 @@ func (d *genesisDoc) validate() error {
 			return refuse("two places are both called %q — a name is a join key here and must be unique", name)
 		case strings.TrimSpace(p.Descriptor) == "":
 			return refuse("the place %q has no descriptor, so a stranger has no way to see it", name)
-		case strings.TrimSpace(p.Description) == "":
-			return refuse("the place %q has no description, so the narrator has nothing to work from", name)
 		case strings.TrimSpace(p.Kind) == "":
 			return refuse("the place %q has no kind", name)
-		case !genesisTensions[p.Tension]:
-			return refuse("the place %q has tension %q, outside the closed set", name, p.Tension)
 		case !genesisExtentClasses[p.ExtentClass]:
 			return refuse("the place %q has extent_class %q, outside the closed set", name, p.ExtentClass)
+		case !validRelevance(p.Relevance):
+			return refuse("the place %q has relevance %d, outside 1-4", name, p.Relevance)
+		// Depth is owed per level (ADR-P027). A relevance-1 place is a name, a look and a scale — the
+		// narrator can put a stranger in it. A description and a tension are what being REFERENCED buys.
+		case p.Relevance >= 2 && strings.TrimSpace(p.Description) == "":
+			return refuse("the place %q is relevance %d but has no description, so the narrator has nothing to work from", name, p.Relevance)
+		// Tension is STRUCTURAL, like placement: it is one word from a closed set and the engine's
+		// location_state enum refuses an empty one, so a relevance-1 location without it cannot be
+		// stored. Measured while building this: the belt passed and the commit failed on
+		// `tension  not in enum`. Only the description scales with relevance.
+		case !genesisTensions[p.Tension]:
+			return refuse("the place %q has tension %q, outside the closed set", name, p.Tension)
 		}
 		places[name] = true
 	}
@@ -337,16 +357,31 @@ func (d *genesisDoc) validate() error {
 			return refuse("%q reads like a join key, not a person's name — name people as a voice would say them, never snake_case or all-lowercase", name)
 		case strings.TrimSpace(a.Descriptor) == "":
 			return refuse("%q has no descriptor, and a descriptor is all a stranger sees", name)
-		case strings.TrimSpace(a.Standing) == "":
-			return refuse("%q has no standing", name)
-		case strings.TrimSpace(a.SpeechManner) == "":
-			return refuse("%q has no speech_manner", name)
-		case strings.TrimSpace(a.Hiding) == "":
-			return refuse("%q is hiding nothing — every person here holds one thing they will not say", name)
-		case len(a.Traits) == 0:
-			return refuse("%q has no traits", name)
+		// Placement is structural at EVERY level: exists means exists somewhere, and a person the
+		// engine cannot place cannot be stored.
 		case !places[strings.TrimSpace(a.StartsIn)]:
 			return refuse("%q starts in %q, which is not a place in this world", name, a.StartsIn)
+		case !validRelevance(a.Relevance):
+			return refuse("%q has relevance %d, outside 1-4", name, a.Relevance)
+		// The tag is what a relevance-1 person answers from, so it is the one thing they may not lack.
+		case strings.TrimSpace(a.Tag) == "":
+			return refuse("%q has no tag — one line of temperament is the whole personality of a person nobody has met yet", name)
+		// Relevance 2 is enough to hold a scene.
+		case a.Relevance >= 2 && strings.TrimSpace(a.Standing) == "":
+			return refuse("%q is relevance %d but has no standing", name, a.Relevance)
+		case a.Relevance >= 2 && strings.TrimSpace(a.SpeechManner) == "":
+			return refuse("%q is relevance %d but has no speech_manner", name, a.Relevance)
+		case a.Relevance >= 2 && strings.TrimSpace(a.Hiding) == "":
+			return refuse("%q is relevance %d and hiding nothing — anyone a scene can turn to holds one thing they will not say", name, a.Relevance)
+		case a.Relevance >= 2 && len(a.Traits) == 0:
+			return refuse("%q is relevance %d but has no traits", name, a.Relevance)
+		// Relevance 3 is the interior. The belt asks for a want and one thing that shaped them, not for
+		// all seven fields the ADR lists: a person with a goal and a belief is playable, and refusing a
+		// world over a missing `mantras` list would be inventing a failure the product does not have.
+		case a.Relevance >= 3 && strings.TrimSpace(a.Goal) == "":
+			return refuse("%q is relevance %d but wants nothing — an interacted person needs something they are after", name, a.Relevance)
+		case a.Relevance >= 3 && len(a.Beliefs)+len(a.Mantras)+len(a.Traumas)+len(a.ExamplePhrases) == 0 && strings.TrimSpace(a.Upbringing) == "":
+			return refuse("%q is relevance %d with no inner life at all — no upbringing, beliefs, mantras, traumas or phrases", name, a.Relevance)
 		case a.Malleability != "" && !genesisStrengths[a.Malleability]:
 			return refuse("%q has malleability %q, outside the closed set", name, a.Malleability)
 		}
@@ -470,6 +505,8 @@ func (d *genesisDoc) validate() error {
 			return refuse("the object %q has no descriptor", name)
 		case strings.TrimSpace(o.Kind) == "":
 			return refuse("the object %q has no kind", name)
+		case !validRelevance(o.Relevance):
+			return refuse("the object %q has relevance %d, outside 1-4", name, o.Relevance)
 		case in == "" && held == "":
 			return refuse("the object %q is nowhere — it must sit in a place or be carried by someone", name)
 		case in != "" && held != "":
@@ -480,6 +517,64 @@ func (d *genesisDoc) validate() error {
 			return refuse("the object %q is carried by %q, who is not in this world", name, held)
 		}
 		seenObject[name] = true
+	}
+
+	// Factions and concepts. Neither was checked at all before relevance existed: both were added to the
+	// fill as layers and the belt never learned about them, so a faction with an empty `controls` or two
+	// concepts sharing a name reached the database. One namespace, as everywhere else — a name is a join
+	// key, so a faction may not be called what a place or a person is called.
+	seenFaction := make(map[string]bool, len(d.Factions))
+	for i, f := range d.Factions {
+		name := strings.TrimSpace(f.CanonicalName)
+		switch {
+		case name == "":
+			return refuse("faction %d has no canonical_name", i+1)
+		case seenFaction[name]:
+			return refuse("two factions are both called %q", name)
+		case places[name] || cast[name]:
+			return refuse("%q is a faction and also a place or a person", name)
+		case strings.TrimSpace(f.Descriptor) == "":
+			return refuse("the faction %q has no descriptor", name)
+		case strings.TrimSpace(f.Kind) == "":
+			return refuse("the faction %q has no kind — an organised body (faction) or a bare collective (group)", name)
+		case !validRelevance(f.Relevance):
+			return refuse("the faction %q has relevance %d, outside 1-4", name, f.Relevance)
+		case strings.TrimSpace(f.Tag) == "":
+			return refuse("the faction %q has no tag — its mantra, oath or slogan is what it answers with before anyone looks closer", name)
+		// Being referenced buys the three things that make an institution playable.
+		case f.Relevance >= 2 && strings.TrimSpace(f.Controls) == "":
+			return refuse("the faction %q is relevance %d but controls nothing", name, f.Relevance)
+		case f.Relevance >= 2 && strings.TrimSpace(f.Publishes) == "":
+			return refuse("the faction %q is relevance %d but publishes nothing", name, f.Relevance)
+		case f.Relevance >= 2 && strings.TrimSpace(f.Buries) == "":
+			return refuse("the faction %q is relevance %d and buries nothing — an institution with nothing to hide is a noticeboard", name, f.Relevance)
+		case f.Relevance >= 3 && strings.TrimSpace(f.Goal) == "":
+			return refuse("the faction %q is relevance %d but wants nothing", name, f.Relevance)
+		case strings.TrimSpace(f.Seat) != "" && !places[strings.TrimSpace(f.Seat)]:
+			return refuse("the faction %q is seated in %q, which is not a place in this world", name, f.Seat)
+		}
+		seenFaction[name] = true
+	}
+	seenConcept := make(map[string]bool, len(d.Concepts))
+	for i, c := range d.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		switch {
+		case name == "":
+			return refuse("concept %d has no canonical_name", i+1)
+		case seenConcept[name]:
+			return refuse("two concepts are both called %q", name)
+		case places[name] || cast[name] || seenFaction[name]:
+			return refuse("%q is a concept and also a place, a person or a faction", name)
+		case strings.TrimSpace(c.WhatItIs) == "":
+			return refuse("the concept %q does not say what it is", name)
+		case !validRelevance(c.Relevance):
+			return refuse("the concept %q has relevance %d, outside 1-4", name, c.Relevance)
+		case c.Relevance >= 2 && strings.TrimSpace(c.Contested) == "":
+			return refuse("the concept %q is relevance %d but nothing about it is contested — a body of knowledge nobody argues over is a dictionary entry", name, c.Relevance)
+		case strings.TrimSpace(c.TaughtBy) != "" && !seenFaction[strings.TrimSpace(c.TaughtBy)]:
+			return refuse("the concept %q is taught by %q, which is not a faction in this world", name, c.TaughtBy)
+		}
+		seenConcept[name] = true
 	}
 
 	// History, and the rule that matters most: none of it belongs to the player.
@@ -593,3 +688,8 @@ func identifierShapedName(name string) bool {
 	}
 	return cased && !upper
 }
+
+// validRelevance holds the ADR-P027 ladder: 1 exists, 2 referenced, 3 interacted, 4 bound to the player.
+// Zero is not a level — it means the author omitted it, and the belt says so rather than reading a
+// missing level as "thin" and quietly authoring nothing.
+func validRelevance(n int) bool { return n >= 1 && n <= 4 }

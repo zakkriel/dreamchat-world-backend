@@ -154,7 +154,29 @@ rendering comes back.
 **Still unmeasured:** a build that SUCCEEDS. Every number above is from a run that refused at the
 belt, so commit and kickstart are still unmeasured, and fill quality has not been judged at all.
 
-### Design drift on the record: rules are no longer the work plan
+### The fill, as built 2026-08-31: a namespace, then content, under relevance
+
+Full design: `docs/design/2026-08-28-the-filling-stage.md` §2.9. Law: `ADR-P027`. Read both before
+changing the schedule; what follows is the map, not the reasoning.
+
+    concepts ──▶ scaffold-1 ──▶ scaffold-2 ═══▶ geography ═══▶ faction ═══▶ people ──▶ arrival
+    └────── sequential ──────┘  └─ parallel ─┘  └──────── parallel waves ────────┘
+
+- **`scaffold-2` fixes the whole namespace**, one call per top location and per faction. After it, every
+  entity has a name and a relevance — which is *why* the content waves can run at once: a content call
+  cannot invent a dangling reference, it can only refer to something that already exists.
+- **The compiled mandate** (`fillScope`) is assembled in Go: a call sees its own slice of the namespace
+  and nothing else. Never hand a call the whole document again — that cost ~13,300 input tokens per call
+  and made the answers worse.
+- **`depth` 1–5 (default 1) buys breadth, not richness.** Richness is relevance's job.
+- **The merge deepens, never overwrites, and relevance ratchets.** The scaffold's name, kind and
+  placement are the namespace everything resolved against, so a content call may not rename or demote.
+- **The fragment belt may not check depth.** The scaffold names a relevance-3 person before anyone
+  authors them; depth is checked at the document, after every wave.
+- **Structural at every level, regardless of relevance:** placement (`starts_in` / `where` / `within`)
+  and a location's `tension`. The engine cannot store an entity without them. Only description scales.
+
+### Design drift on the record, RESOLVED 2026-08-31: rules are no longer the work plan
 
 Design §7 makes the identity's rules the fill schedule — the scheduler dispatched on `rule.kind`, and
 constraining rules ran before generative ones. **The founder's 2026-08-28 ordering ruling replaced that**

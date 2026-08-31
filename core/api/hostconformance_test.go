@@ -95,31 +95,47 @@ func TestGenFillHostProbe(t *testing.T) {
 		t.Fatalf("identity: %v", err)
 	}
 
-	// Walk the descent with the deterministic fake so the probe's "already authored" block is a real
+	// Walk the NAMESPACE with the deterministic fake so the probe's "already authored" block is a real
 	// mid-build document rather than a hand-made one.
 	doc := &genesisDoc{}
 	var tags []taggedName
 	seat := NewFakeWorldFillDriver()
-	for _, item := range descentSchedule() {
+	b := budgetForDepth(0)
+	namespace := []workItem{conceptsWork(), scaffoldOneWork(b)}
+	for _, item := range namespace {
 		frag, err := fillOne(ctx, seat, id, item, testBrief, nil, doc, "")
 		if err != nil {
-			t.Fatalf("descent %s: %v", item.ID, err)
+			t.Fatalf("namespace %s: %v", item.ID, err)
+		}
+		mergeFill(doc, frag, mergeTag(item), &tags)
+	}
+	for _, item := range scaffoldTwoSchedule(doc, b) {
+		frag, err := fillOne(ctx, seat, id, item, testBrief, nil, doc, "")
+		if err != nil {
+			t.Fatalf("scaffold 2 %s: %v", mergeTag(item), err)
 		}
 		mergeFill(doc, frag, mergeTag(item), &tags)
 	}
 	if len(doc.Cast) == 0 {
-		t.Fatal("the descent authored nobody — the probe would measure the wrong call")
+		t.Fatal("the namespace authored nobody — the probe would measure the wrong call")
 	}
 
+	// A people pack is the largest fill call there is, so it is the one worth scoring: the most output
+	// tokens, the deepest schema, and where truncation showed up in production.
 	var person workItem
-	for _, item := range ascentSchedule(doc) {
-		if item.ID == "person" {
-			person = item
+	for _, wave := range contentSchedule(doc, b) {
+		for _, item := range wave {
+			if item.ID == "people" {
+				person = item
+				break
+			}
+		}
+		if person.ID != "" {
 			break
 		}
 	}
-	if person.Subject == "" {
-		t.Fatal("no per-person work item — ascentSchedule no longer emits one")
+	if person.ID == "" {
+		t.Fatal("no people work item — the scaffold marked nobody above relevance 1, so nothing is owed")
 	}
 
 	prompt := buildWorldFillPrompt(id, person, testBrief, nil, doc, "")
@@ -129,6 +145,6 @@ func TestGenFillHostProbe(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "schema.json"), []byte(worldFillSchemaJSON), 0o644); err != nil {
 		t.Fatalf("write schema.json: %v", err)
 	}
-	t.Logf("fill probe material: prompt %d bytes, subject %q, %d place(s)/%d person(s) already authored, schema %d bytes",
-		len(prompt), person.Subject, len(doc.Places), len(doc.Cast), len(worldFillSchemaJSON))
+	t.Logf("fill probe material: prompt %d bytes, pack of %d in %q, %d place(s)/%d person(s) already authored, schema %d bytes",
+		len(prompt), len(person.Members), person.Subject, len(doc.Places), len(doc.Cast), len(worldFillSchemaJSON))
 }

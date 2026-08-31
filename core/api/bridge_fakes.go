@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -1080,161 +1081,243 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 	if brief == "" {
 		brief = "a cargo yard"
 	}
+	subject := fillSubject(req.Prompt)
+	members := fillMembers(req.Prompt)
 	switch fillBatchID(req.Prompt) {
-	case "places":
-		// Public lore lives in the description at this depth: nobody exists yet to hold a canon event.
+	case "concepts":
+		// `taught_by` stays empty on purpose: no faction exists yet, and the belt refuses a concept
+		// taught by a name that is not there.
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"concepts": []map[string]any{{
+				"canonical_name": "The Reconciled Account", "descriptor": "the doctrine of the written tally",
+				"what_it_is": "the doctrine that a written tally outranks anyone's memory of the night",
+				"contested":  "whether a page corrected by hand is still the account",
+				"relevance":  2, "tag": "what is written arrived",
+			}, {
+				"canonical_name": "Counting By Weight", "descriptor": "the older trade craft",
+				"what_it_is": "judging a crate by how it sits on the shoulder rather than by its line in the book",
+				"relevance":  1, "tag": "the shoulder never lies",
+			}},
+		})), nil
+	case "scaffold-1":
+		// The top of the world: names, one line each, and a way between them so the arrival has an exit
+		// however the rest of the build goes.
 		return string(mustJSON(map[string]any{
 			"empty": false,
 			"places": []map[string]any{{
-				"descriptor": "a low room with one lamp", "canonical_name": "The Counting Room",
-				"kind":        "back room",
-				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door to the yard. Everyone knows the window was painted shut the year the tally was disputed.",
-				"tension":     "tense", "extent_class": "intimate",
+				"canonical_name": "The Counting Room", "descriptor": "a low room with one lamp",
+				"kind": "back room", "extent_class": "intimate", "tension": "tense", "relevance": 2,
+				"tag": "the lamp is never moved",
 			}, {
-				"descriptor": "a yard stacked with crates", "canonical_name": "The Loading Yard",
-				"kind":        "yard",
-				"description": "Crates two high against the wall, a wet gate on the street, the water tower above. Nothing leaves here without a line, and everyone says that twice.",
-				"tension":     "normal", "extent_class": "small",
+				"canonical_name": "The Loading Yard", "descriptor": "a yard stacked two crates high",
+				"kind": "yard", "extent_class": "small", "tension": "normal", "relevance": 2,
+				"tag": "nothing leaves without a line",
 			}},
 			"ways": []map[string]any{{
 				"descriptor": "the door to the yard", "from_place": "The Counting Room",
 				"to_place": "The Loading Yard", "state": "open",
 			}},
+			"factions": []map[string]any{{
+				"canonical_name": "The Tally", "descriptor": "the body that keeps the book",
+				"kind": "faction", "relevance": 2, "tag": "what is written arrived",
+			}, {
+				"canonical_name": "The Night Loaders", "descriptor": "the hands that work after the gate shuts",
+				"kind": "group", "relevance": 1, "tag": "we were never here",
+			}},
+			"objects": []map[string]any{{
+				"canonical_name": "The Ledger", "descriptor": "a book open at the current page",
+				"kind": "ledger", "relevance": 2, "tag": "heavier than it looks",
+				"where": map[string]any{"in_place": "The Counting Room"},
+			}},
 		})), nil
-	case "factions":
+	case "scaffold-2":
+		if subject == "" {
+			return "", fmt.Errorf("%s: scaffold-2 with no subject", f.name)
+		}
+		// A faction item names members; a location item names what sits inside it. Every name is derived
+		// from the subject, so the parallel wave cannot collide with itself.
+		if strings.Contains(req.Prompt, "Name the people who make up") {
+			return string(mustJSON(map[string]any{
+				"empty": false,
+				"cast": []map[string]any{{
+					"canonical_name": "Clerk Of " + subject, "descriptor": "the hand that files for " + subject,
+					"starts_in": "The Counting Room", "belongs_to": []string{subject},
+					"relevance": 2, "tag": "apologises before speaking",
+				}},
+			})), nil
+		}
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"places": []map[string]any{{
+				"canonical_name": subject + " Annex", "descriptor": "a narrow space off " + subject,
+				"kind": "annex", "extent_class": "intimate", "within": subject,
+				"tension": "calm", "relevance": 1, "tag": "nobody is sent here twice",
+			}},
+			"ways": []map[string]any{{
+				"descriptor": "the gap into the annex off " + subject, "from_place": subject,
+				"to_place": subject + " Annex", "state": "open",
+			}},
+			"cast": []map[string]any{{
+				"canonical_name": "Keeper Of " + subject, "descriptor": "the one who answers for " + subject,
+				"starts_in": subject, "relevance": 3, "tag": "speaks as if quoting",
+			}, {
+				"canonical_name": "Runner Of " + subject, "descriptor": "a pair of hands that never stops",
+				"starts_in": subject, "relevance": 1, "tag": "never finishes a sentence",
+			}},
+		})), nil
+	case "geography":
+		if subject == "" {
+			return "", fmt.Errorf("%s: geography with no subject", f.name)
+		}
+		// Re-emits the structural fields because the schema requires them; deepenPlace only fills what
+		// is empty, so the namespace's own values win and nothing is renamed.
+		return string(mustJSON(map[string]any{
+			"empty": false,
+			"places": []map[string]any{{
+				"canonical_name": subject, "descriptor": "a low room with one lamp",
+				"kind": "back room", "extent_class": "intimate", "relevance": 2,
+				"description": "One lamp over a table, a ledger open at the current page, two chairs and a door out. " +
+					"Everyone knows the window was painted shut the year the tally was disputed.",
+				"tension": "tense",
+			}},
+			"history": []map[string]any{{
+				"what_happened": "the tally for the night of the storm was disputed in " + subject,
+				"where":         subject,
+				"who":           []string{"Keeper Of " + subject},
+				"knowledge": []map[string]any{{
+					"holder": "Keeper Of " + subject, "epistemic_type": "direct",
+					"content": "they corrected the page themselves and told nobody",
+				}},
+			}},
+		})), nil
+	case "faction":
+		if subject == "" {
+			return "", fmt.Errorf("%s: faction with no subject", f.name)
+		}
 		return string(mustJSON(map[string]any{
 			"empty": false,
 			"factions": []map[string]any{{
-				"descriptor": "the body that keeps the book", "canonical_name": "The Tally",
-				"kind": "faction", "controls": "which crates are admitted to have arrived",
-				"publishes": "a weekly reconciled ledger", "buries": "the pages it reconciled by hand",
-				"goal": "to remain the only account anyone can cite", "sacrifice": "any one of its own clerks",
-				"seat": "The Counting Room",
-			}, {
-				"descriptor": "the families who unload without a line", "canonical_name": "The Unentered",
-				"kind": "group", "controls": "nothing, and moves most of it",
-				"publishes": "nothing", "buries": "who paid them last night",
-				"goal": "to be owed something the book cannot deny",
-			}},
-		})), nil
-	case "concepts":
-		return string(mustJSON(map[string]any{
-			"empty": false,
-			"concepts": []map[string]any{{
-				"descriptor": "the craft of writing a line that holds", "canonical_name": "Reconciliation",
-				"what_it_is": "the practice of making two disagreeing accounts into one citable page",
-				"contested":  "whether a reconciled page is the truth or merely the surviving version",
-				"taught_by":  "The Tally",
+				"canonical_name": subject, "descriptor": "the body that keeps the book",
+				"kind": "faction", "relevance": 2, "tag": "what is written arrived",
+				"controls":  "which crates are admitted to have arrived",
+				"publishes": "a weekly reconciled ledger",
+				"buries":    "the pages it reconciled by hand",
+				"goal":      "to remain the only account anyone can cite",
+				"sacrifice": "any one of its own clerks",
 			}},
 		})), nil
 	case "people":
-		// The roster, plus the first canon — now there are people to hold it.
-		return string(mustJSON(map[string]any{
-			"empty": false,
-			"cast": []map[string]any{{
-				"descriptor": "the woman keeping the ledger", "canonical_name": "Adaeze",
-				"standing":      "keeps the book, and decides what goes in it",
-				"speech_manner": "short sentences; never repeats herself",
-				"traits": []map[string]any{
-					{"key": "guarded", "strength": "strong", "manner": "answers a question with the shortest true thing"},
-					{"key": "exact", "strength": "defining", "manner": "will not round a number to end a conversation"},
-				},
-				"hiding":       "the last two pages of the ledger are a different hand than hers",
-				"malleability": "faint", "starts_in": "The Counting Room",
-				"belongs_to": []string{"The Tally"},
-			}, {
-				"descriptor": "a man waiting by the crates", "canonical_name": "Ferro",
-				"standing":      "moves what the book says to move",
-				"speech_manner": "talks around a question until it goes away",
-				"traits": []map[string]any{
-					{"key": "watchful", "strength": "moderate", "manner": "tracks the gate more than the person talking to him"},
-				},
-				"hiding":       "he has already been paid for tonight, by someone who is not in the book",
-				"malleability": "moderate", "starts_in": "The Loading Yard",
-				"belongs_to": []string{"The Unentered"},
-			}},
-			"history": []map[string]any{{
-				"what_happened": "A crate came in that the book has no line for, and it went into the yard anyway.",
-				"where":         "The Loading Yard",
-				"who":           []string{"Adaeze", "Ferro"},
-				"knowledge": []map[string]any{
-					{"holder": "Adaeze", "content": "a crate went into my yard tonight that nobody entered in the book", "epistemic_type": "direct"},
-					{"holder": "Ferro", "content": "she saw me take it in and said nothing, which means she wants something", "epistemic_type": "inference"},
-				},
-			}},
-		})), nil
-	case "artifacts":
-		return string(mustJSON(map[string]any{
-			"empty": false,
-			"objects": []map[string]any{{
-				"descriptor": "a ledger open at the current page", "canonical_name": "The Ledger",
-				"kind": "record", "where": map[string]any{"in_place": "The Counting Room"},
-			}, {
-				"descriptor": "a brass key worn smooth", "canonical_name": "The Yard Key",
-				"kind": "key", "where": map[string]any{"carried_by": "Adaeze"},
-			}},
-		})), nil
-	case "person":
-		// The ascent's per-person call. One person's inner life, nobody else's.
-		who := fillSubject(req.Prompt)
-		if who == "" {
-			return `{"empty":true,"why_empty":"no subject named"}`, nil
+		if len(members) == 0 {
+			return "", fmt.Errorf("%s: people pack with no members", f.name)
 		}
-		person := map[string]any{
-			"descriptor": "as before", "canonical_name": who,
-			"standing": "as before", "speech_manner": "as before",
-			"traits": []map[string]any{{"key": "settled", "strength": "moderate", "manner": "does not raise their voice"}},
-			"hiding": "as before", "starts_in": "The Counting Room",
-			"upbringing":      "Raised in a house where the tally was read aloud at supper and disagreement cost you the meal.",
-			"beliefs":         []string{"a page outlives the hand that wrote it", "nobody is owed a second reading"},
-			"mantras":         []string{"say the number, then stop"},
-			"traumas":         []map[string]any{{"what_happened": "A line they signed was reconciled away and the man it named was never paid.", "how_it_shows": "reads every total twice and will not sign in another's presence"}},
-			"goal":            "to be the last person who can prove what happened",
-			"sacrifice":       "their standing in The Tally",
-			"example_phrases": []string{"That is not what the page says.", "Ask me again when you have the line.", "I wrote it. I did not agree to it."},
+		// Authors each member to the level the prompt states, and NO further — a fake that authored
+		// everyone at relevance 3 would hide the whole point of the design from every test.
+		cast := make([]map[string]any, 0, len(members))
+		for _, m := range members {
+			person := map[string]any{
+				"canonical_name": m.Name, "descriptor": "known here and not elsewhere",
+				"starts_in": "The Counting Room", "relevance": m.Relevance,
+				"tag": "weighs a sentence before saying it",
+			}
+			if m.Relevance >= 2 {
+				person["standing"] = "answers for what is written down"
+				person["speech_manner"] = "quotes the page rather than the night"
+				// One secret per person, and NOBODY ELSE'S. An identical string here read as one secret
+				// held by four people, and I-3 is precisely that a secret belongs to one holder.
+				person["hiding"] = "which line " + m.Name + " corrected by hand, and for whom"
+				person["traits"] = []map[string]any{{
+					"key": "exact", "strength": "defining", "manner": "repeats a number until it is agreed",
+				}}
+			}
+			if m.Relevance >= 3 {
+				person["upbringing"] = "raised in the yard, taught to read by someone who needed a witness"
+				person["beliefs"] = []string{"a corrected page is still the account"}
+				person["mantras"] = []string{"what is written arrived"}
+				person["traumas"] = []map[string]any{{
+					"what_happened": "the night the tally was disputed and nobody backed them",
+					"how_it_shows":  "reads a number twice before agreeing to it",
+				}}
+				person["goal"] = "to never be the only name on a disputed page again"
+				person["sacrifice"] = "the friendship of anyone who asks them to look away"
+				person["example_phrases"] = []string{"Say the number again.", "It is on the page.", "I was there and the page is right."}
+			}
+			cast = append(cast, person)
 		}
-		return string(mustJSON(map[string]any{"empty": false, "cast": []map[string]any{person}})), nil
+		return string(mustJSON(map[string]any{"empty": false, "cast": cast})), nil
 	case "arrival":
-		statedOpen := !strings.Contains(strings.ToLower(brief), "i am ")
-		doc := map[string]any{
+		arrival := map[string]any{
 			"empty": false,
 			"world": map[string]any{
-				"display_name": "A World From: " + briefSlug(brief),
-				"tagline":      "Somewhere someone owes something, and the ledger is open.",
-				"mood":         "overcast", "ornament": "plain",
+				"display_name": "A World From: " + briefSlug(brief), "tagline": "Somewhere a line is short and someone is owed",
+				"mood": "nocturne", "ornament": "filigree",
 			},
-			"region": map[string]any{"descriptor": "the quarter under the water tower", "extent_class": "medium"},
+			"region": map[string]any{
+				"descriptor": "a wet quarter of sheds and short lines", "extent_class": "small",
+			},
 			"arrival": map[string]any{
-				"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren",
-				"place": "The Counting Room", "stated": "I stepped into the counting room.",
-				"why": "sent to collect on a line in somebody else's book",
+				"canonical_name": "The Auditor", "descriptor": "someone with no crate and no reason to be here",
+				"place": "The Counting Room", "stated": "You are owed a line that is not in the book.",
+				"why": "because somebody sent for a stranger",
 			},
 		}
-		if statedOpen {
-			doc["arrival_candidates"] = []map[string]any{
-				{"descriptor": "a stranger with wet shoulders", "canonical_name": "Wren", "why": "sent to collect on a line in somebody else's book"},
-				{"descriptor": "a courier stamping mud off her boots", "canonical_name": "Petra", "why": "carrying a delivery the ledger has no line for"},
-				{"descriptor": "a man checking the number over the door", "canonical_name": "Osei", "why": "come to the wrong address on somebody else's word"},
-			}
+		// Identity-OPEN unless the brief already says who the visitor is, in any words. "i am " is the
+		// deterministic tell this stand-in uses; the live seat judges the same thing from the prompt.
+		// Candidate 1 must be the arrival itself — it is the recommended default the belt checks for.
+		if !strings.Contains(strings.ToLower(brief), "i am ") {
+			arrival["arrival_candidates"] = []map[string]any{{
+				"canonical_name": "The Auditor", "descriptor": "someone with no crate and no reason to be here",
+				"why": "the room has to explain itself to you",
+			}, {
+				"canonical_name": "The Short Line", "descriptor": "a claimant whose crate never arrived",
+				"why": "you want something and the book says no",
+			}, {
+				"canonical_name": "The Night Hand", "descriptor": "someone who worked after the gate shut",
+				"why": "you already know what the page does not say",
+			}}
 		}
-		return string(mustJSON(doc)), nil
-	case "repair", "closing":
-		return string(mustJSON(map[string]any{
-			"empty": false,
-			"objects": []map[string]any{{
-				"descriptor": "a tally stick nobody claims", "canonical_name": "The Loose Tally",
-				"kind": "record", "where": map[string]any{"in_place": "The Loading Yard"},
-			}},
-		})), nil
+		return string(mustJSON(arrival)), nil
+	case "closing", "repair":
+		// Pays whatever the debt ledger named, at RELEVANCE 1 — the cheapest thing that can legally
+		// exist, which is exactly what an owed name needs to be. A gap is worse than an invention that
+		// clicks (founder, 2026-08-28), and relevance is what makes paying a debt nearly free.
+		people, places := fillOwed(req.Prompt)
+		if len(people) == 0 && len(places) == 0 {
+			return string(mustJSON(map[string]any{"empty": true, "why_empty": "nothing is owed"})), nil
+		}
+		out := map[string]any{"empty": false}
+		if len(places) > 0 {
+			rows := make([]map[string]any, 0, len(places))
+			for _, n := range places {
+				rows = append(rows, map[string]any{
+					"canonical_name": n, "descriptor": "a place canon already pointed at",
+					"kind": "quarter", "extent_class": "small", "tension": "normal",
+					"relevance": 1, "tag": "spoken of before it was seen",
+				})
+			}
+			out["places"] = rows
+		}
+		if len(people) > 0 {
+			rows := make([]map[string]any, 0, len(people))
+			for _, n := range people {
+				rows = append(rows, map[string]any{
+					"canonical_name": n, "descriptor": "someone canon already named",
+					"starts_in": "The Counting Room", "relevance": 1,
+					"tag": "answers only what is asked",
+				})
+			}
+			out["cast"] = rows
+		}
+		return string(mustJSON(out)), nil
 	default:
-		// The ascent's connecting layers add nothing in the fake: it has no gaps to find.
-		return `{"empty":true,"why_empty":"this layer found nothing left to connect"}`, nil
+		return string(mustJSON(map[string]any{"empty": true, "why_empty": "the fake has no work for " + fillBatchID(req.Prompt)})), nil
 	}
 }
 
-// fillSubject reads the one person a per-item work block is about.
+// fillSubject reads the one thing a work item is about: a top location, a faction, or the group a pack
+// of people shares.
 func fillSubject(prompt string) string {
-	const marker = "this item is about exactly one person: \""
+	const marker = "this item is about exactly one thing: \""
 	_, rest, ok := strings.Cut(prompt, marker)
 	if !ok {
 		return ""
@@ -1246,11 +1329,71 @@ func fillSubject(prompt string) string {
 	return name
 }
 
+// fillPackMember is one entity a pack call authors, with the level it is owed.
+type fillPackMember struct {
+	Name      string
+	Relevance int
+}
+
+// fillMembers reads the explicit roster a pack call is given. The fake authors exactly these and at
+// exactly these levels — a fake that ignored the level would author everyone richly and hide the entire
+// point of relevance from every test that uses it.
+func fillMembers(prompt string) []fillPackMember {
+	_, rest, ok := strings.Cut(prompt, "author exactly these and nobody else:")
+	if !ok {
+		return nil
+	}
+	var out []fillPackMember
+	for _, line := range strings.Split(rest, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "- \"") {
+			if strings.HasPrefix(line, "text:") {
+				break
+			}
+			continue
+		}
+		name, after, ok := strings.Cut(strings.TrimPrefix(line, "- \""), "\"")
+		if !ok {
+			continue
+		}
+		rel := 1
+		if _, n, ok := strings.Cut(after, "at relevance "); ok {
+			if v, err := strconv.Atoi(strings.TrimSpace(n)); err == nil {
+				rel = v
+			}
+		}
+		out = append(out, fillPackMember{Name: name, Relevance: rel})
+	}
+	return out
+}
+
+// fillOwed reads the STILL OWED block: the names canon already references and the belt will refuse the
+// world without. The live seat reads the same block from the same prompt.
+func fillOwed(prompt string) (people, places []string) {
+	_, rest, ok := strings.Cut(prompt, worldFillOwedMarker)
+	if !ok {
+		return nil, nil
+	}
+	for _, line := range strings.Split(rest, "\n") {
+		line = strings.TrimSpace(line)
+		switch {
+		case strings.HasPrefix(line, "person \""):
+			if n, _, ok := strings.Cut(strings.TrimPrefix(line, "person \""), "\""); ok {
+				people = append(people, n)
+			}
+		case strings.HasPrefix(line, "place \""):
+			if n, _, ok := strings.Cut(strings.TrimPrefix(line, "place \""), "\""); ok {
+				places = append(places, n)
+			}
+		}
+	}
+	return people, places
+}
+
 func fillBatchID(prompt string) string {
-	// The layered schedule (design 2026-08-28): descent, then ascent, then arrival.
+	// The layered fill (design 2026-08-31, ADR-P027): a namespace, then content waves, then the arrival.
 	for _, id := range []string{
-		"places", "factions", "concepts", "people", "artifacts",
-		"artifacts-connect", "person", "concepts-connect", "factions-connect", "places-connect",
+		"concepts", "scaffold-1", "scaffold-2", "geography", "faction", "people",
 		"arrival", "closing", "repair",
 	} {
 		if strings.Contains(prompt, "\nid: "+id+"\n") {
