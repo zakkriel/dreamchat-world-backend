@@ -341,73 +341,211 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
-// snapCrossReferences repairs a reference that names a real thing and then keeps talking.
+// snapName resolves a reference that names a real thing and then keeps talking.
 //
-// This is the em-dash failure in a third costume. It cost a 234-second build in 2026-08-28 when
-// `starts_in` came back as "Colegio de Auscultadores — Sede del Colegio…", and the fix then was to quote
-// names on their own line in the prompt. It cost a 750-second build on 2026-08-31 when a faction's
-// `seat` came back as "Alto Omóplato, en el edificio de contraventanas de hueso." — a REAL location with
-// a description appended.
+// Exact match first; then the longest authored name the value BEGINS with, where the name ends at a
+// boundary. That is how "Alto Omóplato, en el edificio de contraventanas de hueso." resolves to
+// "Alto Omóplato" while "Altozano" does NOT resolve to "Alto".
 //
-// I added `faction.seat` and `concept.taught_by` to the belt in the same round that introduced them and
-// gave neither a repair path, so the only outcome available was to refuse a finished world over a comma.
-//
-// Snapping is bookkeeping, not authorship: the model named the right thing, and the prose after it is
-// the mistake. Exact match first; then the longest authored name the value BEGINS with, which is how
-// "Alto Omóplato, en el edificio…" resolves to "Alto Omóplato" without guessing. A value that resolves
-// to nothing clears the field — both are optional, and an empty seat costs a detail while a dangling one
-// costs the world.
-func snapCrossReferences(doc *genesisDoc) {
-	snap := func(value string, known []string) (string, bool) {
-		v := strings.TrimSpace(value)
-		if v == "" {
-			return "", true
-		}
-		for _, n := range known {
-			if v == n {
-				return n, true
-			}
-		}
-		best := ""
-		for _, n := range known {
-			if n == "" || !strings.HasPrefix(v, n) {
-				continue
-			}
-			// The character after the name must END it, or "Alto" would swallow "Alto Omóplato".
-			rest := strings.TrimSpace(v[len(n):])
-			if rest != "" && !strings.HasPrefix(rest, ",") && !strings.HasPrefix(rest, "—") &&
-				!strings.HasPrefix(rest, "-") && !strings.HasPrefix(rest, "(") && !strings.HasPrefix(rest, ":") {
-				continue
-			}
-			if len(n) > len(best) {
-				best = n
-			}
-		}
-		return best, best != ""
+// The boundary check is the guard here, not the longest-match: verified by mutation on 2026-08-31 —
+// deleting the longest-match left the test green, deleting the boundary turned it red.
+func snapName(value string, known []string) (string, bool) {
+	v := strings.TrimSpace(value)
+	if v == "" {
+		return "", true
 	}
+	for _, n := range known {
+		if v == n {
+			return n, true
+		}
+	}
+	best := ""
+	for _, n := range known {
+		if n == "" || !strings.HasPrefix(v, n) {
+			continue
+		}
+		rest := strings.TrimSpace(v[len(n):])
+		if rest != "" && !strings.HasPrefix(rest, ",") && !strings.HasPrefix(rest, "—") &&
+			!strings.HasPrefix(rest, "-") && !strings.HasPrefix(rest, "(") && !strings.HasPrefix(rest, ";") &&
+			!strings.HasPrefix(rest, ":") {
+			continue
+		}
+		if len(n) > len(best) {
+			best = n
+		}
+	}
+	return best, best != ""
+}
 
+// reconcileReferences is one pass over EVERY cross-reference in the document, and it exists because the
+// one-field-at-a-time version of it cost four live builds in a row.
+//
+// Every reference here is a name-shaped field, and a model writing prose fills name-shaped fields with
+// prose. Measured live, in this order: `starts_in` (234 s), `faction.seat` (750 s), `way.to_place`
+// (1,201 s). Each time I repaired the field that had just failed, and the next run failed on the next
+// field. The disease is the CLASS, so this treats the class.
+//
+// What cannot resolve degrades in the cheapest honest way, and the choice differs per kind because what
+// each costs to lose differs:
+//
+//   - a way            -> DROP THE EDGE. One connection; the belt needs one way and an exit.
+//   - an object        -> drop it. Nothing references an object by name.
+//   - a history event  -> drop the participant or the knowledge entry; drop the event only when that
+//     leaves nobody holding it, because an event nobody knows cannot be perceived.
+//   - a person's place -> KEEP THE PERSON, clear the placement. Canon references people by name, so
+//     dropping one turns a repaired reference into a dangling one — strictly worse.
+//
+// Refusing was never the honest option here: the model authored a real world and named real things. The
+// prose after the name is the mistake, and a mistake in one field is not worth twenty minutes of work.
+func reconcileReferences(doc *genesisDoc) {
 	places := placeNames(doc)
+	factions := factionNames(doc)
+	people := castNames(doc)
+
+	ways := make([]genesisWay, 0, len(doc.Ways))
+	for _, w := range doc.Ways {
+		from, fok := snapName(w.FromPlace, places)
+		to, tok := snapName(w.ToPlace, places)
+		if !fok || !tok || from == "" || to == "" || from == to {
+			log.Printf("reconcile: dropping the way %q — it leads from %q to %q and one of those is not a location here",
+				w.Descriptor, w.FromPlace, w.ToPlace)
+			continue
+		}
+		w.FromPlace, w.ToPlace = from, to
+		ways = append(ways, w)
+	}
+	doc.Ways = ways
+
+	// PEOPLE FIRST, because everything below references them. Placement is structural — the engine cannot
+	// store a person who is nowhere — so an unplaceable person is dropped and canon is then reconciled
+	// against who actually survived. That ordering is the point: clearing the placement instead would
+	// just move the refusal to the belt, and reconciling canon first would leave it pointing at the
+	// dropped.
+	//
+	// This should be rare by construction: canon naming a person who has no location creates a debt, and
+	// the closing pass authors the location. What reaches here is what two closing rounds could not pay.
+	cast := make([]genesisActor, 0, len(doc.Cast))
+	for _, a := range doc.Cast {
+		got, ok := snapName(a.StartsIn, places)
+		if !ok || got == "" {
+			log.Printf("reconcile: dropping %q — they start in %q, which no pass ever authored, and a person who is nowhere cannot be stored",
+				a.CanonicalName, a.StartsIn)
+			continue
+		}
+		a.StartsIn = got
+		for j := range a.BelongsTo {
+			snapped, _ := snapName(a.BelongsTo[j], factions)
+			a.BelongsTo[j] = snapped
+		}
+		a.BelongsTo = nonEmpty(a.BelongsTo)
+		cast = append(cast, a)
+	}
+	doc.Cast = cast
+	people = castNames(doc)
+
+	objects := make([]genesisObject, 0, len(doc.Objects))
+	for _, o := range doc.Objects {
+		inPlace, pok := snapName(o.Where.InPlace, places)
+		held, hok := snapName(o.Where.CarriedBy, people)
+		if !pok || !hok || (inPlace == "" && held == "") {
+			log.Printf("reconcile: dropping the object %q — it sits in %q and is carried by %q, and neither resolves",
+				o.CanonicalName, o.Where.InPlace, o.Where.CarriedBy)
+			continue
+		}
+		o.Where.InPlace, o.Where.CarriedBy = inPlace, held
+		if inPlace != "" {
+			o.Where.CarriedBy = "" // exactly one somewhere, and a location is the storable one
+		}
+		objects = append(objects, o)
+	}
+	doc.Objects = objects
+
+	history := make([]genesisEvent, 0, len(doc.History))
+	for _, h := range doc.History {
+		where, wok := snapName(h.Where, places)
+		if !wok || where == "" {
+			log.Printf("reconcile: dropping history %q — it happened in %q, which is not a location here",
+				truncate(h.WhatHappened, 60), h.Where)
+			continue
+		}
+		h.Where = where
+		who := make([]string, 0, len(h.Who))
+		for _, name := range h.Who {
+			if got, ok := snapName(name, people); ok && got != "" {
+				who = append(who, got)
+			}
+		}
+		h.Who = who
+		knowledge := make([]genesisKnowledge, 0, len(h.Knowledge))
+		for _, k := range h.Knowledge {
+			got, ok := snapName(k.Holder, people)
+			if !ok || got == "" {
+				continue
+			}
+			k.Holder = got
+			knowledge = append(knowledge, k)
+		}
+		h.Knowledge = knowledge
+		if len(h.Knowledge) == 0 {
+			log.Printf("reconcile: dropping history %q — nobody who resolves knows it, and an event nobody holds cannot be perceived",
+				truncate(h.WhatHappened, 60))
+			continue
+		}
+		history = append(history, h)
+	}
+	doc.History = history
+
 	for i := range doc.Factions {
-		got, ok := snap(doc.Factions[i].Seat, places)
+		got, ok := snapName(doc.Factions[i].Seat, places)
 		if !ok {
-			log.Printf("snap: the faction %q is seated in %q, which resolves to no location — clearing the seat rather than refusing the world",
+			log.Printf("reconcile: the faction %q is seated in %q, which resolves to no location — clearing the seat",
 				doc.Factions[i].CanonicalName, doc.Factions[i].Seat)
-		} else if got != strings.TrimSpace(doc.Factions[i].Seat) {
-			log.Printf("snap: the faction %q is seated in %q -> %q", doc.Factions[i].CanonicalName, doc.Factions[i].Seat, got)
 		}
 		doc.Factions[i].Seat = got
 	}
-	factions := factionNames(doc)
+	// `taught_by` accepts a PERSON or a faction. The belt was too narrow and the model was right: a craft
+	// is taught by a person, and one live build filled this with "Auscultadora Mayor Del Vas" six times.
+	// Clearing those threw away true content to satisfy a rule nobody had thought about.
+	teachers := append(append([]string{}, factions...), people...)
 	for i := range doc.Concepts {
-		got, ok := snap(doc.Concepts[i].TaughtBy, factions)
+		got, ok := snapName(doc.Concepts[i].TaughtBy, teachers)
 		if !ok {
-			log.Printf("snap: the concept %q is taught by %q, which resolves to no faction — clearing it",
+			log.Printf("reconcile: the concept %q is taught by %q, who is neither a faction nor a person here — clearing it",
 				doc.Concepts[i].CanonicalName, doc.Concepts[i].TaughtBy)
-		} else if got != strings.TrimSpace(doc.Concepts[i].TaughtBy) {
-			log.Printf("snap: the concept %q is taught by %q -> %q", doc.Concepts[i].CanonicalName, doc.Concepts[i].TaughtBy, got)
 		}
 		doc.Concepts[i].TaughtBy = got
 	}
+
+	if got, ok := snapName(doc.Arrival.Place, places); ok && got != "" {
+		doc.Arrival.Place = got
+	}
+}
+
+func castNames(d *genesisDoc) []string {
+	out := make([]string, 0, len(d.Cast))
+	for _, a := range d.Cast {
+		if n := strings.TrimSpace(a.CanonicalName); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func nonEmpty(in []string) []string {
+	out := in[:0]
+	for _, s := range in {
+		if strings.TrimSpace(s) != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+func truncate(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
 }
 
 // settleUnauthored is the last honest act before the belt: anything still owing content at this point is
@@ -910,7 +1048,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	dropUnstorable(doc)
 	normalisePersonNames(doc)
 	reconcileArrival(doc)
-	snapCrossReferences(doc)
+	reconcileReferences(doc)
 	settleUnauthored(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
@@ -927,7 +1065,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		dropUnstorable(doc)
 		normalisePersonNames(doc)
 		reconcileArrival(doc)
-		snapCrossReferences(doc)
+		reconcileReferences(doc)
 		settleUnauthored(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2

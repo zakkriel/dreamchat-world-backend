@@ -579,8 +579,11 @@ func (d *genesisDoc) validate() error {
 			return refuse("the concept %q has relevance %d, outside 1-4", name, c.Relevance)
 		case c.Relevance >= 2 && strings.TrimSpace(c.Contested) == "":
 			return refuse("the concept %q is relevance %d but nothing about it is contested — a body of knowledge nobody argues over is a dictionary entry", name, c.Relevance)
-		case strings.TrimSpace(c.TaughtBy) != "" && !seenFaction[strings.TrimSpace(c.TaughtBy)]:
-			return refuse("the concept %q is taught by %q, which is not a faction in this world", name, c.TaughtBy)
+		// A PERSON or a faction. The first version accepted only a faction, and one live build filled it
+		// with "Auscultadora Mayor Del Vas" six times — because a craft IS taught by a person. The model
+		// was right and the rule was too narrow.
+		case strings.TrimSpace(c.TaughtBy) != "" && !seenFaction[strings.TrimSpace(c.TaughtBy)] && !cast[strings.TrimSpace(c.TaughtBy)]:
+			return refuse("the concept %q is taught by %q, who is neither a faction nor a person in this world", name, c.TaughtBy)
 		}
 		seenConcept[name] = true
 	}
