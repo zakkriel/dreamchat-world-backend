@@ -175,6 +175,15 @@ changing the schedule; what follows is the map, not the reasoning.
   authors them; depth is checked at the document, after every wave.
 - **Structural at every level, regardless of relevance:** placement (`starts_in` / `where` / `within`)
   and a location's `tension`. The engine cannot store an entity without them. Only description scales.
+- **Canon is its OWN layer**, between the places and the lives. Folded into geography as a second job it
+  produced one event in a world of 71 entities; on its own it produced eight, with 17 of 29 knowledge
+  entries held by someone who was not present. A layer with two jobs does the first one.
+- **Every repair lives in `reconcileDocument`**, in dependency order, and nothing in it authors anything.
+  Adding a belt check without adding its repair is how four live builds were thrown away for a comma.
+- **`fillScope`'s zero value means BLIND**, and a totally empty scope now falls back to the whole
+  document with a log line. That default was three bugs in one afternoon.
+- **Measured 2026-08-31, depth 1:** ~15–20 min, **$0.047–0.058**, 70–100 entities, ~65–90% of them
+  complete at relevance 1, ~50–70% input cache hits. Depth above 1 has never been run.
 
 ### Design drift on the record, RESOLVED 2026-08-31: rules are no longer the work plan
 
