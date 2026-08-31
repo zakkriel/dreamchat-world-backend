@@ -11,6 +11,33 @@ Line numbers are as of 2026-08-27; re-locate by grep before relying on one.
 
 ---
 
+## Transformation is anchor conditioning, and `transform_only` is a 501
+
+Measured 2026-08-31 against production. Do not reach for `render.transform_only: true` — it returns
+**501, not implemented**. Nothing is coming; it is not a gap to work around.
+
+**The transformation workflow is `subject.anchor_asset_id`.** Reference-conditioning is the platform's
+actual design (`image:ADR-017`), so pointing a new generation at an existing asset IS how you produce a
+related image rather than a fresh one. It also skips the anchor bootstrap:
+
+| | images | time | cost |
+|---|---|---|---|
+| a subject nobody has drawn | anchor **then** portrait | ~12 s | $0.08 |
+| a subject conditioned on an existing asset | one generation | **~6 s** | **$0.04** |
+
+Also measured, and worth knowing before quoting any latency here:
+
+- **generation itself is ~6 s** — `0.7 s` to accept, terminal at `6.04 s`
+- **the delays are ours**: `artCommissionInterval = 2 * time.Minute` for the sweep, plus a poll backoff
+  of 1 s ×1.8 capped at 15 s with full jitter. **A 6-second image can take over two minutes to surface.**
+- generation is **reference-conditioned**: without an anchor it fails in 1.5 s with
+  `missing_reference_assets`. Anchor → portrait is sequential per subject; across subjects it is parallel.
+- **$0.04 per image**, not the $0.01 in the quickstart example.
+
+Anything a player is waiting for needs a foreground path — commission on demand, poll tightly for the
+first ~10 s — and the 2-minute sweep is correct only for work nobody is watching (`SPEC-045`).
+
+
 ## Storage
 
 **`image_slot`** — PK `(world_id, owner_kind, owner_id, variant)`. `owner_kind` CHECK
