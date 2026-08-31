@@ -572,8 +572,16 @@ func insertMind(ctx context.Context, tx pgx.Tx, worldID, actorID string, a genes
 	// secret parked there is read straight back as the holder's name — the archivist's compendium
 	// entry rendered her forgery scheme where her name belonged. Grounding it in the moment that
 	// caused it is both the fix and the more honest provenance (B-2: knowledge arrives by a path).
+	// A person who hides nothing has nothing to hide. Under the old belt everyone carried a `hiding`, so
+	// this could not happen; relevance 1 is name, descriptor and tag (ADR-P027), and writing the empty
+	// string as a private perception put junk in the ledger that read as one secret shared by everybody
+	// who had none. Caught by TestWorldGenesis_EverySecretIsPrivateToItsHolder, which is what it is for.
+	secret := strings.TrimSpace(a.Hiding)
+	if secret == "" {
+		return nil
+	}
 	return writePerception(ctx, tx, worldID, actorID, groundEventID,
-		strings.TrimSpace(a.Hiding), "direct", groundTick, []string{actorID})
+		secret, "direct", groundTick, []string{actorID})
 }
 
 // traitKey normalises an authored disposition word into the key shape the template uses: lowercase,

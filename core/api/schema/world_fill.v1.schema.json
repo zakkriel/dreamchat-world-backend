@@ -73,12 +73,12 @@
       "items": {
         "type": "object",
         "required": [
-          "descriptor",
           "canonical_name",
+          "descriptor",
           "kind",
-          "description",
+          "extent_class",
           "tension",
-          "extent_class"
+          "relevance"
         ],
         "additionalProperties": false,
         "properties": {
@@ -122,6 +122,17 @@
             "type": "string",
             "minLength": 1,
             "description": "canonical_name of the place that contains this one. A world is nested: the largest thing the brief describes contains the next, down to the smallest place a body can stand in. Omit only for the outermost place."
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
@@ -168,13 +179,11 @@
       "items": {
         "type": "object",
         "required": [
-          "descriptor",
           "canonical_name",
-          "standing",
-          "speech_manner",
-          "traits",
-          "hiding",
-          "starts_in"
+          "descriptor",
+          "starts_in",
+          "relevance",
+          "tag"
         ],
         "additionalProperties": false,
         "properties": {
@@ -309,6 +318,17 @@
               "type": "string",
               "minLength": 1
             }
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
@@ -319,10 +339,11 @@
       "items": {
         "type": "object",
         "required": [
-          "descriptor",
           "canonical_name",
+          "descriptor",
           "kind",
-          "where"
+          "where",
+          "relevance"
         ],
         "additionalProperties": false,
         "properties": {
@@ -363,6 +384,17 @@
                 "minLength": 1
               }
             }
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
@@ -491,6 +523,17 @@
           "why": {
             "type": "string",
             "minLength": 1
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
@@ -501,13 +544,11 @@
       "items": {
         "type": "object",
         "required": [
-          "descriptor",
           "canonical_name",
+          "descriptor",
           "kind",
-          "controls",
-          "publishes",
-          "buries",
-          "goal"
+          "relevance",
+          "tag"
         ],
         "additionalProperties": false,
         "properties": {
@@ -549,6 +590,17 @@
           "seat": {
             "type": "string",
             "minLength": 1
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }
@@ -559,10 +611,9 @@
       "items": {
         "type": "object",
         "required": [
-          "descriptor",
           "canonical_name",
           "what_it_is",
-          "contested"
+          "relevance"
         ],
         "additionalProperties": false,
         "properties": {
@@ -585,6 +636,17 @@
           "taught_by": {
             "type": "string",
             "minLength": 1
+          },
+          "relevance": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 4,
+            "description": "How much of this thing exists (ADR-P027). 1 exists: a name, a descriptor and one tag. 2 referenced: enough to hold a scene. 3 interacted: the full interior, and an image. 4 bound to the player: as 3, with an asset nobody else may share. Author to the level you are given and no further \u2014 a relevance-1 entity is complete at 1, not a draft of a 3."
+          },
+          "tag": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The single characteristic thing about this entity that a narrator can play with in one line: a person's temperament, a faction's mantra or oath, a business's slogan, a concept's claim. This is what a relevance-1 entity answers from, so it carries the whole personality."
           }
         }
       }

@@ -65,7 +65,7 @@ func TestGenSeatContractPayloads(t *testing.T) {
 
 	understanding := &recordingDriver{Driver: NewFakeWorldUnderstandingDriver()}
 	fill := &recordingDriver{Driver: NewFakeWorldFillDriver()}
-	doc, _, err := authorWorld(ctx, understanding, fill, NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
+	doc, _, err := authorWorld(ctx, understanding, fill, NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatalf("authorWorld: %v", err)
 	}
@@ -78,7 +78,10 @@ func TestGenSeatContractPayloads(t *testing.T) {
 	}
 	writePayload(t, dir, "world_identity_confirm_1.json", rec.Body.Bytes())
 
-	writePayload(t, dir, "world_fill_1.json", []byte(fill.last))
+	// The RICHEST fragment, not the last one — see recordingDriver. The arrival is the final call and
+	// carries no entities, so capturing it would leave world_fill.v1's own `relevance` and `tag` fields
+	// unexercised by the gate that exists to exercise them.
+	writePayload(t, dir, "world_fill_1.json", []byte(fill.richest))
 	review := &recordingDriver{Driver: NewFakeWorldFillReviewDriver()}
 	if _, err := review.Generate(ctx, GenRequest{Prompt: "review", Schema: json.RawMessage(worldFillReviewSchemaJSON)}); err != nil {
 		t.Fatalf("review payload: %v", err)

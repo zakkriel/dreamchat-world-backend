@@ -4,54 +4,119 @@ import (
 	"context"
 	"encoding/json"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 )
 
-func TestSchedule_DescendsThenAscends(t *testing.T) {
-	down := []string{"places", "factions", "concepts", "people", "artifacts"}
-	got := descentSchedule()
-	if len(got) != len(down) {
-		t.Fatalf("descent has %d layers, want %d", len(got), len(down))
+func TestSchedule_NamespaceThenContent(t *testing.T) {
+	// The namespace is sequential and its order is the design: what a world argues over decides what its
+	// places, factions and people are, so concepts sit above geography.
+	if conceptsWork().ID != "concepts" {
+		t.Fatal("concepts is not the first namespace call")
 	}
-	for i := range down {
-		if got[i].ID != down[i] {
-			t.Fatalf("descent layer %d is %q, want %q — nothing may be named before it exists", i, got[i].ID, down[i])
+	b := budgetForDepth(0)
+	if b.Level != 1 {
+		t.Fatalf("omitted depth is %d, want 1 — nothing raises it for the user yet", b.Level)
+	}
+
+	// Scaffold 2 is sliced by top location AND by faction. Slicing only by location was my design and
+	// the founder's correction: it made factions second-class and grouped people by geography.
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Top A", Relevance: 2},
+		{CanonicalName: "Top B", Relevance: 2},
+		{CanonicalName: "Inner A", Within: "Top A", Relevance: 1},
+	}
+	doc.Factions = []genesisFaction{{CanonicalName: "The Tally", Relevance: 2}}
+	if got := topLocations(doc); len(got) != 2 {
+		t.Fatalf("topLocations found %d, want 2 — `within` is what makes a place a root", len(got))
+	}
+	if tree := locationTree(doc, "Top A"); len(tree) != 2 {
+		t.Fatalf("Top A's tree is %v, want it to contain Inner A", tree)
+	}
+	items := scaffoldTwoSchedule(doc, b)
+	if len(items) != 3 {
+		t.Fatalf("scaffold 2 emitted %d items, want 3 (two locations and a faction)", len(items))
+	}
+	for _, it := range items {
+		if it.Subject == "" {
+			t.Fatal("a scaffold-2 item has no subject, so it cannot be scoped")
+		}
+		if it.Scope.Whole {
+			t.Fatalf("scaffold-2 %q sees the whole document — the compiled mandate is the saving", it.Subject)
 		}
 	}
 
-	// The ascent is per-person, and it can only be built after the descent says who exists.
-	doc := &genesisDoc{}
-	doc.Cast = []genesisActor{{CanonicalName: "Adaeze"}, {CanonicalName: "Ferro"}}
-	up := ascentSchedule(doc)
-	people := 0
-	for _, it := range up {
-		if it.ID == "person" {
-			people++
-			if it.Subject == "" {
-				t.Fatal("a per-person ascent item carries no subject")
-			}
+	// THE SAVING: a relevance-1 person is complete and appears in no content call at all.
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Thin One", Relevance: 1, Tag: "t", StartsIn: "Top A"},
+		{CanonicalName: "Owed Two", Relevance: 2, Tag: "t", StartsIn: "Top A"},
+		{CanonicalName: "Owed Three", Relevance: 3, Tag: "t", StartsIn: "Top A"},
+	}
+	packs := peoplePacks(doc, nil)
+	named := map[string]bool{}
+	for _, it := range packs {
+		for _, m := range it.Members {
+			named[m] = true
 		}
 	}
-	if people != 2 {
-		t.Fatalf("ascent authored %d person items for 2 people", people)
+	if named["Thin One"] {
+		t.Fatal("a relevance-1 person was scheduled for content — they are already complete, and skipping them is the whole design")
 	}
-	// Coming up, the layers are revisited in reverse: artifacts before people before places.
-	order := []string{}
-	for _, it := range up {
-		if it.ID != "person" {
-			order = append(order, it.ID)
+	if !named["Owed Two"] || !named["Owed Three"] {
+		t.Fatalf("people owed content were not scheduled: %v", named)
+	}
+
+	// Packs cap at ten: the founder's number, and a cost decision rather than a quality one.
+	doc.Cast = nil
+	for i := 0; i < 23; i++ {
+		doc.Cast = append(doc.Cast, genesisActor{
+			CanonicalName: "P" + strconv.Itoa(i), Relevance: 2, Tag: "t", StartsIn: "Top A",
+		})
+	}
+	packs = peoplePacks(doc, nil)
+	if len(packs) != 3 {
+		t.Fatalf("23 owed people made %d packs, want 3", len(packs))
+	}
+	for _, it := range packs {
+		if len(it.Members) > 10 {
+			t.Fatalf("a pack carries %d people, over the cap of 10", len(it.Members))
 		}
 	}
-	want := []string{"artifacts-connect", "concepts-connect", "factions-connect", "places-connect"}
-	for i := range want {
-		if order[i] != want[i] {
-			t.Fatalf("ascent %d is %q, want %q — the way up is the way down reversed", i, order[i], want[i])
-		}
-	}
-	if mergeTag(workItem{ID: "person", Subject: "Adaeze"}) != "person:Adaeze" {
+	if mergeTag(workItem{ID: "people", Subject: "Top A"}) != "people:Top A" {
 		t.Fatal("per-item work is not distinguishable for retraction")
+	}
+}
+
+// A thing named thin and deepened later is the ENTIRE layered design, so the merge must deepen rather
+// than skip. It skipped for places, factions, concepts and objects — only actors and events deepened —
+// which would have discarded every description the content wave wrote and then failed the belt for
+// missing it.
+func TestMergeFill_DeepensAThingTheScaffoldNamedThin(t *testing.T) {
+	doc := &genesisDoc{}
+	var tags []taggedName
+	mergeFill(doc, &fillFragment{Places: []genesisPlace{{
+		CanonicalName: "The Counting Room", Descriptor: "a low room", Kind: "back room",
+		ExtentClass: "intimate", Relevance: 2,
+	}}}, "scaffold-1", &tags)
+	mergeFill(doc, &fillFragment{Places: []genesisPlace{{
+		CanonicalName: "The Counting Room", Descriptor: "SHOULD NOT WIN", Kind: "back room",
+		ExtentClass: "intimate", Relevance: 1, Description: "One lamp over a table.", Tension: "tense",
+	}}}, "geography", &tags)
+	if len(doc.Places) != 1 {
+		t.Fatalf("the same place merged twice into %d rows", len(doc.Places))
+	}
+	got := doc.Places[0]
+	if got.Description == "" || got.Tension == "" {
+		t.Fatal("the content wave's description was discarded — the belt would refuse a world that was authored")
+	}
+	if got.Descriptor != "a low room" {
+		t.Fatalf("the namespace's descriptor was overwritten with %q — every reference resolved against it", got.Descriptor)
+	}
+	if got.Relevance != 2 {
+		t.Fatalf("relevance fell to %d; it is a ratchet (ADR-P027) and content authored at 2 would become unvalidatable", got.Relevance)
 	}
 }
 
@@ -59,7 +124,7 @@ func TestAuthorWorld_StoresIdentityBesideTheDocument(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)
 	t.Cleanup(pool.Close)
-	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -93,7 +158,7 @@ func TestFillOne_RefusesUnknownFields(t *testing.T) {
 }
 
 func TestFillFromIdentity_PeopleHideAndBatchesCloseTheBelt(t *testing.T) {
-	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil)
+	doc, ident, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,10 +168,29 @@ func TestFillFromIdentity_PeopleHideAndBatchesCloseTheBelt(t *testing.T) {
 	if len(doc.Cast) < 2 {
 		t.Fatalf("cast=%d", len(doc.Cast))
 	}
+	// Hiding is what being REFERENCED buys (ADR-P027): anyone a scene can turn to holds one thing they
+	// will not say, and a person at relevance 1 holds nothing. Both directions matter — a fake that
+	// authored everyone richly would pass the first check and hide the entire design.
+	thin, deep := 0, 0
 	for _, a := range doc.Cast {
-		if strings.TrimSpace(a.Hiding) == "" {
-			t.Errorf("%s has no hiding", a.CanonicalName)
+		switch {
+		case a.Relevance >= 2:
+			deep++
+			if strings.TrimSpace(a.Hiding) == "" {
+				t.Errorf("%s is relevance %d and hides nothing", a.CanonicalName, a.Relevance)
+			}
+		default:
+			thin++
+			if strings.TrimSpace(a.Hiding) != "" {
+				t.Errorf("%s is relevance 1 but carries a secret — depth was spent on someone nobody has met", a.CanonicalName)
+			}
 		}
+	}
+	if thin == 0 {
+		t.Error("every person came back at relevance 2 or more, so the build paid for depth it was not asked for")
+	}
+	if deep == 0 {
+		t.Error("nobody reached relevance 2, so no scene in this world can turn to anyone")
 	}
 	if strings.TrimSpace(doc.World.DisplayName) == "" {
 		t.Fatal("sufficiency did not name the world")
@@ -115,7 +199,8 @@ func TestFillFromIdentity_PeopleHideAndBatchesCloseTheBelt(t *testing.T) {
 
 func TestFakeFill_PeopleLayerIsAFillFragmentNotAGenesisDump(t *testing.T) {
 	raw, err := NewFakeWorldFillDriver().Generate(context.Background(), GenRequest{
-		Prompt: "\nid: people\nkind: descent\n" + worldGenesisBriefMarker + "\n" + testBrief,
+		Prompt: "\nid: people\nkind: content\nauthor exactly these and nobody else:\n  - \"Del Vas\" at relevance 3\n" +
+			worldGenesisBriefMarker + "\n" + testBrief,
 		Schema: json.RawMessage(worldFillSchemaJSON),
 	})
 	if err != nil {
@@ -146,7 +231,7 @@ func TestRetractBreaches_DropsNamedObject(t *testing.T) {
 // so every other test passes with the review wired to nothing. Revert the block and watch this fail.
 func TestFillFromIdentity_ReviewRetractsTheBreachItNames(t *testing.T) {
 	review := stubDriver{raw: `{"breaches":[{"kind":"object","name":"The Yard Key","why":"a prop the departure ruled out"}]}`}
-	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), review, testBrief, nil, nil, nil)
+	doc, _, err := authorWorld(context.Background(), NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), review, testBrief, nil, nil, nil, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,7 +268,7 @@ func TestIdentityConfirm_RoundTripsIntoFill(t *testing.T) {
 		t.Fatal(err)
 	}
 	voice := []string{"The page is wet.", "The lamp is out.", "Someone still writes."}
-	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, json.RawMessage(raw), voice)
+	doc, ident, err := authorWorld(ctx, NewFakeWorldUnderstandingDriver(), NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), testBrief, nil, json.RawMessage(raw), voice, 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,14 +323,17 @@ func TestFillPrompt_CrossReferenceNamesCannotSwallowTheDescriptor(t *testing.T) 
 	soFar.Places = []genesisPlace{{CanonicalName: name, Descriptor: desc}}
 	soFar.Cast = []genesisActor{{CanonicalName: "Auscultadora Mayor Del Vas", Hiding: "she already knows", StartsIn: name}}
 
-	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "people", Kind: "descent"}, testBrief, nil, soFar, "")
+	prompt := buildWorldFillPrompt(&worldIdentity{}, workItem{
+		ID: "people", Kind: "content",
+		Scope: fillScope{Places: []string{name}, People: []string{"Auscultadora Mayor Del Vas"}},
+	}, testBrief, nil, soFar, "")
 
 	// The exact string the model emitted must not be sitting in the prompt for it to copy.
 	if joined := name + " — " + desc; strings.Contains(prompt, joined) {
 		t.Fatalf("the prompt still offers name and descriptor as one string: %q", joined)
 	}
-	if !strings.Contains(prompt, `- place "`+name+`"`) {
-		t.Fatalf("the place's canonical_name is not quoted on its own; prompt:\n%s", prompt)
+	if !strings.Contains(prompt, `- location "`+name+`"`) {
+		t.Fatalf("the location's canonical_name is not quoted on its own; prompt:\n%s", prompt)
 	}
 	if !strings.Contains(prompt, "    looks like: "+desc) {
 		t.Fatal("the descriptor is not on its own labelled line")
@@ -364,7 +452,7 @@ func TestFillFromIdentity_OneMalformedBatchIsRetriedNotFatal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil)
+	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
 	if err != nil {
 		t.Fatalf("one malformed batch killed the build instead of being retried: %v", err)
 	}
@@ -395,7 +483,7 @@ func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
 
 	// The exact live shape: a person standing in a place nobody authored.
 	frag := &fillFragment{}
-	frag.Cast = []genesisActor{{CanonicalName: "Sento", Hiding: "he has not reported the tremor", StartsIn: "Cola Baja"}}
+	frag.Cast = []genesisActor{{CanonicalName: "Sento", Relevance: 1, Tag: "answers late", Hiding: "he has not reported the tremor", StartsIn: "Cola Baja"}}
 	bad := frag.danglingRefs(doc)
 	if len(bad) != 1 || !strings.Contains(bad[0], `"Cola Baja"`) {
 		t.Fatalf("the dangling place was not reported: %v", bad)
@@ -404,7 +492,7 @@ func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
 	// A fragment that authors the place it stands in is fine — resolution includes the fragment itself.
 	ok := &fillFragment{}
 	ok.Places = []genesisPlace{{CanonicalName: "Cola Baja", Descriptor: "the low tail"}}
-	ok.Cast = []genesisActor{{CanonicalName: "Sento", Hiding: "he has not reported it", StartsIn: "Cola Baja"}}
+	ok.Cast = []genesisActor{{CanonicalName: "Sento", Relevance: 1, Tag: "answers late", Hiding: "he has not reported it", StartsIn: "Cola Baja"}}
 	if bad := ok.danglingRefs(doc); len(bad) != 0 {
 		t.Fatalf("a self-contained fragment was rejected: %v", bad)
 	}
@@ -424,7 +512,7 @@ func TestFillFragment_DanglingReferencesAreCaughtAtTheBatch(t *testing.T) {
 
 	// And it is NOT fatal. Founder 2026-08-28: a good invention is never discarded for arriving before
 	// its room. fillOne hands the fragment back; the debt is carried and the closing pass authors it.
-	seat := stubDriver{raw: `{"empty":false,"cast":[{"descriptor":"a man","canonical_name":"Sento","standing":"s","speech_manner":"m","hiding":"h","malleability":"faint","starts_in":"Cola Baja"}]}`}
+	seat := stubDriver{raw: `{"empty":false,"cast":[{"descriptor":"a man","canonical_name":"Sento","standing":"s","speech_manner":"m","hiding":"h","malleability":"faint","starts_in":"Cola Baja","relevance":1,"tag":"answers late"}]}`}
 	got, err := fillOne(context.Background(), seat, &worldIdentity{}, workItem{ID: "people", Kind: "descent"}, testBrief, nil, doc, "")
 	if err != nil {
 		t.Fatalf("an unpaid reference must not lose the fragment: %v", err)
@@ -450,7 +538,7 @@ func TestFillFromIdentity_ClosingPassAuthorsWhatCanonOwes(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil)
+	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
 	if err != nil {
 		t.Fatalf("the build refused instead of authoring the owed place: %v", err)
 	}
@@ -498,7 +586,7 @@ func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string,
 		}
 		cast, _ := frag["cast"].([]any)
 		frag["cast"] = append(cast, map[string]any{
-			"descriptor": "a man on the low tail", "canonical_name": "Sento",
+			"descriptor": "a man on the low tail", "canonical_name": "Sento", "relevance": 1, "tag": "answers late",
 			"standing": "walks the tail", "speech_manner": "few words",
 			"traits": []any{map[string]any{
 				"key": "watchful", "strength": "strong",
@@ -516,7 +604,7 @@ func (o *owingFillDriver) Generate(ctx context.Context, req GenRequest) (string,
 		o.mu.Lock()
 		o.closed = true
 		o.mu.Unlock()
-		return `{"empty":false,"places":[{"descriptor":"the low tail, awash","canonical_name":"Cola Baja","kind":"district","description":"The tail drags and the water comes over it twice a day; nobody builds high here.","tension":"normal","extent_class":"small"}],"ways":[{"descriptor":"the climb up the spine","from_place":"Cola Baja","to_place":"The Counting Room","state":"open"}]}`, nil
+		return `{"empty":false,"places":[{"descriptor":"the low tail, awash","canonical_name":"Cola Baja","kind":"district","description":"The tail drags and the water comes over it twice a day; nobody builds high here.","tension":"normal","extent_class":"small","relevance":1,"tag":"spoken of before it was seen"}],"ways":[{"descriptor":"the climb up the spine","from_place":"Cola Baja","to_place":"The Counting Room","state":"open"}]}`, nil
 	}
 	return o.real.Generate(ctx, req)
 }
@@ -707,7 +795,7 @@ func TestTickLadder_HasRoomForTheCanonFillCanAuthor(t *testing.T) {
 // A fragment-level copy of a document-level rule just means the repair never gets to run.
 func TestFillFragment_LeavesTheJoinKeyRuleToTheBeltAndTheNormaliser(t *testing.T) {
 	frag := &fillFragment{}
-	frag.Cast = []genesisActor{{CanonicalName: "un aprendiz de 27 años", Hiding: "he has not told anyone", StartsIn: "El Lomo"}}
+	frag.Cast = []genesisActor{{CanonicalName: "un aprendiz de 27 años", Relevance: 1, Tag: "flinches at a raised ledger", Hiding: "he has not told anyone", StartsIn: "El Lomo"}}
 	if err := frag.validate(); err != nil {
 		t.Fatalf("the fragment refused a name the normaliser fixes: %v", err)
 	}
@@ -863,5 +951,88 @@ func TestMergeFill_CanonExistsOnceAndGainsItsWitnesses(t *testing.T) {
 	}
 	if len(h.Knowledge) != 2 {
 		t.Fatalf("want both holders' beliefs once each, got %d", len(h.Knowledge))
+	}
+}
+
+// The belt's new contract (ADR-P027 §5): it validates against the LEVEL, so a thin entity is complete
+// rather than defective, and an entity claiming a level it did not earn is refused. Without this, "the
+// belt is level-aware" is a comment rather than a rule.
+func TestBelt_ValidatesAgainstTheLevelNotOneFullness(t *testing.T) {
+	// A world whose entities are all complete at relevance 1, plus the one person a scene can turn to.
+	base := func() *genesisDoc {
+		d := &genesisDoc{}
+		d.World.DisplayName, d.World.Tagline = "The Short Line", "somebody is owed"
+		d.World.Mood, d.World.Ornament = "nocturne", "filigree"
+		d.Region.Descriptor, d.Region.ExtentClass = "a wet quarter", "small"
+		d.Places = []genesisPlace{
+			{CanonicalName: "The Counting Room", Descriptor: "one lamp", Kind: "back room", ExtentClass: "intimate", Tension: "tense", Relevance: 1, Tag: "the lamp never moves"},
+			{CanonicalName: "The Loading Yard", Descriptor: "crates two high", Kind: "yard", ExtentClass: "small", Tension: "normal", Relevance: 1, Tag: "nothing leaves unlined"},
+		}
+		d.Ways = []genesisWay{{Descriptor: "the door", FromPlace: "The Counting Room", ToPlace: "The Loading Yard", State: "open"}}
+		d.Cast = []genesisActor{
+			{CanonicalName: "Runner", Descriptor: "hands that never stop", StartsIn: "The Counting Room", Relevance: 1, Tag: "never finishes a sentence"},
+		}
+		ledger := genesisObject{CanonicalName: "The Ledger", Descriptor: "a book", Kind: "ledger", Relevance: 1, Tag: "heavier than it looks"}
+		ledger.Where.InPlace = "The Counting Room"
+		d.Objects = []genesisObject{ledger}
+		d.History = []genesisEvent{{WhatHappened: "a line was disputed", Where: "The Counting Room", Who: []string{"Runner"},
+			Knowledge: []genesisKnowledge{{Holder: "Runner", EpistemicType: "direct", Content: "they were there"}}}}
+		d.Arrival = genesisArrival{CanonicalName: "The Auditor", Descriptor: "no crate, no reason", Place: "The Counting Room", Stated: "You are owed a line."}
+		return d
+	}
+
+	// A world of nothing but relevance 1 is LEGAL. This is the whole point: thin is complete.
+	if err := base().validate(); err != nil {
+		t.Fatalf("a world complete at relevance 1 was refused: %v", err)
+	}
+
+	for _, c := range []struct {
+		name string
+		bend func(*genesisDoc)
+		want string
+	}{
+		{"a person claiming 2 without standing", func(d *genesisDoc) {
+			d.Cast[0].Relevance = 2
+			d.Cast[0].SpeechManner, d.Cast[0].Hiding = "flat", "which line they fixed"
+			d.Cast[0].Traits = []genesisTrait{{Key: "exact", Strength: "strong", Manner: "repeats a number"}}
+		}, "no standing"},
+		{"a person claiming 3 with no inner life", func(d *genesisDoc) {
+			d.Cast[0].Relevance = 3
+			d.Cast[0].Standing, d.Cast[0].SpeechManner, d.Cast[0].Hiding = "answers for the book", "flat", "which line they fixed"
+			d.Cast[0].Traits = []genesisTrait{{Key: "exact", Strength: "strong", Manner: "repeats a number"}}
+		}, "wants nothing"},
+		{"a location claiming 2 with no description", func(d *genesisDoc) {
+			d.Places[0].Relevance = 2
+		}, "no description"},
+		{"a person with no tag", func(d *genesisDoc) { d.Cast[0].Tag = "" }, "no tag"},
+		{"an entity outside the ladder", func(d *genesisDoc) { d.Cast[0].Relevance = 7 }, "outside 1-4"},
+		{"an entity with no level at all", func(d *genesisDoc) { d.Cast[0].Relevance = 0 }, "outside 1-4"},
+	} {
+		d := base()
+		c.bend(d)
+		err := d.validate()
+		if err == nil {
+			t.Errorf("%s: the belt accepted it", c.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%s: refused with %q, want it to name %q", c.name, err.Error(), c.want)
+		}
+	}
+
+	// Factions and concepts were never checked at all before this round; a duplicate name reached the
+	// database. One namespace, everywhere.
+	d := base()
+	d.Factions = []genesisFaction{
+		{CanonicalName: "The Tally", Descriptor: "keeps the book", Kind: "faction", Relevance: 1, Tag: "what is written arrived"},
+		{CanonicalName: "The Tally", Descriptor: "also keeps the book", Kind: "group", Relevance: 1, Tag: "again"},
+	}
+	if err := d.validate(); err == nil || !strings.Contains(err.Error(), "two factions") {
+		t.Errorf("a duplicate faction name was accepted: %v", err)
+	}
+	d = base()
+	d.Concepts = []genesisConcept{{CanonicalName: "The Counting Room", WhatItIs: "a doctrine", Relevance: 1}}
+	if err := d.validate(); err == nil || !strings.Contains(err.Error(), "also a place") {
+		t.Errorf("a concept collided with a place name and was accepted: %v", err)
 	}
 }

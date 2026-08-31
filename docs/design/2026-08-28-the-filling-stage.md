@@ -327,6 +327,63 @@ workaround for a timeout.
 What remains true: wall clock is bought with output tokens, not call count. A deep world takes as long as
 it takes, and costs about **$0.02** against a **$0.25** budget.
 
+## 2.9 BUILT 2026-08-31 — relevance, and the two-stage loop that pays for it
+
+The layered loop in §1.2 shipped as a **namespace stage and a content stage**, and the thing that makes
+it affordable is `relevance` (**ADR-P027**), not the layering.
+
+**Measured 2026-08-30, and the reason this section exists:** 33 entities cost 76,288 output tokens —
+**2,312 per entity** — because a location-keeper was authored as richly as a city's ruler. Parallelism
+divides wall clock and never volume, so the only way to a bigger world is to stop writing everything at
+the same depth.
+
+**The stages, as implemented:**
+
+|#|call|shape|what it does|
+|---|---|---|---|
+|1|`concepts`|one, sequential|what this world argues over. Nothing below may contradict it.|
+|2|`scaffold-1`|one, sequential|the top of the world: largest locations, spanning factions, structural objects. Names, one line, a level.|
+|3|`scaffold-2`|**parallel**, per top location AND per faction|what sits inside each: nested locations, the people in them, local factions. **Assigns relevance.**|
+|4|`geography`|**parallel**, per top location|authors the tree to the level each node was given.|
+|5|`faction`|**parallel**, per owing faction|what it controls, publishes, buries.|
+|6|`people`|**parallel**, packs of ~10 by faction then location|authors each person to their level and what they know about the others in the pack.|
+|7|`arrival`|one|world header, region, the way in.|
+
+**Why the waves are safe to run at once:** after stage 3 every entity in the world has a name, so a
+content call cannot invent a dangling reference — it can only refer to something that exists. That is a
+property of the schedule, not a hope about the model.
+
+**The compiled mandate.** A content call is shown *its own slice* of the namespace and nothing else,
+assembled in Go. Before this, every call carried the whole growing document — ~13,300 input tokens per
+call, the world re-sent nineteen times, and the output was worse for it because restating what exists
+crowds out authoring what does not.
+
+**`depth` (1–5, default 1) buys BREADTH, never richness.** How much world: a locality, a town, a city and
+its region, a province, continents. How deep any single thing goes is relevance's job. Nothing raises it
+for the user yet, and the projection of ~400 tokens per entity is **a projection, not a measurement** —
+the first thing to measure on the next live run.
+
+### Two bugs this stage found, both of which would have cost a live build
+
+1. **The merge SKIPPED a second mention** of an existing location, faction, concept or object — only
+   actors and events deepened. Under a design where the scaffold names things thin and a later wave fills
+   them in, every description would have been silently discarded and the belt would then have refused the
+   world for content that was in fact authored. Merging now deepens, never overwrites, and **relevance
+   ratchets**: a later answer may raise a level, never lower one.
+2. **The commit wrote an empty private perception** for anyone with no `hiding`. Under the old belt
+   everyone carried one; at relevance 1 nobody does. That put junk in the perception ledger which read as
+   one secret shared by everybody who had none. A person who hides nothing now writes no secret.
+
+### Corrections to this document's own earlier claims
+
+- §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.
+- The fragment belt may **not** check depth. The scaffold legitimately names a relevance-3 person before
+  anybody authors them, so a fragment-level depth check refuses the scaffold for doing its job. Depth is
+  checked at the document, after every wave, where the repair pass can still answer it.
+- `tension` is **structural**, like placement: one word from a closed set, and the engine's
+  `location_state` enum refuses an empty one. Only the *description* scales with relevance. Found the
+  honest way — the belt passed and the commit failed on `tension  not in enum`.
+
 ## 3. Open questions
 
 1. **Per layer or per item for people?** One call per layer is fast and averages over everyone. One call

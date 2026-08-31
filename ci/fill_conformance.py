@@ -32,11 +32,18 @@ import urllib.request
 URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
-def ask(key, model, prompt, host, max_tokens, effort, timeout):
+def ask(key, model, prompt, host, max_tokens, effort, timeout, mode="json_object", schema=None):
+    if mode == "json_schema":
+        # Strict: the provider constrains decoding to the schema, so an unknown field is impossible
+        # rather than merely refused after the fact.
+        rf = {"type": "json_schema",
+              "json_schema": {"name": "seat_output", "schema": schema, "strict": True}}
+    else:
+        rf = {"type": "json_object"}
     body = {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "response_format": {"type": "json_object"},
+        "response_format": rf,
         "temperature": 0.0,
         "max_tokens": max_tokens,
         "provider": {
@@ -103,6 +110,9 @@ def main() -> int:
     ap.add_argument("--reasoning-effort", default="none")
     ap.add_argument("--timeout", type=int, default=420)
     ap.add_argument("--workers", type=int, default=3)
+    ap.add_argument("--mode", default="json_object", choices=["json_object", "json_schema", "both"],
+                    help="which response_format to measure; production fill runs json_schema, pinned 2026-08-30 "
+                         "after json_object scored 0/3 and json_schema 3/3 on the only clean host")
     args = ap.parse_args()
 
     key = os.environ.get("OPENROUTER_API_KEY")
@@ -120,17 +130,21 @@ def main() -> int:
     hosts = [h.strip() for h in args.hosts.split(",") if h.strip()]
     effort = args.reasoning_effort if args.reasoning_effort not in ("", "omit") else None
 
-    print(f"model={args.model}  json_object  max_tokens={args.max_tokens}  effort={effort}")
+    modes = ["json_object", "json_schema"] if args.mode == "both" else [args.mode]
+    print(f"model={args.model}  modes={','.join(modes)}  max_tokens={args.max_tokens}  effort={effort}")
     print(f"prompt={len(prompt)} bytes  schema names {len(allowed_top)} top-level keys, "
           f"{len(allowed_cast)} on a cast entry")
     print(f"{len(hosts)} host(s) x {args.runs} run(s)\n")
 
     worst = 0
-    for host in hosts:
+    for mode in modes:
+      print(f"\n-- response_format: {mode}")
+      for host in hosts:
         results = []
         with concurrent.futures.ThreadPoolExecutor(max_workers=args.workers) as pool:
             futures = [
-                pool.submit(ask, key, args.model, prompt, host, args.max_tokens, effort, args.timeout)
+                pool.submit(ask, key, args.model, prompt, host, args.max_tokens, effort, args.timeout,
+                            mode, schema)
                 for _ in range(args.runs)
             ]
             for f in concurrent.futures.as_completed(futures):

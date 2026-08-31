@@ -99,6 +99,35 @@ Ids only; the law lives where the id resolves. Cite it, never restate it.
 | Design §6.1 | A flat world is a legitimate outcome and is recorded as one. | A narrator puts a serial killer in the cosy village by scene three. |
 | `ADR-P026` | This domain exists as a package; the understanding-pass design is live law; the testworld briefs stay in history. | Genesis decisions become uncitable again. |
 
+## Relevance — how much of a thing exists
+
+**Ruled 2026-08-31, `ADR-P027`.** The single most important thing to know before changing anything in
+this domain.
+
+A world of interest is far larger than a world anyone will ever look at, so entities are not all authored
+to the same fullness. Every place, person, faction, concept and object carries a level, 1 to 4:
+
+|level|earned by|what exists|
+|---|---|---|
+|1|being named|a name, a one-line look, and **one tag** — the characteristic thing a narrator can play with. This is COMPLETE, not a draft.|
+|2|being referenced|enough to hold a scene|
+|3|being interacted with|the full interior, and an image|
+|4|being bound to the player|as 3, plus an asset nobody else may share|
+
+**Two mechanics, and confusing them is the expensive mistake.** *Genesis assigns* — the scaffold tags
+every name with the level it deserves, and the fill writes to that level. *Play promotes* — reaching
+something raises it, and the promotion mints what the new level owes. Relevance **never falls**.
+
+**New entities always enter at 1.** This is the law that makes it terminate; without it, promoting A
+authors B in full, which authors C, forever.
+
+**A relevance-1 person is a real person**, not a defective one: they exist, they are somewhere, and they
+answer from their tag. Thin is a legal state and needs no placeholder.
+
+**Why it is here and not in the tech doc:** it is the difference between a world with hundreds of named
+people in it and a world with twelve. A relevance-1 entity costs about twenty output tokens; the same
+entity written at 3 costs about 2,300.
+
 ## What is deliberately not built here
 
 Each absence has a stated reason. Building one is reopening a decision, not filling a gap.

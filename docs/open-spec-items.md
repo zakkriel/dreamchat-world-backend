@@ -1884,6 +1884,7 @@ So: **a relevance-4 asset is never reused, and never becomes another entity's an
    people look alike".
 4. **Locations and objects** — same rules, or looser? A generic tavern interior reused across worlds is
    probably fine; a landmark is not.
-5. **The relevance ADR is still owed.** Levels 1–4, the two mechanics (genesis assigns; play promotes),
-   and the law that promotion-created entities start at 1.
+5. ~~The relevance ADR is still owed.~~ **Written 2026-08-31: `ADR-P027`** — levels 1–4, the two
+   mechanics (genesis assigns; play promotes), and the law that promotion-created entities start at 1.
+   The genesis half is implemented; the promotion triggers are the gameplay half and are not built.
 

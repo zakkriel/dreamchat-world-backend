@@ -112,6 +112,10 @@ type genesisRequest struct {
 	// Fast omits it; genesis infers. Voice, when three sentences, is the author rewrite (§8).
 	Identity json.RawMessage `json:"identity,omitempty"`
 	Voice    []string        `json:"voice,omitempty"`
+	// Depth is how much WORLD to author, 1-5, and it buys breadth rather than richness: how deep a
+	// single entity goes is relevance's job (ADR-P027). 1 is a locality, 5 is continents. Omitted means
+	// 1, which is the only setting anything has measured, and nothing raises it for the user yet.
+	Depth int `json:"depth,omitempty"`
 }
 
 func (h *worldGenesisHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -303,7 +307,7 @@ func (h *worldGenesisHandler) build(w http.ResponseWriter, r *http.Request) {
 	// percentage or a stage. The heartbeats also keep an idle-sensitive proxy from closing the stream.
 	_ = frames.emit("working", map[string]any{"stated": "Reading what you asked for."})
 	stopHeartbeat := stillWriting(frames, start)
-	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), h.bridge.Driver(SeatWorldFillReview.Name), req.Brief, req.Answers, req.Identity, req.Voice)
+	doc, ident, err := authorWorld(ctx, h.bridge.Driver(SeatWorldUnderstanding.Name), h.bridge.Driver(SeatWorldFill.Name), h.bridge.Driver(SeatWorldFillReview.Name), req.Brief, req.Answers, req.Identity, req.Voice, req.Depth)
 	stopHeartbeat()
 	if err != nil {
 		h.fail(frames, err, "")
