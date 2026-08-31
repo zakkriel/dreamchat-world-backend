@@ -341,6 +341,263 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
+// The belt refuses for six reasons, and only three of them mean the fill actually failed.
+//
+// Four live builds were thrown away for a comma in a name-shaped field, and a fifth for the same name
+// arriving as both a person and a location. Each time I repaired the instance. So here is the whole
+// refusal surface, sorted once, by whether a finished world can honestly be repaired into a valid one:
+//
+//	dangling reference    -> reconcileReferences   (the name before the prose is real)
+//	level content missing -> settleUnauthored      (it reached the level it reached)
+//	closed-set violation  -> normaliseClosedSets   (one word from a fixed list)
+//	malformed row         -> dropMalformed         (drop the row, keep the world)
+//	NAMESPACE COLLISION   -> resolveNameCollisions (one name belongs to one kind)
+//	structurally empty    -> REFUSE. A world with no locations, nobody in it, no history or no way out
+//	                         is not something bookkeeping can rescue, and the repair pass gets one try.
+//	                         The player holding knowledge they did not earn stays a refusal too: that is
+//	                         I-3, and quietly deleting the leak would hide a real defect.
+//
+// reconcileDocument runs them in dependency order. Nothing here authors anything.
+func reconcileDocument(doc *genesisDoc) {
+	normaliseClosedSets(doc)
+	dropMalformed(doc)
+	resolveNameCollisions(doc)
+	dropUnstorable(doc)
+	normalisePersonNames(doc)
+	// References after the passes that DROP rows: a row they removed is a name canon may still point at.
+	reconcileReferences(doc)
+	resolveArrivalCollision(doc)
+	reconcileArrival(doc)
+	settleUnauthored(doc)
+}
+
+// normaliseClosedSets snaps a value that is one word from a fixed list. A model reaching for a synonym
+// is not a broken world: `tension: "uneasy"` is a fine English answer to a question whose legal answers
+// happen to be frantic | tense | normal | calm | none.
+//
+// Defaults ADD NOTHING. Neutral tension, an open way, a moderate strength, and knowledge held by having
+// been told — never `direct`, because direct knowledge is a claim about presence, and inventing one would
+// put a person at an event they were not at.
+func normaliseClosedSets(doc *genesisDoc) {
+	snapSet := func(field, name, value, fallback string, legal map[string]bool) string {
+		v := strings.ToLower(strings.TrimSpace(value))
+		if legal[v] {
+			return v
+		}
+		if v != "" {
+			log.Printf("closed set: %s of %q is %q, which is not in the list — using %q", field, name, value, fallback)
+		}
+		return fallback
+	}
+	if !genesisExtentClasses[doc.Region.ExtentClass] {
+		doc.Region.ExtentClass = snapSet("extent_class", "the region", doc.Region.ExtentClass, "medium", genesisExtentClasses)
+	}
+	for i := range doc.Places {
+		doc.Places[i].Tension = snapSet("tension", doc.Places[i].CanonicalName, doc.Places[i].Tension, "normal", genesisTensions)
+		doc.Places[i].ExtentClass = snapSet("extent_class", doc.Places[i].CanonicalName, doc.Places[i].ExtentClass, "small", genesisExtentClasses)
+	}
+	for i := range doc.Ways {
+		doc.Ways[i].State = snapSet("state", doc.Ways[i].Descriptor, doc.Ways[i].State, "open", genesisWayStates)
+	}
+	for i := range doc.Cast {
+		a := &doc.Cast[i]
+		if strings.TrimSpace(a.Malleability) != "" && !genesisStrengths[a.Malleability] {
+			a.Malleability = snapSet("malleability", a.CanonicalName, a.Malleability, "moderate", genesisStrengths)
+		}
+		for j := range a.Traits {
+			a.Traits[j].Strength = snapSet("trait strength", a.CanonicalName, a.Traits[j].Strength, "moderate", genesisStrengths)
+		}
+	}
+	for i := range doc.History {
+		for j := range doc.History[i].Knowledge {
+			k := &doc.History[i].Knowledge[j]
+			k.EpistemicType = snapSet("epistemic_type", k.Holder, k.EpistemicType, "told", genesisEpistemic)
+		}
+	}
+}
+
+// dropMalformed removes a row that cannot BE a row: no name, no descriptor where one is structural, a
+// trait with no key. Dropping is honest and cheap; refusing a finished world over one nameless entry is
+// neither. Whatever it removes, reconcileReferences cleans up after.
+func dropMalformed(doc *genesisDoc) {
+	places := doc.Places[:0]
+	for i, p := range doc.Places {
+		if strings.TrimSpace(p.CanonicalName) == "" || strings.TrimSpace(p.Descriptor) == "" || strings.TrimSpace(p.Kind) == "" {
+			log.Printf("malformed: dropping location %d — no name, descriptor or kind", i+1)
+			continue
+		}
+		places = append(places, p)
+	}
+	doc.Places = places
+
+	cast := doc.Cast[:0]
+	for i, a := range doc.Cast {
+		if strings.TrimSpace(a.CanonicalName) == "" || strings.TrimSpace(a.Descriptor) == "" {
+			log.Printf("malformed: dropping cast member %d — no name or descriptor", i+1)
+			continue
+		}
+		traits := a.Traits[:0]
+		for _, tr := range a.Traits {
+			if strings.TrimSpace(tr.Key) == "" || strings.TrimSpace(tr.Manner) == "" {
+				continue
+			}
+			traits = append(traits, tr)
+		}
+		a.Traits = traits
+		cast = append(cast, a)
+	}
+	doc.Cast = cast
+
+	factions := doc.Factions[:0]
+	for i, f := range doc.Factions {
+		if strings.TrimSpace(f.CanonicalName) == "" || strings.TrimSpace(f.Descriptor) == "" || strings.TrimSpace(f.Kind) == "" {
+			log.Printf("malformed: dropping faction %d — no name, descriptor or kind", i+1)
+			continue
+		}
+		factions = append(factions, f)
+	}
+	doc.Factions = factions
+
+	concepts := doc.Concepts[:0]
+	for i, c := range doc.Concepts {
+		if strings.TrimSpace(c.CanonicalName) == "" || strings.TrimSpace(c.WhatItIs) == "" {
+			log.Printf("malformed: dropping concept %d — no name, or it does not say what it is", i+1)
+			continue
+		}
+		concepts = append(concepts, c)
+	}
+	doc.Concepts = concepts
+
+	ways := doc.Ways[:0]
+	for i, w := range doc.Ways {
+		if strings.TrimSpace(w.Descriptor) == "" {
+			log.Printf("malformed: dropping way %d — no descriptor", i+1)
+			continue
+		}
+		ways = append(ways, w)
+	}
+	doc.Ways = ways
+
+	for i := range doc.History {
+		knowledge := doc.History[i].Knowledge[:0]
+		for _, k := range doc.History[i].Knowledge {
+			if strings.TrimSpace(k.Content) == "" || strings.TrimSpace(k.Holder) == "" {
+				continue
+			}
+			knowledge = append(knowledge, k)
+		}
+		doc.History[i].Knowledge = knowledge
+	}
+}
+
+// resolveNameCollisions enforces the one rule the engine cannot bend: ONE NAME BELONGS TO ONE THING.
+// References here are names alone, so a name that is both a location and a person is unresolvable by
+// construction — the engine cannot tell which one canon meant.
+//
+// Measured live 2026-08-31: refused at 1,460 s and $0.037 because "Colegio de Auscultadores de Ossa"
+// arrived as both. That is a model filing an institution twice, not a world that cannot exist.
+//
+// PRECEDENCE IS BY HOW MUCH DEPENDS ON THE NAME, never by which is more interesting:
+//
+//	location > person > faction > concept > object
+//
+// A location is what people stand in, ways join, events happen in and objects sit in, so dropping one
+// orphans everything above it. An object is referenced by nothing.
+//
+// Duplicates WITHIN a kind are MERGED with the same deepening the waves use, so two half-answers about
+// one thing become one whole answer instead of one being thrown away.
+func resolveNameCollisions(doc *genesisDoc) {
+	taken := map[string]string{}
+
+	places := doc.Places[:0]
+	for _, p := range doc.Places {
+		name := strings.TrimSpace(p.CanonicalName)
+		if have := findPlace(&genesisDoc{Places: places}, name); have != nil {
+			log.Printf("collision: two locations called %q — merged", name)
+			deepenPlace(have, p)
+			continue
+		}
+		taken[name] = "location"
+		places = append(places, p)
+	}
+	doc.Places = places
+
+	cast := doc.Cast[:0]
+	for _, a := range doc.Cast {
+		name := strings.TrimSpace(a.CanonicalName)
+		if kind, clash := taken[name]; clash && kind != "person" {
+			log.Printf("collision: %q is a %s and arrived again as a person — dropping the person, because a %s is what everything else references",
+				name, kind, kind)
+			continue
+		}
+		if have := findActor(&genesisDoc{Cast: cast}, name); have != nil {
+			log.Printf("collision: two people called %q — merged", name)
+			deepenActor(have, a)
+			continue
+		}
+		taken[name] = "person"
+		cast = append(cast, a)
+	}
+	doc.Cast = cast
+
+	factions := doc.Factions[:0]
+	for _, f := range doc.Factions {
+		name := strings.TrimSpace(f.CanonicalName)
+		if kind, clash := taken[name]; clash && kind != "faction" {
+			log.Printf("collision: %q is a %s and arrived again as a faction — dropping the faction", name, kind)
+			continue
+		}
+		if have := findFaction(&genesisDoc{Factions: factions}, name); have != nil {
+			deepenFaction(have, f)
+			continue
+		}
+		taken[name] = "faction"
+		factions = append(factions, f)
+	}
+	doc.Factions = factions
+
+	concepts := doc.Concepts[:0]
+	for _, c := range doc.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		if kind, clash := taken[name]; clash && kind != "concept" {
+			log.Printf("collision: %q is a %s and arrived again as a concept — dropping the concept", name, kind)
+			continue
+		}
+		if have := findConcept(&genesisDoc{Concepts: concepts}, name); have != nil {
+			deepenConcept(have, c)
+			continue
+		}
+		taken[name] = "concept"
+		concepts = append(concepts, c)
+	}
+	doc.Concepts = concepts
+
+	objects := doc.Objects[:0]
+	for _, o := range doc.Objects {
+		name := strings.TrimSpace(o.CanonicalName)
+		if kind, clash := taken[name]; clash && kind != "object" {
+			log.Printf("collision: %q is a %s and arrived again as an object — dropping the object", name, kind)
+			continue
+		}
+		if have := findObject(&genesisDoc{Objects: objects}, name); have != nil {
+			deepenObject(have, o)
+			continue
+		}
+		taken[name] = "object"
+		objects = append(objects, o)
+	}
+	doc.Objects = objects
+}
+
+func findActor(d *genesisDoc, name string) *genesisActor {
+	for i := range d.Cast {
+		if d.Cast[i].CanonicalName == name {
+			return &d.Cast[i]
+		}
+	}
+	return nil
+}
+
 // snapName resolves a reference that names a real thing and then keeps talking.
 //
 // Exact match first; then the longest authored name the value BEGINS with, where the name ends at a
@@ -1045,11 +1302,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	}
 	// Bookkeeping before the belt sees it, never authorship: drop what cannot be stored, and make the
 	// arrival offer coherent. Both cost a leaf at worst; neither costs the world.
-	dropUnstorable(doc)
-	normalisePersonNames(doc)
-	reconcileArrival(doc)
-	reconcileReferences(doc)
-	settleUnauthored(doc)
+	reconcileDocument(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
 			ID:   "repair",
@@ -1062,11 +1315,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			return nil, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
-		dropUnstorable(doc)
-		normalisePersonNames(doc)
-		reconcileArrival(doc)
-		reconcileReferences(doc)
-		settleUnauthored(doc)
+		reconcileDocument(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2
 		}

@@ -515,6 +515,39 @@ and a live build filled it with *"Auscultadora Mayor Del Vas"* six times — bec
 a person.** The belt now accepts a person or a faction, and clearing those was throwing away true content
 to satisfy a rule nobody had thought about.
 
+### FIFTH LIVE RUN, 2026-08-31 — and sorting the refusal surface once instead of six times
+
+**17 calls, 39,584 output tokens, $0.037, refused at 1,460 s** on
+`"Colegio de Auscultadores de Ossa" is both a person and a place`.
+
+A **namespace collision** — a fourth distinct class, after three runs of repairing one field at a time.
+So the surface is now sorted **once**, by whether a finished world can honestly be repaired into a valid
+one. `reconcileDocument` runs the repairs in dependency order; nothing in it authors anything.
+
+|refusal class|pass|why it is repairable|
+|---|---|---|
+|dangling reference|`reconcileReferences`|the name before the prose is real|
+|level content missing|`settleUnauthored`|it reached the level it reached|
+|closed-set violation|`normaliseClosedSets`|one word from a fixed list|
+|malformed row|`dropMalformed`|drop the row, keep the world|
+|**namespace collision**|`resolveNameCollisions`|one name belongs to one kind|
+|**structurally empty**|**REFUSE**|no locations, nobody in it, no history, no way out — bookkeeping cannot rescue that, and the repair pass gets one try|
+
+**`I-3` stays a refusal.** The player holding knowledge they did not earn is not repaired quietly, because
+deleting the leak would hide a real defect.
+
+**Collision precedence is by how much depends on the name, never by what is more interesting:**
+`location > person > faction > concept > object`. A location is what people stand in, ways join, events
+happen in and objects sit in; dropping one orphans everything above it. An object is referenced by
+nothing.
+
+**Duplicates within a kind MERGE** using the same deepening the waves use, so two half-answers about one
+thing become one whole answer rather than one being thrown away.
+
+**Closed-set defaults add nothing:** neutral tension, an open way, a moderate strength — and knowledge
+held by having been **told**, never `direct`, because direct knowledge is a claim about presence and
+defaulting to it would invent a witness at an event they missed.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.
