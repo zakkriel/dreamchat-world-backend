@@ -1710,3 +1710,95 @@ func TestFillPrompt_AnEmptyMandateFallsBackToTheWholeDocument(t *testing.T) {
 		t.Error("a scoped call was shown a location outside its mandate — the compiled mandate is the saving")
 	}
 }
+
+// Canon is its own layer, between the places and the lives, which is where the founder's 2026-08-28
+// ordering put it. It was folded into the geography wave as a second job, and the measured result was ONE
+// event in a world of 71 entities (live run seven). A layer with two jobs does the first one.
+func TestCanonIsItsOwnLayerBetweenPlacesAndLives(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Top", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "small"},
+		{CanonicalName: "Inner", Within: "Top", Relevance: 1, Descriptor: "d", Kind: "k", ExtentClass: "intimate"},
+	}
+	doc.Cast = []genesisActor{{CanonicalName: "Keeper", StartsIn: "Inner", Relevance: 2, Tag: "t", Descriptor: "d"}}
+	b := budgetForDepth(0)
+
+	var order []string
+	for _, wave := range contentSchedule(doc, b) {
+		order = append(order, wave[0].ID)
+	}
+	gi, ci, pi := indexOf(order, "geography"), indexOf(order, "canon"), indexOf(order, "people")
+	if ci < 0 {
+		t.Fatalf("no canon layer at all; waves are %v", order)
+	}
+	if gi < 0 || gi > ci {
+		t.Errorf("canon runs before geography (%v) — holders need somewhere for it to have happened", order)
+	}
+	if pi >= 0 && ci > pi {
+		t.Errorf("canon runs after the lives (%v) — the founder's order is places, history, lives", order)
+	}
+
+	// The canon call must see the people who can hold what it writes, or it authors nothing.
+	for _, wave := range contentSchedule(doc, b) {
+		for _, it := range wave {
+			if it.ID != "canon" {
+				continue
+			}
+			if len(it.Scope.People) == 0 {
+				t.Error("the canon layer sees no people, so every event it writes would have no holder")
+			}
+			if len(it.Scope.Places) == 0 {
+				t.Error("the canon layer sees no locations, so nothing it writes can have happened anywhere")
+			}
+		}
+	}
+
+	// A tree with nobody in it gets no canon call: an event nobody holds cannot be perceived, so asking
+	// for one would only produce something the belt has to throw away.
+	empty := &genesisDoc{}
+	empty.Places = []genesisPlace{{CanonicalName: "Nowhere", Relevance: 1, Descriptor: "d", Kind: "k", ExtentClass: "small"}}
+	if items := canonSchedule(empty, b); len(items) != 0 {
+		t.Errorf("canon was scheduled for a tree with nobody in it: %d item(s)", len(items))
+	}
+}
+
+func indexOf(in []string, want string) int {
+	for i, s := range in {
+		if s == want {
+			return i
+		}
+	}
+	return -1
+}
+
+// The layer must actually produce canon that TRAVELS: a holder who was not present is what makes lore
+// rather than a private memory.
+func TestFillFromIdentity_CanonTravelsBeyondTheRoom(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(doc.History) < 2 {
+		t.Errorf("history = %d event(s); a dedicated layer should author more than the one a second job managed", len(doc.History))
+	}
+	travelled := false
+	for _, h := range doc.History {
+		present := map[string]bool{}
+		for _, w := range h.Who {
+			present[strings.TrimSpace(w)] = true
+		}
+		for _, k := range h.Knowledge {
+			if !present[strings.TrimSpace(k.Holder)] {
+				travelled = true
+			}
+		}
+	}
+	if !travelled {
+		t.Error("every event is known only to the people who were there — nothing in this world travels, and that is a world without lore")
+	}
+}

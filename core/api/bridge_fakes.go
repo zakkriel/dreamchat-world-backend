@@ -1182,6 +1182,14 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"descriptor": "the short street out of " + subject, "from_place": subject,
 				"to_place": otherTop(subject), "state": "open",
 			}},
+		})), nil
+	case "canon":
+		if subject == "" {
+			return "", fmt.Errorf("%s: canon with no subject", f.name)
+		}
+		// TWO events, and one of them travels: a holder who was not present is what makes lore.
+		return string(mustJSON(map[string]any{
+			"empty": false,
 			"history": []map[string]any{{
 				"what_happened": "the tally for the night of the storm was disputed in " + subject,
 				"where":         subject,
@@ -1189,6 +1197,17 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 				"knowledge": []map[string]any{{
 					"holder": "Keeper Of " + subject, "epistemic_type": "direct",
 					"content": "they corrected the page themselves and told nobody",
+				}, {
+					"holder": "Runner Of " + subject, "epistemic_type": "overheard",
+					"content": "somebody changed a line and the room went quiet about it",
+				}},
+			}, {
+				"what_happened": "a crate was admitted to have arrived before it did, in " + subject,
+				"where":         subject,
+				"who":           []string{"Runner Of " + subject},
+				"knowledge": []map[string]any{{
+					"holder": "Runner Of " + subject, "epistemic_type": "direct",
+					"content": "they carried it in themselves, a day after the line was written",
 				}},
 			}},
 		})), nil
@@ -1403,7 +1422,7 @@ func fillOwed(prompt string) (people, places []string) {
 func fillBatchID(prompt string) string {
 	// The layered fill (design 2026-08-31, ADR-P027): a namespace, then content waves, then the arrival.
 	for _, id := range []string{
-		"concepts", "scaffold-1", "scaffold-2", "geography", "faction", "people",
+		"concepts", "scaffold-1", "scaffold-2", "geography", "canon", "faction", "people",
 		"arrival", "closing", "repair",
 	} {
 		if strings.Contains(prompt, "\nid: "+id+"\n") {

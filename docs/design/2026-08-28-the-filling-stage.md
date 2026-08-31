@@ -576,6 +576,54 @@ always a bug.
 identical bugs in one round, in code I wrote the same afternoon, and none of them showed up in CI because
 the fake answers whatever it is asked regardless of what it was shown.
 
+### SEVENTH LIVE RUN, 2026-08-31 — **A WORLD COMMITTED, AND IT PLAYS**
+
+**26 calls, 43,973 output tokens, $0.058, committed at 939 s (15.6 min).**
+`world_id 52fae075-6397-4497-9009-9099a5d7a544` — **"Los Andantes"**, *"Nueve cuerpos caminan. Nueve
+ciudades flotan. Sobre el lomo de gigantes."* It named itself, in the brief's own language.
+
+|committed|count|
+|---|---|
+|locations|13 (relevance 1→7, 2→4, 3→2)|
+|people|26 (relevance 1→8, 2→15, 3→3)|
+|factions|15 — 7 `faction`, 8 `group`, all institutions|
+|concepts|6|
+|objects|11|
+|ways|10|
+|history|**1**|
+
+**Relevance is being used, not collapsed.** The spread across all three levels is the design working: 8
+people cost ~20 tokens each, 3 cost the full interior.
+
+**And then it played.** `kickstart` produced three scenarios naming real authored entities (Del Vas, Cola
+Baja, Registrador Onn, Tercera Hembra), the world went `playable: true`, and one beat returned narration
+grounded in the world:
+
+> *"El extranjero no responde de inmediato… el aire de Cola Baja —ese aire que siempre huele a sal y a
+> redes secándose— se llena de un silencio expectante. Bajo sus pies, el lomo de Ossa ni siquiera tiembla;
+> solo ese pulso profundo, constante, que los nacidos aquí quizá ya no escuchan."*
+
+Quality, judged on a relevance-3 person: a `tag` that does all the work (*"Oyó lo que no debía oír."*), a
+trait rendered as behaviour (*"Cuando Del Vas habla, él asiente aunque no esté de acuerdo. Después, en su
+cuaderno, escribe lo que realmente piensa."*), a belief that is generous and wrong, and a speech manner
+that is a characterisation rather than a label (*"todavía no tiene una voz propia; imita los giros de Del
+Vas cuando quiere sonar seguro"*).
+
+### The one number that was wrong: **1 history event in a world of 71 entities**
+
+Canon was the geography wave's *second* job, after connectivity. **A layer with two jobs does the first
+one.** And the founder's 2026-08-28 ordering had already said otherwise — *places → key history → lives →
+objects* — so this was a design I had, and did not follow.
+
+Canon is now **its own layer**, one call per location tree, between the places and the lives, looking at
+nothing else. Geography keeps the way graph and the descriptions and is told explicitly to author no canon.
+
+It runs *before* the lives are written, which is exactly where the ordering put it: the holders already
+have **names** from the scaffold, and their inner lives are authored later knowing what they lived through
+— rather than canon being invented afterwards to match a personality that already exists.
+
+A tree with nobody in it gets no canon call at all: an event nobody holds cannot be perceived.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.
