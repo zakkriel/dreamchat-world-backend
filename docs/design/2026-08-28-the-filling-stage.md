@@ -624,6 +624,54 @@ have **names** from the scaffold, and their inner lives are authored later knowi
 
 A tree with nobody in it gets no canon call at all: an event nobody holds cannot be perceived.
 
+### EIGHTH LIVE RUN, 2026-08-31 — the canon layer, measured
+
+**21 calls, 47,545 output tokens, $0.047, committed at 1,162 s (19.4 min).**
+`world_id 464550bd-7815-4ce7-9d2d-0835d1e5d09f`.
+
+|                        |run 7 (canon as a second job)|run 8 (canon as its own layer)|
+|---|---|---|
+|history events|**1**|**8**|
+|knowledge entries|5|**29**|
+|perception records|—|**57**|
+|locations / people|13 / 26|10 / 29|
+|cost|$0.058|**$0.047**|
+
+**Eight times the canon, for less money.** The cost fell because geography stopped carrying two jobs in
+one call and each wave now answers a narrower question.
+
+**And the lore travels.** 17 of 29 knowledge entries are held by somebody who was **not present**, across
+the whole epistemic vocabulary:
+
+    direct 13 · told 5 · inference 4 · rumor 4 · public 2 · overheard 1
+
+That gap — `who` was there versus `who` KNOWS — is the difference between a world with lore and a world
+where nothing leaves the room it happened in. It is the one thing the layer was written to buy, and it is
+the number that shows it worked.
+
+## Where the filling stage now stands
+
+**Proven end to end on a real model, twice:** brief → understanding pass → namespace → parallel content
+waves under relevance → reconciliation → belt → commit → kickstart → **a playable world that narrates**.
+
+**Measured, not projected:**
+
+|                     |value|
+|---|---|
+|wall clock|~15–20 min at depth 1|
+|cost|**$0.047–0.058** per world|
+|entities|70–100|
+|complete at relevance 1|**~65–90%**|
+|output tokens per entity|~600–1,040 (was 2,312 flat)|
+|input cache hits|**~50–70%**|
+
+**Still a projection:** the ~400 tokens/entity figure in §2.9. Measured is ~600–1,040, and the remaining
+gap is the compiled mandate still carrying more than a call needs.
+
+**Not built:** `depth` above 1 has never been run. Promotion during play — the triggers that raise
+relevance while somebody is in the world — is the gameplay half (`SPEC-045`, `SPEC-047`) and does not
+exist. Neither does the tiering that a depth-5 build would need.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.
