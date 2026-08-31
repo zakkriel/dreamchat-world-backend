@@ -169,6 +169,24 @@ seconds in for `kind: "happen"`, which is the exclusion vocabulary and changes n
 
 Where this file and design §7 disagree on the fill mechanism, this file wins (`ADR-P026`, D-6).
 
+### Tiered creation and the alteration race (measured, not settled)
+
+Depth 4–5 is intended to commit an early tier and keep authoring in the background, which races against
+gameplay changing canon underneath the build. Measured 2026-08-30 (`OBS-1`,
+`docs/observability/product-observability.md`, run `ci/obs_alteration_window.sh`): the blast radius is
+**tiny** — 1 to 3 entities out of 4 to 14 — but the timing **overlaps**, with three of five played worlds
+altered inside a 19-minute window and nothing at all inside the first 60 seconds.
+
+Two things follow, and neither is a decision yet:
+
+- The danger is not committing early; it is how long authoring continues afterwards.
+- **Authoring the PAST of an altered entity is legitimate; authoring their PRESENT is the bug.** Canon is
+  history and history does not change when someone dies. `starts_in` for a corpse is the failure.
+
+The number **over-counts** — it includes any canon event naming the entity, such as someone learning a
+name, which cannot invalidate a later tier. Do not design around it before splitting it by whether the
+event changed present state.
+
 ## Product rulings 2026-08-28 (Q1–Q13)
 
 - Q2: Fast and Custom run the same understanding pass, same bar.
