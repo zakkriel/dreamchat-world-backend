@@ -441,6 +441,37 @@ Two fixes, and the second removes the class rather than the instance:
 This is **not** the merge ratchet. The ratchet stops one answer from lowering another's level; settling
 reconciles the finished document with what is actually written in it.
 
+### THIRD LIVE RUN, 2026-08-31 — settling worked; a reference I added broke it
+
+**21 calls, 42,726 output tokens, $0.049, refused at 750 s.**
+
+`settleUnauthored` did its job and is now proven live: six entities were recorded at the level they
+actually reached — one person, one location, four factions — instead of the build being thrown away.
+
+**What refused it:** `the faction "Colegio de Auscultadores" is seated in "Alto Omóplato, en el edificio de
+contraventanas de hueso.", which is not a place in this world`.
+
+A **real** location, with a description appended. This is the em-dash failure in its **third** costume —
+`starts_in` cost a 234 s build on 2026-08-28 and was fixed in the prompt by quoting names on their own
+line. And it is squarely my fault: I added `faction.seat` and `concept.taught_by` to the belt in the same
+round that introduced them, and gave **neither a repair path**, so the only outcome available was to
+refuse a finished world over a comma.
+
+`snapCrossReferences` now runs with the other bookkeeping. Exact match first, then the longest authored
+name the value *begins* with **where the name ends at a boundary** — which is how
+`"Alto Omóplato, en el edificio…"` resolves to `Alto Omóplato` while `"Altozano"` does not resolve to
+`Alto`. Unresolvable clears the field: both are optional, and an empty seat costs a detail where a
+dangling one costs the world.
+
+**Mutation testing corrected my own claim here.** I wrote that the longest-match protects against
+`"Alto"` swallowing `"Alto Omóplato"`. Deleting the longest-match left the test green; deleting the
+**boundary check** turned it red. The boundary check is the guard, and the test now says so.
+
+**Also observed, not fixed (out of scope, worth recording):** the scaffold emitted person-shaped names in
+`factions` — *"Archivera Mota"*, *"Bara Quel"*, *"Celia Firme"*, *"El Curador"* are people, not
+institutions. The belt permits it because a faction named like a person is legal. The prompt forbids a
+collective being a person; it does not forbid the reverse.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.

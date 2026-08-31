@@ -341,6 +341,75 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
+// snapCrossReferences repairs a reference that names a real thing and then keeps talking.
+//
+// This is the em-dash failure in a third costume. It cost a 234-second build in 2026-08-28 when
+// `starts_in` came back as "Colegio de Auscultadores — Sede del Colegio…", and the fix then was to quote
+// names on their own line in the prompt. It cost a 750-second build on 2026-08-31 when a faction's
+// `seat` came back as "Alto Omóplato, en el edificio de contraventanas de hueso." — a REAL location with
+// a description appended.
+//
+// I added `faction.seat` and `concept.taught_by` to the belt in the same round that introduced them and
+// gave neither a repair path, so the only outcome available was to refuse a finished world over a comma.
+//
+// Snapping is bookkeeping, not authorship: the model named the right thing, and the prose after it is
+// the mistake. Exact match first; then the longest authored name the value BEGINS with, which is how
+// "Alto Omóplato, en el edificio…" resolves to "Alto Omóplato" without guessing. A value that resolves
+// to nothing clears the field — both are optional, and an empty seat costs a detail while a dangling one
+// costs the world.
+func snapCrossReferences(doc *genesisDoc) {
+	snap := func(value string, known []string) (string, bool) {
+		v := strings.TrimSpace(value)
+		if v == "" {
+			return "", true
+		}
+		for _, n := range known {
+			if v == n {
+				return n, true
+			}
+		}
+		best := ""
+		for _, n := range known {
+			if n == "" || !strings.HasPrefix(v, n) {
+				continue
+			}
+			// The character after the name must END it, or "Alto" would swallow "Alto Omóplato".
+			rest := strings.TrimSpace(v[len(n):])
+			if rest != "" && !strings.HasPrefix(rest, ",") && !strings.HasPrefix(rest, "—") &&
+				!strings.HasPrefix(rest, "-") && !strings.HasPrefix(rest, "(") && !strings.HasPrefix(rest, ":") {
+				continue
+			}
+			if len(n) > len(best) {
+				best = n
+			}
+		}
+		return best, best != ""
+	}
+
+	places := placeNames(doc)
+	for i := range doc.Factions {
+		got, ok := snap(doc.Factions[i].Seat, places)
+		if !ok {
+			log.Printf("snap: the faction %q is seated in %q, which resolves to no location — clearing the seat rather than refusing the world",
+				doc.Factions[i].CanonicalName, doc.Factions[i].Seat)
+		} else if got != strings.TrimSpace(doc.Factions[i].Seat) {
+			log.Printf("snap: the faction %q is seated in %q -> %q", doc.Factions[i].CanonicalName, doc.Factions[i].Seat, got)
+		}
+		doc.Factions[i].Seat = got
+	}
+	factions := factionNames(doc)
+	for i := range doc.Concepts {
+		got, ok := snap(doc.Concepts[i].TaughtBy, factions)
+		if !ok {
+			log.Printf("snap: the concept %q is taught by %q, which resolves to no faction — clearing it",
+				doc.Concepts[i].CanonicalName, doc.Concepts[i].TaughtBy)
+		} else if got != strings.TrimSpace(doc.Concepts[i].TaughtBy) {
+			log.Printf("snap: the concept %q is taught by %q -> %q", doc.Concepts[i].CanonicalName, doc.Concepts[i].TaughtBy, got)
+		}
+		doc.Concepts[i].TaughtBy = got
+	}
+}
+
 // settleUnauthored is the last honest act before the belt: anything still owing content at this point is
 // recorded at the level it actually reached, which is 1.
 //
@@ -841,6 +910,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	dropUnstorable(doc)
 	normalisePersonNames(doc)
 	reconcileArrival(doc)
+	snapCrossReferences(doc)
 	settleUnauthored(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
@@ -857,6 +927,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		dropUnstorable(doc)
 		normalisePersonNames(doc)
 		reconcileArrival(doc)
+		snapCrossReferences(doc)
 		settleUnauthored(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2

@@ -1243,3 +1243,116 @@ func TestFillFromIdentity_SomeoneNamedTooLateSettlesThinRatherThanRefusing(t *te
 		t.Error("settling demoted the whole cast — it is a reconciliation, not a policy")
 	}
 }
+
+// A reference that names a real thing and then keeps talking must be snapped, not refused. This is the
+// em-dash failure in its third costume: `starts_in` cost a 234 s build on 2026-08-28, and a faction's
+// `seat` cost a 750 s build on 2026-08-31 as "Alto Omóplato, en el edificio de contraventanas de hueso."
+func TestSnapCrossReferences_ARealNameFollowedByProseResolves(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Alto"},
+		{CanonicalName: "Alto Omóplato"},
+	}
+	doc.Factions = []genesisFaction{
+		{CanonicalName: "Colegio", Seat: "Alto Omóplato, en el edificio de contraventanas de hueso."},
+		{CanonicalName: "Gremio", Seat: "Alto Omóplato"},
+		{CanonicalName: "Orden", Seat: "somewhere nobody authored"},
+		{CanonicalName: "Sin Sede", Seat: ""},
+	}
+	doc.Concepts = []genesisConcept{
+		{CanonicalName: "Auscultación", TaughtBy: "Colegio — la sede del oficio"},
+		{CanonicalName: "Peso", TaughtBy: "a guild that does not exist"},
+	}
+	snapCrossReferences(doc)
+
+	// The guard that actually does this work is the BOUNDARY check, not the longest-match: "Alto" is
+	// rejected because what follows it is "Omóplato, …" rather than a comma or a dash. Verified by
+	// mutation — deleting the longest-match leaves this green, deleting the boundary check turns it red.
+	if got := doc.Factions[0].Seat; got != "Alto Omóplato" {
+		t.Errorf("seat snapped to %q, want %q", got, "Alto Omóplato")
+	}
+	if got := doc.Factions[1].Seat; got != "Alto Omóplato" {
+		t.Errorf("an exact seat was altered to %q", got)
+	}
+	if got := doc.Factions[2].Seat; got != "" {
+		t.Errorf("an unresolvable seat survived as %q — it would dangle and cost the whole world", got)
+	}
+	if got := doc.Factions[3].Seat; got != "" {
+		t.Errorf("an empty seat became %q", got)
+	}
+	if got := doc.Concepts[0].TaughtBy; got != "Colegio" {
+		t.Errorf("taught_by snapped to %q, want %q", got, "Colegio")
+	}
+	if got := doc.Concepts[1].TaughtBy; got != "" {
+		t.Errorf("an unresolvable taught_by survived as %q", got)
+	}
+
+	// It must NOT snap a name that merely shares a prefix with a real one: "Altozano" is not "Alto".
+	other := &genesisDoc{}
+	other.Places = []genesisPlace{{CanonicalName: "Alto"}}
+	other.Factions = []genesisFaction{{CanonicalName: "F", Seat: "Altozano"}}
+	snapCrossReferences(other)
+	if got := other.Factions[0].Seat; got != "" {
+		t.Errorf("%q was snapped to a different place — a prefix is not a match unless the name ends there", got)
+	}
+}
+
+// proseSeatDriver returns a faction seated in a REAL location with a description appended — the exact
+// answer that refused a 750-second live build on 2026-08-31.
+type proseSeatDriver struct{ real Driver }
+
+func (d *proseSeatDriver) Name() string { return "prose-seat" }
+func (d *proseSeatDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *proseSeatDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if fillBatchID(req.Prompt) != "faction" {
+		return raw, nil
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	rows, _ := frag["factions"].([]any)
+	for _, r := range rows {
+		if m, ok := r.(map[string]any); ok {
+			m["seat"] = "The Counting Room, en el edificio de contraventanas de hueso."
+		}
+	}
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// The snap must be WIRED IN. Removing its call sites left the direct unit test green — the same
+// deletable-route failure as the playable floor, in the same round. This drives the real pipeline.
+func TestFillFromIdentity_AProseShapedSeatDoesNotCostTheWorld(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &proseSeatDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("a faction seated in a real location with prose after it cost the whole world: %v", err)
+	}
+	seated := 0
+	for _, f := range doc.Factions {
+		if s := strings.TrimSpace(f.Seat); s != "" {
+			seated++
+			if s != "The Counting Room" {
+				t.Errorf("the faction %q kept the prose-shaped seat %q", f.CanonicalName, s)
+			}
+		}
+	}
+	if seated == 0 {
+		t.Error("every seat was cleared — the location named WAS real and must survive as a reference")
+	}
+}
