@@ -1631,3 +1631,82 @@ func TestFillFromIdentity_AnInstitutionFiledTwiceDoesNotCostTheWorld(t *testing.
 		t.Error("the collision emptied the world instead of costing one row")
 	}
 }
+
+// EVERY scheduled call must be able to see something. Setting no Scope at all was three separate bugs in
+// one round — closing, repair and arrival were each blind to the document they exist to work on — and the
+// geography wave could see locations but no PEOPLE, which made its own instruction ("every event needs a
+// holder named below") unsatisfiable and produced a world where nothing had ever happened. Live
+// 2026-08-31: refused at 950 s with no history at all, and nothing dropped to explain it.
+func TestEveryScheduledCallCanSeeSomething(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "Top", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "small"},
+		{CanonicalName: "Inner", Within: "Top", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "intimate"},
+	}
+	doc.Factions = []genesisFaction{{CanonicalName: "Gremio", Relevance: 2, Descriptor: "d", Kind: "faction", Tag: "t"}}
+	doc.Concepts = []genesisConcept{{CanonicalName: "Craft", WhatItIs: "w", Relevance: 1}}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Keeper", StartsIn: "Inner", Relevance: 3, Tag: "t", Descriptor: "d"},
+		{CanonicalName: "Thin", StartsIn: "Top", Relevance: 1, Tag: "t", Descriptor: "d"},
+	}
+	b := budgetForDepth(0)
+
+	items := []workItem{conceptsWork(), scaffoldOneWork(b), arrivalWork()}
+	items = append(items, scaffoldTwoSchedule(doc, b)...)
+	for _, wave := range contentSchedule(doc, b) {
+		items = append(items, wave...)
+	}
+	for _, it := range items {
+		s := it.Scope
+		if !s.Whole && len(s.Places) == 0 && len(s.Factions) == 0 && len(s.Concepts) == 0 && len(s.People) == 0 {
+			t.Errorf("%q can see nothing at all — a blind call cannot reference what exists", mergeTag(it))
+		}
+	}
+
+	// Geography owns canon, so it must be shown somebody who can hold an event.
+	var geo *workItem
+	for i := range items {
+		if items[i].ID == "geography" {
+			geo = &items[i]
+			break
+		}
+	}
+	if geo == nil {
+		t.Fatal("no geography item — connectivity and canon have no owner")
+	}
+	if len(geo.Scope.People) == 0 {
+		t.Error("geography sees no people, so every event it writes would have no holder and the wave returns no history")
+	}
+	found := false
+	for _, n := range geo.Scope.People {
+		if n == "Keeper" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("geography for %q does not see Keeper, who stands inside its tree: %v", geo.Subject, geo.Scope.People)
+	}
+	if got := peopleIn(doc, []string{"Top"}); len(got) != 1 || got[0] != "Thin" {
+		t.Errorf("peopleIn(Top) = %v, want only Thin — it must not sweep in the whole cast", got)
+	}
+}
+
+// The blind-scope fallback itself: a work item that names nothing sees the whole document rather than an
+// empty one, because blind is never what anybody meant.
+func TestFillPrompt_AnEmptyMandateFallsBackToTheWholeDocument(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "The Counting Room", Descriptor: "one lamp"}}
+	doc.Cast = []genesisActor{{CanonicalName: "Del Vas", Descriptor: "a person", Tag: "t"}}
+
+	blind := buildWorldFillPrompt(&worldIdentity{}, workItem{ID: "repair", Kind: "batch"}, testBrief, nil, doc, "")
+	if !strings.Contains(blind, "The Counting Room") || !strings.Contains(blind, "Del Vas") {
+		t.Fatal("a scopeless work item was shown an empty world — it cannot avoid re-authoring names it cannot see")
+	}
+	// A scope that names something real is still honoured exactly.
+	scoped := buildWorldFillPrompt(&worldIdentity{}, workItem{
+		ID: "people", Kind: "content", Scope: fillScope{People: []string{"Del Vas"}},
+	}, testBrief, nil, doc, "")
+	if strings.Contains(scoped, "The Counting Room") {
+		t.Error("a scoped call was shown a location outside its mandate — the compiled mandate is the saving")
+	}
+}
