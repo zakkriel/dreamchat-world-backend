@@ -1168,3 +1168,78 @@ func TestFillFromIdentity_AnAllThinScaffoldStillYieldsAPlayableWorld(t *testing.
 		}
 	}
 }
+
+// lateNamerDriver reproduces the 2026-08-31 refusal exactly: the closing pass pays a canon debt by
+// authoring a person at relevance 2, AFTER the wave that would have given them a standing.
+type lateNamerDriver struct{ real Driver }
+
+func (d *lateNamerDriver) Name() string { return "late-namer" }
+func (d *lateNamerDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *lateNamerDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if fillBatchID(req.Prompt) != "geography" {
+		return raw, nil
+	}
+	// Canon names somebody nobody authored — the live shape, where history referenced 13 such people.
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	cast, _ := frag["cast"].([]any)
+	frag["cast"] = append(cast, map[string]any{
+		"canonical_name": "Kar", "descriptor": "a name in somebody else's account",
+		"starts_in": fillSubject(req.Prompt), "relevance": 2, "tag": "spoken of, never present",
+	})
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// A build must not be thrown away because a LATE pass named someone at a level no later pass can author.
+// Measured live: refused at 806 s and $0.09 over exactly this, on a person who could simply be thin.
+func TestFillFromIdentity_SomeoneNamedTooLateSettlesThinRatherThanRefusing(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &lateNamerDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("the world was refused over a late arrival instead of settling them thin: %v", err)
+	}
+	var kar *genesisActor
+	for i := range doc.Cast {
+		if doc.Cast[i].CanonicalName == "Kar" {
+			kar = &doc.Cast[i]
+		}
+	}
+	if kar == nil {
+		t.Fatal("Kar was dropped — a name canon references must exist, or the reference dangles")
+	}
+	if kar.Relevance != 1 {
+		t.Errorf("Kar sits at relevance %d with nothing authored; settling records the level actually reached", kar.Relevance)
+	}
+	// Settling must not touch anyone who WAS authored.
+	for _, a := range doc.Cast {
+		if a.Relevance >= 2 && strings.TrimSpace(a.Standing) == "" {
+			t.Errorf("%q is relevance %d with no standing — the belt would refuse this world", a.CanonicalName, a.Relevance)
+		}
+	}
+	authored := 0
+	for _, a := range doc.Cast {
+		if a.Relevance >= 3 {
+			authored++
+		}
+	}
+	if authored == 0 {
+		t.Error("settling demoted the whole cast — it is a reconciliation, not a policy")
+	}
+}

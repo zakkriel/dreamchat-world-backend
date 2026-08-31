@@ -406,6 +406,41 @@ floor as well, because code stepping in should be the exception.
 while the prompt says scaffold is names-only and geography joins things up. With the fake honest, deleting
 the geography gate fails loudly; before, it passed.
 
+### SECOND LIVE RUN, 2026-08-31 — the design works; a late pass broke it
+
+Same brief and seat. **41 calls, 108,241 output tokens, $0.094, refused at 806 s** — but the shape is
+now proven:
+
+|measured|value|
+|---|---|
+|entities named|**104** — 26 locations (4 top), 16 factions, 14 concepts, 48 people|
+|complete at relevance 1|**91 of 104**|
+|owed at 2+|7 locations, 6 factions, 13 people|
+|calls|41 (4 geography ‖, 6 faction ‖, 11 people ‖)|
+|input cache hits|**484,352 of 700,622 — 69%**|
+|output tokens per entity|**~1,040**, down from 2,312|
+
+Connectivity was authored, every wave answered, and the world is **three times the size of the flat
+build for 40% more money.** The ~400 tokens/entity figure in §2.9 remains a projection — the measured
+number is ~1,040, and the gap is the compiled mandate still carrying more than it needs.
+
+**What refused it:** `"Kar" is relevance 2 but has no standing`. Canon referenced 13 people who did not
+exist, the closing pass authored them to pay that debt — and it runs *after* the wave that gives a person
+a standing. So a late pass could name someone at a level **no later pass can author**. Same failure class
+as the geography gate: a creation path with no owner.
+
+Two fixes, and the second removes the class rather than the instance:
+
+1. **The closing and repair passes author at relevance 1, and are told why:** canon named these people,
+   nobody has met them, and anything deeper written there is content nobody will finish.
+2. **`settleUnauthored` runs before the belt.** Anything still owing content is recorded at the level it
+   actually *reached*, which is 1. It loses nothing — a description already written stays, it is simply no
+   longer owed — and the two alternatives are both worse: throw away a thirteen-minute build over a person
+   who could have been thin, or leave a relevance-2 person with no standing for the engine to meet.
+
+This is **not** the merge ratchet. The ratchet stops one answer from lowering another's level; settling
+reconciles the finished document with what is actually written in it.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.

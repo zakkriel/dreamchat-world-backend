@@ -341,6 +341,52 @@ func scaffoldTwoSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
+// settleUnauthored is the last honest act before the belt: anything still owing content at this point is
+// recorded at the level it actually reached, which is 1.
+//
+// Every wave has run. Whatever is still thin is thin because a late pass NAMED it — the closing pass
+// authors the people canon references, and it runs after the wave that would have given them a standing.
+// The alternatives are both worse: refuse a thirteen-minute build over a person who could simply be
+// thin, or leave a relevance-2 person with no standing in the document and let the engine meet them.
+//
+// This is not the merge ratchet. The ratchet stops one ANSWER from lowering another answer's level;
+// this reconciles the finished document with what was actually written in it, and it loses nothing —
+// a description already authored stays, it is just no longer owed.
+//
+// Measured live 2026-08-31: a build was refused at 806 seconds and $0.09 for exactly this.
+func settleUnauthored(doc *genesisDoc) {
+	for i := range doc.Cast {
+		if personOwing(doc.Cast[i]) {
+			log.Printf("settle: %q reached relevance 1, not %d — no pass authored what the higher level owes",
+				doc.Cast[i].CanonicalName, doc.Cast[i].Relevance)
+			doc.Cast[i].Relevance = 1
+		}
+	}
+	for i := range doc.Places {
+		if placeOwing(doc.Places[i]) {
+			log.Printf("settle: the location %q reached relevance 1, not %d",
+				doc.Places[i].CanonicalName, doc.Places[i].Relevance)
+			doc.Places[i].Relevance = 1
+		}
+	}
+	owing := map[string]bool{}
+	for _, n := range factionsOwing(doc) {
+		owing[n] = true
+	}
+	for i := range doc.Factions {
+		if owing[strings.TrimSpace(doc.Factions[i].CanonicalName)] {
+			log.Printf("settle: the faction %q reached relevance 1, not %d",
+				doc.Factions[i].CanonicalName, doc.Factions[i].Relevance)
+			doc.Factions[i].Relevance = 1
+		}
+	}
+	for i := range doc.Concepts {
+		if doc.Concepts[i].Relevance >= 2 && strings.TrimSpace(doc.Concepts[i].Contested) == "" {
+			doc.Concepts[i].Relevance = 1
+		}
+	}
+}
+
 // ensurePlayableFloor guarantees the world has at least one scene in it.
 //
 // Measured live 2026-08-31 on the Andantes brief: the scaffold returned FIVE locations and TEN people,
@@ -757,7 +803,11 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		item := workItem{
 			ID:   "closing",
 			Kind: "batch",
-			Text: fmt.Sprintf("Author exactly these and nothing else: %d owed person(s) and %d owed place(s), listed under STILL OWED.",
+			Text: fmt.Sprintf("Author exactly these and nothing else: %d owed person(s) and %d owed place(s), listed under STILL OWED.\n\n"+
+				"ALL OF THEM AT RELEVANCE 1. Canon named them; nobody has met them. A name, a one-line descriptor, a "+
+				"kind or a place to stand, and a tag — and nothing more. Do not give them a standing, a manner, a "+
+				"secret or an inner life: this pass runs after the one that authors those, so anything deeper you "+
+				"write here is content nobody will ever finish.",
 				len(people), len(places)),
 			Therefore: "a world whose canon points at nothing cannot be stored or walked into",
 		}
@@ -791,11 +841,13 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	dropUnstorable(doc)
 	normalisePersonNames(doc)
 	reconcileArrival(doc)
+	settleUnauthored(doc)
 	if err := doc.validate(); err != nil {
 		frag, rerr := fillOne(ctx, seat, id, workItem{
-			ID:        "repair",
-			Kind:      "batch",
-			Text:      "The belt refused the merged document: " + err.Error(),
+			ID:   "repair",
+			Kind: "batch",
+			Text: "The belt refused the merged document: " + err.Error() +
+				"\n\nAnything you author here that the belt did not explicitly ask for goes in at relevance 1.",
 			Therefore: "emit only what the belt is missing; do not re-author names already listed",
 		}, brief, answers, doc, "")
 		if rerr != nil {
@@ -805,6 +857,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		dropUnstorable(doc)
 		normalisePersonNames(doc)
 		reconcileArrival(doc)
+		settleUnauthored(doc)
 		if err2 := doc.validate(); err2 != nil {
 			return nil, err2
 		}
