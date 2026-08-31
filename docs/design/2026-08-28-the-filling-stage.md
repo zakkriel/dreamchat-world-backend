@@ -472,6 +472,49 @@ dangling one costs the world.
 institutions. The belt permits it because a faction named like a person is legal. The prompt forbids a
 collective being a person; it does not forbid the reverse.
 
+### FOURTH LIVE RUN, 2026-08-31 — and the correction that should have come three runs earlier
+
+**21 calls, 99,591 output tokens, $0.063, refused at 1,201 s** on
+`a way leads to "Segundo", which is not a place in this world`.
+
+Reconciling and settling both worked — the log shows seven seats and six `taught_by` values repaired or
+cleared, and three entities settled. Then one edge killed it.
+
+**The real finding is the pattern, not the field.** Four live runs, four refusals, each on a *different*
+name-shaped field:
+
+|run|field|cost|
+|---|---|---|
+|(2026-08-28)|`starts_in`|234 s|
+|2|`ways` missing entirely|806 s|
+|3|`faction.seat`|750 s|
+|4|`way.to_place`|1,201 s|
+
+Every reference in this document is a name-shaped field, and **a model writing prose fills name-shaped
+fields with prose.** Three times I repaired the field that had just failed, and the next run failed on the
+next field. That is a method error, and it is mine: the disease is the class.
+
+`reconcileReferences` is now **one pass over every cross-reference**, and what cannot resolve degrades in
+the cheapest honest way — the choice differing per kind, because what each costs to lose differs:
+
+|reference|unresolvable →|why|
+|---|---|---|
+|`way.from_place` / `to_place`|drop the edge|one connection; the belt needs one way and an exit|
+|`object.where`|drop the object|nothing references an object by name|
+|`history.where`|drop the event||
+|`history.who` / `knowledge.holder`|drop that entry; drop the event only if nobody is left holding it|an event nobody knows cannot be perceived|
+|`actor.starts_in`|**drop the person**, then reconcile canon against the survivors|placement is structural; and clearing it instead would just move the refusal to the belt|
+|`faction.seat`, `concept.taught_by`|clear the field|both optional|
+
+**Order is load-bearing:** people are reconciled *first* and canon *second*, so a dropped person cannot
+survive as a participant or a knowledge holder. Reconciling canon first would have turned a repaired
+reference into a dangling one.
+
+**And one place where the model was right and my rule was wrong.** `taught_by` accepted only a faction,
+and a live build filled it with *"Auscultadora Mayor Del Vas"* six times — because **a craft is taught by
+a person.** The belt now accepts a person or a faction, and clearing those was throwing away true content
+to satisfy a rule nobody had thought about.
+
 ### Corrections to this document's own earlier claims
 
 - §1.2's "six flat batches" and the descent/ascent pair are **superseded** by the table above.

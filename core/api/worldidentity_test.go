@@ -1247,7 +1247,7 @@ func TestFillFromIdentity_SomeoneNamedTooLateSettlesThinRatherThanRefusing(t *te
 // A reference that names a real thing and then keeps talking must be snapped, not refused. This is the
 // em-dash failure in its third costume: `starts_in` cost a 234 s build on 2026-08-28, and a faction's
 // `seat` cost a 750 s build on 2026-08-31 as "Alto Omóplato, en el edificio de contraventanas de hueso."
-func TestSnapCrossReferences_ARealNameFollowedByProseResolves(t *testing.T) {
+func TestReconcileReferences_ARealNameFollowedByProseResolves(t *testing.T) {
 	doc := &genesisDoc{}
 	doc.Places = []genesisPlace{
 		{CanonicalName: "Alto"},
@@ -1263,7 +1263,7 @@ func TestSnapCrossReferences_ARealNameFollowedByProseResolves(t *testing.T) {
 		{CanonicalName: "Auscultación", TaughtBy: "Colegio — la sede del oficio"},
 		{CanonicalName: "Peso", TaughtBy: "a guild that does not exist"},
 	}
-	snapCrossReferences(doc)
+	reconcileReferences(doc)
 
 	// The guard that actually does this work is the BOUNDARY check, not the longest-match: "Alto" is
 	// rejected because what follows it is "Omóplato, …" rather than a comma or a dash. Verified by
@@ -1291,7 +1291,7 @@ func TestSnapCrossReferences_ARealNameFollowedByProseResolves(t *testing.T) {
 	other := &genesisDoc{}
 	other.Places = []genesisPlace{{CanonicalName: "Alto"}}
 	other.Factions = []genesisFaction{{CanonicalName: "F", Seat: "Altozano"}}
-	snapCrossReferences(other)
+	reconcileReferences(other)
 	if got := other.Factions[0].Seat; got != "" {
 		t.Errorf("%q was snapped to a different place — a prefix is not a match unless the name ends there", got)
 	}
@@ -1354,5 +1354,141 @@ func TestFillFromIdentity_AProseShapedSeatDoesNotCostTheWorld(t *testing.T) {
 	}
 	if seated == 0 {
 		t.Error("every seat was cleared — the location named WAS real and must survive as a reference")
+	}
+}
+
+// Every reference degrades in the cheapest honest way rather than costing the world. The choice differs
+// per kind, and getting one of them wrong is how a repaired reference becomes a dangling one.
+func TestReconcileReferences_EachKindDegradesInItsOwnWay(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "Ossa"}, {CanonicalName: "Cola Baja"}}
+	doc.Factions = []genesisFaction{{CanonicalName: "El Gremio"}}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Sento", StartsIn: "Cola Baja", BelongsTo: []string{"El Gremio", "a guild nobody wrote"}},
+		{CanonicalName: "Nadie", StartsIn: "Segundo"}, // a location no pass ever authored
+	}
+	doc.Ways = []genesisWay{
+		{Descriptor: "the climb", FromPlace: "Ossa", ToPlace: "Cola Baja", State: "open"},
+		{Descriptor: "the crossing", FromPlace: "Ossa", ToPlace: "Segundo", State: "open"},
+	}
+	doc.Objects = []genesisObject{
+		{CanonicalName: "El Libro", Descriptor: "a book", Kind: "ledger"},
+		{CanonicalName: "El Perdido", Descriptor: "lost", Kind: "thing"},
+	}
+	doc.Objects[0].Where.InPlace = "Ossa, en la sala del fondo"
+	doc.Objects[1].Where.InPlace = "Segundo"
+	doc.History = []genesisEvent{
+		{WhatHappened: "the tally was disputed", Where: "Ossa", Who: []string{"Sento", "Nadie"},
+			Knowledge: []genesisKnowledge{
+				{Holder: "Sento", EpistemicType: "direct", Content: "he was there"},
+				{Holder: "Nadie", EpistemicType: "told", Content: "she heard"},
+			}},
+		{WhatHappened: "something nobody surviving knows", Where: "Ossa", Who: []string{"Nadie"},
+			Knowledge: []genesisKnowledge{{Holder: "Nadie", EpistemicType: "direct", Content: "only she knew"}}},
+		{WhatHappened: "something nowhere", Where: "Segundo",
+			Knowledge: []genesisKnowledge{{Holder: "Sento", EpistemicType: "direct", Content: "x"}}},
+	}
+	doc.Concepts = []genesisConcept{
+		{CanonicalName: "La Lectura", TaughtBy: "Sento"},              // a PERSON teaches a craft
+		{CanonicalName: "El Cálculo", TaughtBy: "El Gremio, central"}, // faction plus prose
+		{CanonicalName: "El Hueco", TaughtBy: "nobody at all"},
+	}
+	doc.Arrival = genesisArrival{CanonicalName: "Wren", Place: "Ossa, bajando por la rampa"}
+
+	reconcileReferences(doc)
+
+	// A way to nowhere is one edge, not the world.
+	if len(doc.Ways) != 1 || doc.Ways[0].Descriptor != "the climb" {
+		t.Errorf("ways = %+v, want only the resolvable one", doc.Ways)
+	}
+	// An unplaceable person cannot be stored, and canon must follow who survived.
+	if len(doc.Cast) != 1 || doc.Cast[0].CanonicalName != "Sento" {
+		t.Fatalf("cast = %+v, want only Sento", doc.Cast)
+	}
+	if got := doc.Cast[0].BelongsTo; len(got) != 1 || got[0] != "El Gremio" {
+		t.Errorf("belongs_to = %v, want the one faction that exists", got)
+	}
+	// One event survives, with the dropped person cleaned out of it. One dies for having no holder left,
+	// one for happening nowhere.
+	if len(doc.History) != 1 {
+		t.Fatalf("history = %d events, want 1", len(doc.History))
+	}
+	if got := doc.History[0].Who; len(got) != 1 || got[0] != "Sento" {
+		t.Errorf("who = %v — a dropped person must not survive as a participant", got)
+	}
+	if got := doc.History[0].Knowledge; len(got) != 1 || got[0].Holder != "Sento" {
+		t.Errorf("knowledge = %+v — a dropped person must not survive as a holder", got)
+	}
+	// An object snapped to a real location; one that is nowhere is dropped.
+	if len(doc.Objects) != 1 || doc.Objects[0].Where.InPlace != "Ossa" {
+		t.Errorf("objects = %+v, want El Libro in Ossa", doc.Objects)
+	}
+	// taught_by takes a person OR a faction. Clearing the person threw away true content.
+	if doc.Concepts[0].TaughtBy != "Sento" {
+		t.Errorf("a person teaching a craft was cleared: %q", doc.Concepts[0].TaughtBy)
+	}
+	if doc.Concepts[1].TaughtBy != "El Gremio" {
+		t.Errorf("faction-plus-prose snapped to %q", doc.Concepts[1].TaughtBy)
+	}
+	if doc.Concepts[2].TaughtBy != "" {
+		t.Errorf("an unresolvable teacher survived as %q", doc.Concepts[2].TaughtBy)
+	}
+	if doc.Arrival.Place != "Ossa" {
+		t.Errorf("the arrival place snapped to %q", doc.Arrival.Place)
+	}
+}
+
+// wayToNowhereDriver reproduces the fourth live refusal: geography joins a location to one of the nine
+// Andantes that no pass ever authored.
+type wayToNowhereDriver struct{ real Driver }
+
+func (d *wayToNowhereDriver) Name() string { return "way-to-nowhere" }
+func (d *wayToNowhereDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *wayToNowhereDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if fillBatchID(req.Prompt) != "geography" {
+		return raw, nil
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	ways, _ := frag["ways"].([]any)
+	frag["ways"] = append(ways, map[string]any{
+		"descriptor": "the crossing to Segundo", "from_place": fillSubject(req.Prompt),
+		"to_place": "Segundo", "state": "open",
+	})
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// The reconciliation must be WIRED IN. Live run four: refused at 1,201 s and $0.063 on
+// `a way leads to "Segundo", which is not a place in this world`.
+func TestFillFromIdentity_AWayToNowhereCostsTheEdgeNotTheWorld(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &wayToNowhereDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("one bad edge cost the whole world: %v", err)
+	}
+	for _, w := range doc.Ways {
+		if strings.TrimSpace(w.ToPlace) == "Segundo" {
+			t.Error("the dangling edge survived into the document")
+		}
+	}
+	if len(doc.Ways) == 0 {
+		t.Error("every way was dropped — the good edges must survive with the bad one")
 	}
 }
