@@ -246,29 +246,30 @@ const (
 	// to about mid-thigh, and the hands are doing half the acting. A hand clasped at the chest, a fist
 	// half-raised, gloved fingers laced — a bust crops all of that away.
 	//
-	// WHY A COMPLETE FIGURE AND NOT A BOTTOM-CROPPED ONE. The frontend anchors sprites `center bottom`
-	// and scales them, so it already crops from the bottom for free: the same asset reads as a
-	// head-and-chest foreground speaker or a fuller standing figure further back, which is exactly the
-	// depth staging the references use — one shows three tiers on screen at once. And the image platform
-	// requires the subject NOT touch the frame edges, because its chroma key needs a clean border
-	// (`jobs.ChromaBackdropInstruction`). A complete figure satisfies both; a pre-cropped one satisfies
-	// neither.
+	// THE SHAPE IS A DECLARED CONTRACT, not a local choice: workspace
+	// `docs/00_workspace/contracts.md`, Edge B, "What a character sprite IS". Read it before changing this
+	// line — the frontend's staging depends on the same sentence and cannot see this file.
+	//
+	// A COMPLETE FIGURE, never a pre-cropped one, for a reason that belongs to this side of the seam: the
+	// image platform requires the subject not to touch the frame edges, because its chroma key needs a
+	// clean border (`jobs.ChromaBackdropInstruction`). What the frontend then does with a complete figure
+	// is the frontend's business and is written in the contract, not here.
 	//
 	// The BACKGROUND is deliberately not mentioned. The platform owns it: this repo sends
 	// `background: "transparent"` and the platform appends its own flat-magenta backdrop instruction and
 	// keys it out. Saying "plain uniform background" here was a second, weaker instruction for something
-	// across the seam (D-3).
+	// across the seam (D-3), and two background instructions can disagree.
 	spriteFramingPrompt = "three-quarter length standing figure, framed from the top of the head to mid-thigh, " +
 		"both hands visible and unobscured, the whole outfit and its accessories legible, " +
 		"subject centered, standing, facing the viewer at a slight angle"
 	// spriteConsistencyPrompt holds the outfit constant across the four renders of one anchored
 	// identity — the whole reason the variants are one pack against one anchor.
 	spriteConsistencyPrompt = "same character, same outfit, same hairstyle as the reference"
-	// spriteAspectRatio stays 3:4 even though the framing changed from a bust to a figure. The ratio
-	// decides the box, the framing prompt decides how much body is in it, and 3:4 holds a figure to
-	// mid-thigh — the founder's references do exactly that. A taller 2:3 was tried and reverted: it buys
-	// a little vertical room and costs a cross-repo question, because the platform's mock provider maps
-	// unknown ratios to a square (`providers/mock.dimensionsFor`).
+	// spriteAspectRatio is part of the declared sprite contract (contracts.md, Edge B), so it does not
+	// move without the frontend. It stays 3:4 even though the framing changed from a bust to a figure:
+	// the ratio decides the box, the framing prompt decides how much body is in it, and 3:4 holds a
+	// figure to mid-thigh. A taller 2:3 was tried and reverted — it buys a little room and costs a
+	// cross-repo question, because the platform's mock provider maps unknown ratios to a square.
 	spriteAspectRatio = "3:4"
 )
 
