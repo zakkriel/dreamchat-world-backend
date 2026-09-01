@@ -1,7 +1,7 @@
 {
+  "$id": "world_scaffold/1",
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "world_scaffold/1",
-  "description": "A NAMING call's output. The world's namespace: what exists, what it is called, what kind of thing it is, where it sits, and HOW MUCH OF IT SHOULD EXIST (relevance). Deliberately unable to express depth \u2014 no standing, no inner life, no description, no canon \u2014 because a schema that offers a field is an invitation to fill it, and prose in a naming call is the single largest cost in the fill (measured 2026-08-31: 62.8% of all output tokens, writing relevance-3 interiors on relevance-1 people). Depth is authored later, per entity, at the level this call assigns.",
+  "title": "world_scaffold/1 \u2014 a NAMING call's answer. The world's namespace: what exists, what it is called, what kind of thing it is, where it sits, and HOW MUCH OF IT SHOULD EXIST (relevance). Deliberately unable to express depth \u2014 no standing, no inner life, no description, no canon, no arrival \u2014 because a schema that offers a field is an invitation to fill it. Measured 2026-08-31 when every call shared one schema: the naming stage produced 62.8% of all output tokens, writing complete relevance-3 interiors on people it then labelled relevance 1, which also meant the per-person authoring wave never ran at all. Depth is authored later, per entity, at the level this call assigns.",
   "type": "object",
   "additionalProperties": false,
   "properties": {
