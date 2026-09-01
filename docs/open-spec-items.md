@@ -1888,3 +1888,131 @@ So: **a relevance-4 asset is never reused, and never becomes another entity's an
    mechanics (genesis assigns; play promotes), and the law that promotion-created entities start at 1.
    The genesis half is implemented; the promotion triggers are the gameplay half and are not built.
 
+
+---
+
+## SPEC-048 — The fill's SHAPE must be predictable, even though its prose must not be
+
+**Status, newest first.**
+
+**OPEN. Founder-ruled 2026-08-31**, after reading the measured spread: *"we need to achieve a more
+deterministic result. the diff is quite big."*
+
+Same brief, same seats, same configuration, four runs at depth 1:
+
+|                | run A | run B | run C | depth-3 run |
+|---|---|---|---|---|
+| locations | 10 | 11 | 9 | 35 |
+| people | 31 | 40 | 33 | 76 |
+| **canon events** | **10** | **12** | **4** | **12** |
+| **objects** | **9** | **2** | **7** | **12** |
+| concepts | 9 | 9 | 5 | 8 |
+| cost | $0.049 | $0.056 | $0.050 | $0.127 |
+
+And one stage moved **5×** between runs: `geography` produced 2,852 output tokens in one run and 13,800 in
+the next, from the same brief.
+
+**What determinism means here, and what it does not.** Not identical worlds — that would be neither
+achievable nor desirable. **The SHAPE must be predictable**: a depth-3 world has roughly N locations, M
+people and E events, within a stated tolerance, so that (a) a founder knows what a depth buys, and (b) a
+change to the pipeline can be judged. Today neither holds: the 4-vs-12 event spread is larger than any
+improvement measured in this work, which means **no single run can validate a change**, and several of the
+conclusions drawn during the 2026-08-31 session were drawn against noise.
+
+### The levers, cheapest first
+
+**1. Temperature is unset on every fill seat.** `DREAMCHAT_SEAT_TEMPERATURE_DECOMPOSE=0` and
+`..._RESOLVE=0` exist in production; `world_understanding`, `world_fill` and `world_fill_review` have
+none, so they run at the provider's default (~1.0). This is a configuration change and almost certainly
+the largest single effect available.
+
+**But it cannot be one number.** A naming call decides STRUCTURE — how many locations, who exists, what
+level each is — and structure should not be reinvented per run. A lives call writes PROSE, and the
+2026-08-30 `json_schema` finding is the standing warning here: over-constrain the generation and
+`narration/1` came back *"structurally perfect and textually EMPTY"*. Flat people are a worse failure than
+variable counts.
+
+**Which implies the naming stage wants its own SEAT.** It already has its own schema
+(`world_scaffold/1`, `SPEC-011`-published) and its own leash. A `world_scaffold` seat can be pinned cold
+while `world_fill` stays warm. One seat serving both is what makes a single temperature unable to express
+the actual requirement.
+
+**2. Counts are asked for in words, not numbers.** `scaffold-1` and `scaffold-2` receive real numbers from
+`depthBudget` (`about %d locations`, `about %d people`) and those are the entity classes that vary least.
+`canon` asks for *"several events"*. Objects are asked for as *"any object the brief makes structural"* —
+a phrase with no number in it at all, which is why objects range 2 to 12. Every generative instruction
+should carry a number derived from the depth budget, the way locations and people already do.
+
+**3. `depthBudget` has no per-kind budget for events, objects or concepts.** It carries `TopLocations`,
+`SubPerTop`, `PeoplePerTop` and nothing else, so three of the six entity kinds are unbudgeted by
+construction.
+
+**4. Reconciliation can only remove.** `reconcileDocument` drops what cannot be stored; nothing tops up a
+world that came back thin. A floor exists for playability (`ensurePlayableFloor`) and covers exactly one
+location and one person.
+
+### What has to be decided
+
+1. **The tolerance.** ±20% on entity counts per kind at a given depth is the proposed target; nothing has
+   been measured against a target yet.
+2. **Which stages go cold.** Naming certainly. Canon and geography are a judgement — their *counts* should
+   be stable and their *content* should not be flat.
+3. **Whether a thin world is topped up or accepted.** A retry costs a call; accepting means depth is a
+   range rather than a number.
+4. **Measurement discipline, which is not optional.** `ci/fill_probe.sh` must run N times and report mean
+   and spread per kind, because a single run cannot see an effect smaller than the noise. Every
+   performance claim in the 2026-08-31 session that rested on one run should be treated as unproven.
+
+---
+
+## SPEC-049 — Objects and concepts are named and never authored
+
+**Status, newest first.**
+
+**OPEN, discovered 2026-08-31** while answering whether the fill was ready.
+
+The founder's 2026-08-28 ordering was **places → key history → lives → objects**. Four of those have a
+wave. **Objects do not.** They are named once, in `scaffold-1`, as *"any object the brief makes
+structural"*, and no later stage mentions objects at all.
+
+Measured at depth 3: **12 objects for 35 locations and 76 people**, six of them at relevance 2 — a level
+`ADR-P027` says buys "whose hand, or which location", and which nothing authors. A relevance-3 object is
+supposed to have a real description, canon and an image; genesis has never produced one.
+
+**Concepts are the same class.** `conceptsWork` names them with `what_it_is` and `contested`, and nothing
+deepens them. At depth 3 one concept came back at relevance 3 with an **empty descriptor**, and 5 of 8 had
+no `taught_by`. `ADR-P027` says a relevance-3 concept carries "who holds which position, and who is
+wrong" — there is no field for that and no wave to write it.
+
+So two of the six entity kinds have no content stage. They are furniture, and the thing a player picks up
+is furniture.
+
+**Both belong in the post-canon wave**, which already runs factions, lives and the arrival together and
+depends only on the canon — an object's history and an owner's opinion of it need exactly what that wave
+already sees.
+
+---
+
+## SPEC-050 — Canon does not scale with depth
+
+**Status, newest first.**
+
+**OPEN, measured 2026-08-31.**
+
+|  | depth 1 | depth 3 |
+|---|---|---|
+| locations | 9–11 | **35** |
+| people | 31–40 | **76** |
+| **canon events** | **4–12** | **12** |
+
+**The same amount of history for three times the world.** `canonSchedule` emits one call per top location
+and each writes two or three events regardless of how much sits inside it, so event density falls as
+depth rises. A depth-3 world is a city and its region with a dozen things that have ever happened in it.
+
+The obvious shape is a per-tree budget scaled by what the tree contains, the way `SPEC-048` proposes for
+every other generative instruction — and it collides with a known ceiling: the tick ladder leaves **90
+backstory slots** (`genesisBackstoryBaseTick` 30 → `genesisSceneTick` 120), so a world authoring events
+in proportion to a depth-5 breadth would be refused by `genesisDoc.validate()` with "too much history to
+place before the world opens". Widening the ladder is a constant, not a redesign, but it has to move in
+the same round.
+
