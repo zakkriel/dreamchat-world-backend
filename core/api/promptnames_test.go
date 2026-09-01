@@ -57,6 +57,71 @@ var seedProperNames = []string{
 	"Cellar Hatch", "Harbormaster", "Harbor Quarter", "Vael", "Salt Quay",
 	// seed_mara_0A.sql — the deterministic fixture world
 	"Seren", "Reyna", "Dark Foxes", "Fox-ears", "Downfall Market",
+	// The worlds GENESIS is developed against. Same hazard, different door: the play seeds leak into a
+	// beat prompt, these leak into a fill prompt — and a fill prompt is the standing instruction for
+	// every world anybody ever creates. Added 2026-09-01 after an Andantes example was found baked into
+	// the lives prompt.
+	//
+	// Proper names only, for the reason this file already gives: "pulse", "skip" and "room" are ordinary
+	// English, prompts are made of ordinary English, and banning them would flag real prose and teach the
+	// next person to switch the guard off.
+	"Andantes", "Andante", "Ossa", "Cola Baja", "Del Vas", "Tercera Hembra", "Auscultadora",
+	"Auscultador", "Trompetilla", "Colegio de Auscultadores", "Gremio de Peso", "Los Convergentes",
+	// bridge_fakes.go — the deterministic fill fake's world, which must never reach a real prompt.
+	"Counting Room", "Loading Yard", "Night Loaders",
+}
+
+// THE OTHER HALF OF THE STANDING INSTRUCTION. A fill stage's instruction is not only `prompts/world_fill.txt`
+// — most of it is the work item's own text, assembled in Go, and that text is equally fixed and equally
+// sent to every world. The 2026-09-01 leak was there and not in the prompt file, so a guard that reads only
+// `prompts/*.txt` could never have seen it.
+//
+// The prompts are assembled with NO world content: a neutral brief, an empty identity and a document
+// holding only placeholder names. Anything a banned name matches in the result therefore came from the
+// fixed instruction, which is the only thing under test here.
+//
+// It scans every stage the schedule can produce, so a stage invented later is covered without anybody
+// remembering to add it.
+func TestWorkItemPrompts_CarryNoSeedProperNames(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{
+		{CanonicalName: "PlaceOne", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "vast", Tension: "normal"},
+		{CanonicalName: "PlaceTwo", Within: "PlaceOne", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "small", Tension: "calm"},
+	}
+	doc.Factions = []genesisFaction{{CanonicalName: "FactionOne", Relevance: 2, Descriptor: "d", Kind: "faction", Tag: "t"}}
+	doc.Concepts = []genesisConcept{{CanonicalName: "ConceptOne", WhatItIs: "w", Descriptor: "d", Relevance: 2}}
+	doc.Cast = []genesisActor{{CanonicalName: "PersonOne", StartsIn: "PlaceTwo", Relevance: 2, Tag: "t", Descriptor: "d"}}
+	doc.Objects = []genesisObject{{CanonicalName: "ObjectOne", Descriptor: "d", Kind: "k", Relevance: 2}}
+
+	b := budgetForDepth(3)
+	items := []workItem{conceptsWork(), scaffoldOneWork(b), arrivalWork()}
+	items = append(items, scaffoldTwoSchedule(doc, b)...)
+	for _, wave := range contentSchedule(doc, b) {
+		items = append(items, wave...)
+	}
+	items = append(items, afterCanonSchedule(doc, b)...)
+
+	stages := map[string]bool{}
+	for _, it := range items {
+		if stages[it.ID] {
+			continue // the text is fixed per stage; the subject only changes which names are quoted
+		}
+		stages[it.ID] = true
+		body := buildWorldFillPrompt(&worldIdentity{}, it, "a world", nil, doc, "")
+		hay := strings.ToLower(body)
+		for _, name := range seedProperNames {
+			re := regexp.MustCompile(`(?i)\b` + regexp.QuoteMeta(strings.ToLower(name)) + `\b`)
+			if loc := re.FindStringIndex(hay); loc != nil {
+				start := max(0, loc[0]-60)
+				end := min(len(hay), loc[1]+60)
+				t.Errorf("the %q work item hardcodes %q — that text is the standing instruction for every "+
+					"world anybody creates.\n  …%s…", it.ID, name, body[start:end])
+			}
+		}
+	}
+	if len(stages) < 8 {
+		t.Fatalf("only %d stages scanned (%v) — this guard must not pass by covering nothing", len(stages), stages)
+	}
 }
 
 // The guard is only worth having if it can fail: a name planted in a temporary prompt file must be
