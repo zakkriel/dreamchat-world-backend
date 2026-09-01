@@ -1229,8 +1229,11 @@ func TestFillFromIdentity_SomeoneNamedTooLateSettlesThinRatherThanRefusing(t *te
 	if kar == nil {
 		t.Fatal("Kar was dropped — a name canon references must exist, or the reference dangles")
 	}
-	if kar.Relevance != 1 {
-		t.Errorf("Kar sits at relevance %d with nothing authored; settling records the level actually reached", kar.Relevance)
+	// Either authored to the level they claim, or settled to the level they reached — never a claim with
+	// nothing behind it. Since the lives now run AFTER canon, a person named during the geography wave is
+	// usually authored properly rather than settled, which is the better of the two outcomes.
+	if kar.Relevance >= 2 && personOwing(*kar) {
+		t.Errorf("Kar sits at relevance %d and owes content nobody authored", kar.Relevance)
 	}
 	// Settling must not touch anyone who WAS authored.
 	for _, a := range doc.Cast {
@@ -2015,4 +2018,225 @@ func (d *danglingOnceDriver) Generate(ctx context.Context, req GenRequest) (stri
 		return "", err
 	}
 	return string(out), nil
+}
+
+// KNOWING SOMETHING IS MATTERING. The scaffold assigns relevance from a brief; canon is authored
+// afterwards and decides who was in the room. Nothing reconciled the two, so measured across three probe
+// runs, 3, 7 and 12 people held DIRECT knowledge of a canon event while sitting at relevance 1 — a name,
+// a descriptor and a tag. Ask them about the thing they watched happen and you get one line.
+func TestCanonPromotesTheWitnessesItPutInTheRoom(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "The Chamber", Relevance: 2, Descriptor: "d", Kind: "k", ExtentClass: "small"}}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Witness", StartsIn: "The Chamber", Relevance: 1, Tag: "t", Descriptor: "d"},
+		{CanonicalName: "Twice", StartsIn: "The Chamber", Relevance: 1, Tag: "t", Descriptor: "d"},
+		{CanonicalName: "Gossip", StartsIn: "The Chamber", Relevance: 1, Tag: "t", Descriptor: "d"},
+		{CanonicalName: "Bystander", StartsIn: "The Chamber", Relevance: 1, Tag: "t", Descriptor: "d"},
+		{CanonicalName: "AlreadyRich", StartsIn: "The Chamber", Relevance: 3, Tag: "t", Descriptor: "d"},
+	}
+	doc.History = []genesisEvent{
+		{WhatHappened: "the skip", Where: "The Chamber", Who: []string{"Witness"},
+			Knowledge: []genesisKnowledge{
+				{Holder: "Witness", EpistemicType: "direct", Content: "x"},
+				{Holder: "Twice", EpistemicType: "direct", Content: "x"},
+				{Holder: "Gossip", EpistemicType: "rumor", Content: "x"},
+				{Holder: "AlreadyRich", EpistemicType: "direct", Content: "x"},
+			}},
+		{WhatHappened: "the licences", Where: "The Chamber", Who: []string{"Twice"},
+			Knowledge: []genesisKnowledge{
+				{Holder: "Twice", EpistemicType: "direct", Content: "x"},
+				{Holder: "Gossip", EpistemicType: "told", Content: "x"},
+			}},
+	}
+
+	promoteCanonWitnesses(doc)
+	got := map[string]int{}
+	for _, a := range doc.Cast {
+		got[a.CanonicalName] = a.Relevance
+	}
+
+	if got["Witness"] != 2 {
+		t.Errorf("Witness saw one event and sits at %d — relevance 2 is what holding a scene takes", got["Witness"])
+	}
+	if got["Twice"] != 3 {
+		t.Errorf("Twice saw two events and sits at %d — somebody history keeps returning to has an interior", got["Twice"])
+	}
+	// Hearsay is not being part of the story, or every rumour in the world costs an inner life.
+	if got["Gossip"] != 1 {
+		t.Errorf("Gossip only heard about it and was promoted to %d", got["Gossip"])
+	}
+	if got["Bystander"] != 1 {
+		t.Errorf("Bystander is in no event and was promoted to %d", got["Bystander"])
+	}
+	// It is a ratchet, never a reassignment.
+	if got["AlreadyRich"] != 3 {
+		t.Errorf("AlreadyRich fell to %d", got["AlreadyRich"])
+	}
+}
+
+// The canon must be VISIBLE to the calls that come after it, or the ordering is decorative. It was not
+// rendered at all: the people wave was told "the events already exist, attach your knowledge to them"
+// while being shown zero events.
+func TestFillPrompt_ShowsTheCanonToTheCallsThatFollowIt(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "The Chamber", Descriptor: "one lamp"}, {CanonicalName: "Elsewhere", Descriptor: "far"}}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Del Vas", Descriptor: "d", Tag: "t", StartsIn: "The Chamber"},
+		{CanonicalName: "Nobody", Descriptor: "d", Tag: "t", StartsIn: "Elsewhere"},
+	}
+	doc.History = []genesisEvent{
+		{WhatHappened: "the pulse skipped", Where: "The Chamber", Who: []string{"Del Vas"},
+			Knowledge: []genesisKnowledge{{Holder: "Del Vas", EpistemicType: "direct", Content: "she heard it and signed anyway"}}},
+		{WhatHappened: "something far away", Where: "Elsewhere", Who: []string{"Nobody"},
+			Knowledge: []genesisKnowledge{{Holder: "Nobody", EpistemicType: "direct", Content: "irrelevant here"}}},
+	}
+
+	p := buildWorldFillPrompt(&worldIdentity{}, workItem{
+		ID: "people", Kind: "content", Members: []string{"Del Vas"},
+		Scope: fillScope{Places: []string{"The Chamber"}, People: []string{"Del Vas"}},
+	}, testBrief, nil, doc, "")
+
+	if !strings.Contains(p, "the pulse skipped") {
+		t.Fatal("a lives call cannot see the canon it is told to attach knowledge to")
+	}
+	if !strings.Contains(p, "she heard it and signed anyway") {
+		t.Error("the call sees the event but not who knows what about it, which is the half that matters")
+	}
+	if !strings.Contains(p, "(direct)") {
+		t.Error("the epistemic type is not shown, so the call cannot tell a witness from a rumour")
+	}
+	// Still scoped: an event somewhere this call cannot see is not its business.
+	if strings.Contains(p, "something far away") {
+		t.Error("a scoped call was shown canon from outside its mandate")
+	}
+}
+
+// END TO END: a person the scaffold named at relevance 1, whom the canon then put in the room, must come
+// out of the fill able to answer for what they saw — with a standing, a manner, and something they will
+// not say. Asserting promoteCanonWitnesses directly is not enough: deleting its call site, or moving it
+// after the lives, leaves a unit test green and ships a hollow witness. That mutation survived once here.
+func TestFillFromIdentity_AWitnessNamedThinComesOutAbleToSpeak(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Who holds direct knowledge of something?
+	direct := map[string]bool{}
+	for _, h := range doc.History {
+		present := map[string]bool{}
+		for _, w := range h.Who {
+			present[strings.TrimSpace(w)] = true
+		}
+		for _, k := range h.Knowledge {
+			if k.EpistemicType == "direct" || present[strings.TrimSpace(k.Holder)] {
+				direct[strings.TrimSpace(k.Holder)] = true
+			}
+		}
+	}
+	if len(direct) == 0 {
+		t.Fatal("no canon witness in the document, so this test proves nothing")
+	}
+
+	hollow, bystanders := 0, 0
+	for _, a := range doc.Cast {
+		name := strings.TrimSpace(a.CanonicalName)
+		if !direct[name] {
+			if a.Relevance == 1 {
+				bystanders++
+			}
+			continue
+		}
+		if a.Relevance < 2 {
+			t.Errorf("%q holds direct knowledge of canon at relevance %d", name, a.Relevance)
+			hollow++
+			continue
+		}
+		// The promotion has to have been AUTHORED, not merely recorded.
+		if strings.TrimSpace(a.Standing) == "" || strings.TrimSpace(a.SpeechManner) == "" || strings.TrimSpace(a.Hiding) == "" {
+			t.Errorf("%q was promoted for witnessing canon but nobody authored them — standing=%q manner=%q hiding=%q",
+				name, a.Standing, a.SpeechManner, a.Hiding)
+			hollow++
+		}
+	}
+	if hollow > 0 {
+		t.Errorf("%d witness(es) cannot answer for what they saw", hollow)
+	}
+	// And promotion must not sweep the whole cast: somebody who was in no event stays complete at 1.
+	if bystanders == 0 {
+		t.Error("every person in this world witnessed something — promotion cannot be distinguished from a blanket raise")
+	}
+}
+
+// lateWitnessDriver reproduces the hole the ninth probe run found: a closing pass authors a person canon
+// referenced, and that person turns out to be a DIRECT witness — invented after promotion already ran, so
+// hollow by construction. 7 of 17 witnesses came out that way.
+type lateWitnessDriver struct {
+	real Driver
+	mu   sync.Mutex
+	done bool
+}
+
+func (d *lateWitnessDriver) Name() string { return "late-witness" }
+func (d *lateWitnessDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *lateWitnessDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	id := fillBatchID(req.Prompt)
+	// Canon names somebody who does not exist and gives them DIRECT knowledge.
+	if id == "canon" {
+		d.mu.Lock()
+		first := !d.done
+		d.done = true
+		d.mu.Unlock()
+		if first {
+			subject := fillSubject(req.Prompt)
+			return `{"empty":false,"history":[{"what_happened":"the ledger was corrected by hand in ` + subject + `",` +
+				`"where":"` + subject + `","who":["Testigo Tardío"],"knowledge":[` +
+				`{"holder":"Testigo Tardío","epistemic_type":"direct","content":"they held the lamp while it was done"},` +
+				`{"holder":"Keeper Of ` + subject + `","epistemic_type":"direct","content":"they did it"}]}]}`, nil
+		}
+	}
+	// The closing pass authors the owed person; the fake honours the level the prompt now demands.
+	if id == "closing" && strings.Contains(req.Prompt, "Testigo Tardío") {
+		return `{"empty":false,"cast":[{"canonical_name":"Testigo Tardío","descriptor":"someone canon named late",` +
+			`"starts_in":"The Counting Room","relevance":1,"tag":"holds a lamp and says nothing"}]}`, nil
+	}
+	return d.real.Generate(ctx, req)
+}
+
+// A witness invented by a closing pass must still come out able to speak. This is the founder's
+// "leftover / second pass" doing the one job that needs it.
+func TestFillFromIdentity_AWitnessInventedLateIsStillAuthored(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &lateWitnessDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("the build was refused: %v", err)
+	}
+	var late *genesisActor
+	for i := range doc.Cast {
+		if doc.Cast[i].CanonicalName == "Testigo Tardío" {
+			late = &doc.Cast[i]
+		}
+	}
+	if late == nil {
+		t.Fatal("the late-named witness is gone, so canon points at nobody")
+	}
+	if late.Relevance < 2 {
+		t.Errorf("a direct witness invented by the closing pass sits at relevance %d — they watched it happen and can only answer with a tag",
+			late.Relevance)
+	}
+	if strings.TrimSpace(late.Standing) == "" || strings.TrimSpace(late.Hiding) == "" {
+		t.Errorf("the late witness was promoted but never authored: standing=%q hiding=%q", late.Standing, late.Hiding)
+	}
 }

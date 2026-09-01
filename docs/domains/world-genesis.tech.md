@@ -182,6 +182,22 @@ changing the schedule; what follows is the map, not the reasoning.
   Adding a belt check without adding its repair is how four live builds were thrown away for a comma.
 - **`fillScope`'s zero value means BLIND**, and a totally empty scope now falls back to the whole
   document with a log line. That default was three bugs in one afternoon.
+- **THE `tag` IS THE COORDINATION MECHANISM, not a cheap label.** It is the only thing besides a name
+  that crosses between parallel calls, and it is why they cohere. Observed 2026-08-31: the scaffold wrote
+  Del Vas's tag as *"signs the monthly part; you heard the skip she omitted"*, and three independent calls
+  that never saw each other's output then gave her a recorded knowledge of *"the pulse was regular"*, a
+  hiding of *"she will not say she heard the skip"*, and a belief that the Gremio killed Octavo while her
+  canon knowledge is the official disease line. Her public position and her private truth contradict each
+  other on purpose, and nothing coordinated that but the tag. Weaken the tag and parallel authoring stops
+  cohering.
+- **Canon is VISIBLE to everything after it, and canon PROMOTES.** Nothing rendered history until
+  2026-08-31, so the lives were told "the events already exist, attach your knowledge to them" while being
+  shown none — the ordering was sequence without information flow and bought nothing. And relevance was
+  assigned by the scaffold before canon existed, so 3, 7 and 12 people across three probe runs held DIRECT
+  knowledge of an event while sitting at relevance 1: a name, a descriptor and a tag. Knowing something is
+  mattering. One direct witness -> 2, two or more -> 3, hearsay promotes nobody.
+- **A witness invented by a closing pass needs the leftover pass.** The closing rounds run after
+  promotion, so a person canon named late was hollow by construction — 7 of 17 witnesses in one run.
 - **Measured 2026-08-31, depth 1:** ~15–20 min, **$0.047–0.058**, 70–100 entities, ~65–90% of them
   complete at relevance 1, ~50–70% input cache hits. Depth above 1 has never been run.
 

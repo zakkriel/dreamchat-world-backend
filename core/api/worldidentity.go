@@ -958,6 +958,69 @@ func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
 	return items
 }
 
+// promoteCanonWitnesses raises anyone the canon put in the room. KNOWING SOMETHING IS MATTERING, and the
+// scaffold could not have known who would: it assigns relevance from a brief, and canon is authored
+// afterwards, so the two were never reconciled.
+//
+// MEASURED 2026-08-31 across three probe runs: 3, 7 and 12 people held DIRECT knowledge of a canon event
+// while sitting at relevance 1. Escribano Orto witnessed three events. Lur was in the room when Onn
+// approved fourteen over-weight licences. Each of them had a name, a descriptor and a tag — so a player
+// who asks them about the thing they watched happen gets one line back. That is not a thin person, it is
+// a hollow one, and it is the fill being wrong rather than slow.
+//
+// It runs between the canon wave and the lives, so a promotion is AUTHORED rather than left owing.
+//
+// One direct witness -> 2, which is what holding a scene takes: a standing, a manner, and one thing they
+// will not say. Two or more -> 3: somebody the world's history keeps returning to has an interior.
+// Second-hand knowledge promotes nobody — hearing a rumour is not being part of the story.
+func promoteCanonWitnesses(doc *genesisDoc) {
+	direct := map[string]int{}
+	for _, h := range doc.History {
+		present := map[string]bool{}
+		for _, w := range h.Who {
+			present[strings.TrimSpace(w)] = true
+		}
+		for _, k := range h.Knowledge {
+			holder := strings.TrimSpace(k.Holder)
+			if k.EpistemicType == "direct" || present[holder] {
+				direct[holder]++
+			}
+		}
+		for w := range present {
+			if _, counted := direct[w]; !counted {
+				direct[w] = 1
+			}
+		}
+	}
+	promoted2, promoted3 := 0, 0
+	for i := range doc.Cast {
+		n := strings.TrimSpace(doc.Cast[i].CanonicalName)
+		seen := direct[n]
+		if seen == 0 {
+			continue
+		}
+		want := 2
+		if seen >= 2 {
+			want = 3
+		}
+		if doc.Cast[i].Relevance >= want {
+			continue
+		}
+		log.Printf("promote: %q witnessed %d canon event(s) at relevance %d — raising to %d, because knowing something is mattering",
+			n, seen, doc.Cast[i].Relevance, want)
+		doc.Cast[i].Relevance = want
+		if want == 3 {
+			promoted3++
+		} else {
+			promoted2++
+		}
+	}
+	if promoted2+promoted3 > 0 {
+		log.Printf("promote: %d witness(es) raised to relevance 2 and %d to 3 — they can now answer for what they saw",
+			promoted2, promoted3)
+	}
+}
+
 // contentSchedule is the parallel half: every wave authors to the relevance the scaffold assigned, and
 // entities left at relevance 1 are ALREADY COMPLETE and cost nothing here. That is the saving.
 //
@@ -965,7 +1028,7 @@ func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
 // location has its description by the time anyone stands in it.
 func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 	concepts := conceptNames(doc)
-	var geography, factions []workItem
+	var geography []workItem
 	for _, top := range topLocations(doc) {
 		tree := locationTree(doc, top)
 		// NOT gated on whether a description is owed. Measured live 2026-08-31: the scaffold returned
@@ -990,31 +1053,41 @@ func contentSchedule(doc *genesisDoc, b depthBudget) [][]workItem {
 			Therefore: "a place nothing joins is not a place",
 		})
 	}
-	for _, f := range factionsOwing(doc) {
-		factions = append(factions, workItem{
-			ID: "faction", Kind: "content", Subject: f,
-			Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: factionMembers(doc, f)},
-			Text: "Author " + f + " and nothing else. What it controls, what it publishes, what it buries. If it is " +
-				"relevance 3, also what it wants, what it would sacrifice for that, and where it sits. Its position on " +
-				"the concepts above, and what it did that its own members disagree about.",
-			Therefore: "an institution is its people's arguments about it",
-		})
-	}
 	waves := [][]workItem{}
 	if len(geography) > 0 {
 		waves = append(waves, geography)
 	}
-	// Canon between the places and the lives, which is where the founder's ordering put it.
+	// Canon between the places and the lives, which is where the founder's ordering put it — and it now
+	// EARNS that position, because the lives can finally see what it wrote.
 	if canon := canonSchedule(doc, b); len(canon) > 0 {
 		waves = append(waves, canon)
 	}
-	if len(factions) > 0 {
-		waves = append(waves, factions)
-	}
-	if people := peoplePacks(doc, concepts); len(people) > 0 {
-		waves = append(waves, people)
-	}
 	return waves
+}
+
+// afterCanonSchedule is everything whose only dependency is the canon: the institutions, the lives, and
+// the way in. One wave, because none of the three reads another's output.
+//
+// They used to be three consecutive barriers, and a wave costs its slowest member, so three barriers cost
+// three slowest members. Merging them is the only speed lever that survived measurement — bounding a
+// call's work did not, because the model writes as much per unit as it likes.
+func afterCanonSchedule(doc *genesisDoc, b depthBudget) []workItem {
+	concepts := conceptNames(doc)
+	var wave []workItem
+	for _, f := range factionsOwing(doc) {
+		wave = append(wave, workItem{
+			ID: "faction", Kind: "content", Subject: f,
+			Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: factionMembers(doc, f)},
+			Text: "Author " + f + " and nothing else. What it controls, what it publishes, what it buries. If it is " +
+				"relevance 3, also what it wants, what it would sacrifice for that, and where it sits. Its position on " +
+				"the concepts above, and what it did that its own members disagree about — the canon below is what it " +
+				"did, so bury what it would bury and publish what it would publish.",
+			Therefore: "an institution is its people's arguments about it",
+		})
+	}
+	wave = append(wave, peoplePacks(doc, concepts)...)
+	wave = append(wave, arrivalWork())
+	return wave
 }
 
 // peoplePacks groups the people who are OWED content — relevance 2 and up — into packs of about ten,
@@ -1065,7 +1138,13 @@ func peoplePacks(doc *genesisDoc, concepts []string) []workItem {
 					"disposition is a person, not a mistake.\n\nAND WHAT THEY KNOW ABOUT THE OTHERS in this pack — " +
 					"what they have right, what they have wrong, what they suspect and cannot prove. A perception " +
 					"belongs to ONE holder, so two of them may contradict each other; that disagreement is the world " +
-					"working. DO NOT INVENT NEW CANON and do not author anyone not named here.",
+					"working.\n\nTHE CANON BELOW IS WHAT THEY LIVED THROUGH, and each event lists what each person " +
+					"already knows about it. Write their inner life so it ACCOUNTS FOR THAT. And note where it must " +
+					"not agree: what a person's record says they know is a public position, and what they privately " +
+					"believe about the same event may be its opposite — a woman whose recorded knowledge is \"the " +
+					"pulse was regular\" and whose hiding is \"she will not say she heard the skip\" is not a " +
+					"contradiction to fix, she is the whole point. DO NOT INVENT NEW CANON and do not author anyone " +
+					"not named here.",
 				Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
 			})
 		}
@@ -1316,12 +1395,16 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		log.Printf("fill: content wave %d (%s) ran %d call(s) together, %d answered", wi+1, wave[0].ID, len(wave), answered)
 	}
 
-	// The arrival is last and alone: the world header, the region, and the way in, into somewhere already
-	// inhabited that already has a history.
-	if frag, err := fillOnce(ctx, seat, id, arrivalWork(), brief, answers, doc); err != nil {
-		log.Printf("fill arrival could not answer: %v", err)
-	} else {
-		mergeFill(doc, frag, "arrival", &tags)
+	// CANON PROMOTES, before the lives are authored. The scaffold assigned relevance from a brief; the
+	// canon wave then decided who was actually in the room. Anyone holding direct knowledge of an event
+	// is raised here so the wave below authors them, rather than shipping a witness who cannot answer for
+	// what they saw.
+	promoteCanonWitnesses(doc)
+
+	// The institutions, the lives and the way in: one wave, because none of them reads another's output.
+	if wave := afterCanonSchedule(doc, b); len(wave) > 0 {
+		answered := runWave(ctx, seat, id, wave, brief, answers, doc, &tags)
+		log.Printf("fill: post-canon wave ran %d call(s) together (factions, lives, arrival), %d answered", len(wave), answered)
 	}
 	// Closing passes: pay what canon owes instead of refusing it. Two rounds, because authoring the
 	// owed places can itself name a person, and that person is then owed. Founder 2026-08-28: a gap is
@@ -1337,10 +1420,13 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			Kind:  "batch",
 			Scope: fillScope{Whole: true},
 			Text: fmt.Sprintf("Author exactly these and nothing else: %d owed person(s) and %d owed place(s), listed under STILL OWED.\n\n"+
-				"ALL OF THEM AT RELEVANCE 1. Canon named them; nobody has met them. A name, a one-line descriptor, a "+
-				"kind or a place to stand, and a tag — and nothing more. Do not give them a standing, a manner, a "+
-				"secret or an inner life: this pass runs after the one that authors those, so anything deeper you "+
-				"write here is content nobody will ever finish.",
+				"MOSTLY AT RELEVANCE 1: canon named them, nobody has met them, so a name, a one-line descriptor, a "+
+				"kind or a place to stand, and a tag — nothing more.\n\n"+
+				"THE EXCEPTION IS A WITNESS. If the canon below gives one of these people DIRECT knowledge of an "+
+				"event, or puts them in the room when it happened, they are relevance 2 and they need what that "+
+				"takes: a standing, how they speak, one thing they will not say, and a trait with the manner it "+
+				"shows in. A person who watched the thing happen and can only answer with one line is the single "+
+				"worst object this pipeline can produce.",
 				len(people), len(places)),
 			Therefore: "a world whose canon points at nothing cannot be stored or walked into",
 		}
@@ -1362,6 +1448,21 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 		}
 		mergeFill(doc, frag, "closing", &tags)
 	}
+	// THE LEFTOVER PASS. Founder's ordering, 2026-08-28: "places -> key history -> lives -> objects ->
+	// leftover / second pass". The closing rounds author people canon referenced but nobody created, and
+	// they run after promotion — so a witness invented there was hollow by construction. Measured
+	// 2026-08-31: 7 of 17 canon witnesses came out unable to answer for what they saw, and every one of
+	// them was created by a closing pass.
+	//
+	// One wave, only what is newly owed, and only people: the closing pass cannot invent a location that
+	// needs describing without also naming it, and geography has already run.
+	promoteCanonWitnesses(doc)
+	if leftover := peoplePacks(doc, conceptNames(doc)); len(leftover) > 0 {
+		answered := runWave(ctx, seat, id, leftover, brief, answers, doc, &tags)
+		log.Printf("fill: leftover wave authored %d newly-owed pack(s), %d answered — witnesses the closing pass invented",
+			len(leftover), answered)
+	}
+
 	if review != nil {
 		breaches, err := reviewFill(ctx, review, id, doc)
 		if err != nil {
@@ -2579,6 +2680,74 @@ func buildWorldFillPrompt(id *worldIdentity, item workItem, brief string, answer
 			sb.WriteString("\n    OWED: the content relevance ")
 			sb.WriteString(strconv.Itoa(a.Relevance))
 			sb.WriteString(" demands")
+		}
+		sb.WriteString("\n")
+	}
+	// THE CANON, and the objects. Neither was ever rendered, which made the ordering decorative: canon ran
+	// before the lives so the lives could be authored knowing what they lived through, and then the lives
+	// could not see it. What coherence there was came from the one-line `tag` acting as a shared seed
+	// across parallel calls — which works, and is not a substitute for the events themselves.
+	//
+	// Scoped like everything else: an event is shown when it happened somewhere this call can see, or
+	// when somebody this call is authoring was there or knows it.
+	shown := 0
+	for _, h := range soFar.History {
+		if shown >= 24 {
+			break
+		}
+		relevant := whole || want(scope.Places, strings.TrimSpace(h.Where))
+		if !relevant {
+			for _, n := range h.Who {
+				if want(scope.People, strings.TrimSpace(n)) {
+					relevant = true
+					break
+				}
+			}
+		}
+		if !relevant {
+			for _, k := range h.Knowledge {
+				if want(scope.People, strings.TrimSpace(k.Holder)) {
+					relevant = true
+					break
+				}
+			}
+		}
+		if !relevant {
+			continue
+		}
+		shown++
+		sb.WriteString("- happened in \"")
+		sb.WriteString(h.Where)
+		sb.WriteString("\": ")
+		sb.WriteString(h.WhatHappened)
+		if len(h.Who) > 0 {
+			sb.WriteString("\n    there: ")
+			sb.WriteString(strings.Join(h.Who, ", "))
+		}
+		for _, k := range h.Knowledge {
+			sb.WriteString("\n    ")
+			sb.WriteString(k.Holder)
+			sb.WriteString(" knows (")
+			sb.WriteString(k.EpistemicType)
+			sb.WriteString("): ")
+			sb.WriteString(k.Content)
+		}
+		sb.WriteString("\n")
+	}
+	for _, o := range soFar.Objects {
+		in, held := strings.TrimSpace(o.Where.InPlace), strings.TrimSpace(o.Where.CarriedBy)
+		if !whole && !want(scope.Places, in) && !want(scope.People, held) {
+			continue
+		}
+		sb.WriteString("- object \"")
+		sb.WriteString(o.CanonicalName)
+		sb.WriteString("\"\n    looks like: ")
+		sb.WriteString(o.Descriptor)
+		if in != "" {
+			sb.WriteString("\n    sits in: \"" + in + "\"")
+		}
+		if held != "" {
+			sb.WriteString("\n    carried by: \"" + held + "\"")
 		}
 		sb.WriteString("\n")
 	}

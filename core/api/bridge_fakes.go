@@ -1156,6 +1156,12 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 			}, {
 				"canonical_name": "Runner Of " + subject, "descriptor": "a pair of hands that never stops",
 				"starts_in": subject, "relevance": 1, "tag": "never finishes a sentence",
+			}, {
+				// A BYSTANDER: in no canon event, and so still complete at relevance 1 after promotion.
+				// Without one, the fake's whole cast witnessed something and promotion raised everybody,
+				// which hid the thing relevance exists to do.
+				"canonical_name": "Sweeper Of " + subject, "descriptor": "someone who was not there",
+				"starts_in": subject, "relevance": 1, "tag": "arrives after everyone has gone",
 			}},
 		})), nil
 	case "geography":
