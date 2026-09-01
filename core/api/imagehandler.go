@@ -222,6 +222,14 @@ const imageBatchLimit = 5
 
 var spriteEmotionOrder = []string{"neutral", "happy", "angry", "sad"}
 
+// spriteNeutralEmotion is the cell the ANCHOR doubles as, and
+// spriteEmotionsWithoutNeutral is what a pack asks for when it does.
+// Kept next to spriteEmotionOrder so adding a fifth emotion cannot silently
+// leave one of the two lists behind.
+const spriteNeutralEmotion = "neutral"
+
+var spriteEmotionsWithoutNeutral = []string{"happy", "angry", "sad"}
+
 func spriteVariantKey(emotion string) string {
 	return "emotion_" + emotion
 }
@@ -249,16 +257,30 @@ var spriteEmotionPrompts = map[string]string{
 	"sad":     "downcast eyes, sorrowful expression",
 }
 
-// spritePackVariants composes the four caller-defined cells for one actor: the entity's authored
-// appearance, the framing and consistency clauses, then the emotion. The appearance is the same
-// prose the identity was registered with — a picture is of the THING, and the thing is described
-// once (portraitAppearance).
-func spritePackVariants(appearance string) []imagePackVariant {
-	out := make([]imagePackVariant, 0, len(spriteEmotionOrder))
-	for _, emotion := range spriteEmotionOrder {
+// spriteCellPrompt composes one caller-defined cell: the entity's authored
+// appearance, the framing and consistency clauses, then the emotion. The
+// appearance is the same prose the identity was registered with — a picture is
+// of the THING, and the thing is described once (portraitAppearance).
+//
+// The ANCHOR is minted with this same prompt at the neutral emotion, which is
+// what lets the anchor BE the neutral sprite instead of a fifth render nobody
+// looks at (see fillCharacterSpritePacks). Anchor and cell must therefore keep
+// sharing this function: two prompt builders would drift, and the drift would
+// show as a neutral face framed differently from the other three.
+func spriteCellPrompt(appearance, emotion string) string {
+	return appearance + ". " + spriteFramingPrompt + ". " + spriteConsistencyPrompt +
+		". Expression: " + spriteEmotionPrompts[emotion] + "."
+}
+
+// spritePackVariants composes the cells to request for one actor. It takes the
+// emotion list rather than assuming all four: when the anchor was just minted
+// as the neutral sprite, only the remaining three are generated.
+func spritePackVariants(appearance string, emotions []string) []imagePackVariant {
+	out := make([]imagePackVariant, 0, len(emotions))
+	for _, emotion := range emotions {
 		out = append(out, imagePackVariant{
 			Key:    spriteVariantKey(emotion),
-			Prompt: appearance + ". " + spriteFramingPrompt + ". " + spriteConsistencyPrompt + ". Expression: " + spriteEmotionPrompts[emotion] + ".",
+			Prompt: spriteCellPrompt(appearance, emotion),
 		})
 	}
 	return out
@@ -398,12 +420,27 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 			}
 			continue
 		}
+		// neutralFromAnchor is the anchor asset when this run minted it, and it
+		// doubles as the neutral sprite.
+		//
+		// A character used to cost FIVE renders: one anchor, then four emotion
+		// cells — and the anchor and the neutral cell are the same picture of the
+		// same face. The anchor is now minted with the neutral cell's exact
+		// prompt (spriteCellPrompt), so it IS that cell and the pack asks for
+		// three. That is 20% of the render bill for a character, and it also
+		// makes the anchor framed identically to the cells it conditions.
+		//
+		// Only for an anchor minted HERE. An identity anchored earlier carries an
+		// unframed portrait, and showing that as one of four sprites would put a
+		// differently-composed neutral beside three framed busts.
+		neutralFromAnchor := ""
 		if len(identity.AnchorAssetIDs) == 0 {
 			bootstrapIssuedAt := time.Now().UTC()
 			bootstrapKey := "portrait-anchor-" + worldID + "-" + t.id + "-" + bootstrapIssuedAt.Format("20060102T150405Z")
 			bootstrapEnv := newGovEnvelope(bootstrapIssuedAt, "character_portrait")
 
-			bootstrapJobID, _, err := client.bootstrapAnchor(ctx, t.id, worldID, styleID, appearance, bootstrapKey, bootstrapEnv)
+			bootstrapJobID, _, err := client.bootstrapAnchor(ctx, t.id, worldID, styleID,
+				spriteCellPrompt(appearance, spriteNeutralEmotion), bootstrapKey, bootstrapEnv)
 			if err != nil {
 				out.Failed++
 				for _, emotion := range spriteEmotionOrder {
@@ -428,6 +465,7 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 					}
 					continue
 				}
+				neutralFromAnchor = bootstrapJob.FinalAssetIDs[len(bootstrapJob.FinalAssetIDs)-1]
 			}
 			identity, err = client.getIdentity(ctx, t.id, worldID)
 			if err != nil {
@@ -438,11 +476,15 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 				continue
 			}
 		}
+		packEmotions := spriteEmotionOrder
+		if neutralFromAnchor != "" {
+			packEmotions = spriteEmotionsWithoutNeutral
+		}
 
 		issuedAt := time.Now().UTC()
 		key := "sprite-pack-" + worldID + "-" + t.id + "-" + issuedAt.Format("20060102T150405Z")
 		env := newGovEnvelope(issuedAt, "expression")
-		jobID, err := client.generateCharacterSpritePack(ctx, t.id, worldID, styleID, spritePackVariants(appearance), key, env)
+		jobID, err := client.generateCharacterSpritePack(ctx, t.id, worldID, styleID, spritePackVariants(appearance, packEmotions), key, env)
 		if err != nil {
 			out.Failed++
 			for _, emotion := range spriteEmotionOrder {
@@ -452,7 +494,28 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		}
 		out.Requested++
 
-		for _, emotion := range spriteEmotionOrder {
+		// The neutral slot is filled straight from the anchor: it is a ready
+		// asset, not work in flight, so it carries asset_id with job_id NULL.
+		// fn_sprite_set returns all four variants or NULL, so this row is what
+		// keeps the set complete while only three cells are generated.
+		if neutralFromAnchor != "" {
+			if _, err := pool.Exec(ctx, `
+				INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, visual_identity_id, asset_id, idempotency_key, issued_at, updated_at)
+				VALUES ($1,'actor',$2,$3,$4,$5,$6,$7, now())
+				ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
+				   SET visual_identity_id = EXCLUDED.visual_identity_id,
+				       asset_id           = EXCLUDED.asset_id,
+				       job_id             = NULL,
+				       idempotency_key    = EXCLUDED.idempotency_key,
+				       issued_at          = EXCLUDED.issued_at,
+				       last_error         = NULL,
+				       updated_at         = now()`,
+				worldID, t.id, spriteNeutralEmotion, identity.ID, neutralFromAnchor, key, issuedAt); err != nil {
+				return out, err
+			}
+		}
+
+		for _, emotion := range packEmotions {
 			if _, err := pool.Exec(ctx, `
 				INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, visual_identity_id, job_id, idempotency_key, issued_at, updated_at)
 				VALUES ($1,'actor',$2,$3,$4,$5,$6,$7, now())
@@ -476,7 +539,7 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		if job.Status != "completed" {
 			out.Failed++
 			errText := job.ErrorCode + ": " + job.ErrorMessage
-			for _, emotion := range spriteEmotionOrder {
+			for _, emotion := range packEmotions {
 				recordSlotError(ctx, pool, worldID, t.id, emotion, errText)
 			}
 			continue
@@ -485,14 +548,14 @@ func fillPortraits(ctx context.Context, pool *pgxpool.Pool, client *imageClient,
 		assets, err := client.resolveEmotionPackAssets(ctx, jobID, identity.ID)
 		if err != nil {
 			out.Failed++
-			for _, emotion := range spriteEmotionOrder {
+			for _, emotion := range packEmotions {
 				recordSlotError(ctx, pool, worldID, t.id, emotion, err.Error())
 			}
 			continue
 		}
 
 		complete := true
-		for _, emotion := range spriteEmotionOrder {
+		for _, emotion := range packEmotions {
 			assetID := assets[emotion]
 			if assetID == "" {
 				complete = false

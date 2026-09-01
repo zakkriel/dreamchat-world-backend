@@ -227,8 +227,12 @@ func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
 	if len(f.requestOrder) < 2 || f.requestOrder[0] != "bootstrap" || f.requestOrder[1] != "generation" {
 		t.Fatalf("request order = %v, want bootstrap before generation", f.requestOrder)
 	}
-	if f.lastBootstrapDescription != descriptor {
-		t.Fatalf("bootstrap description = %q, want actor descriptor %q", f.lastBootstrapDescription, descriptor)
+	// The anchor is minted with the NEUTRAL CELL's prompt, not the bare
+	// descriptor: that is what lets it serve as the neutral sprite instead of a
+	// fifth render of the same face. It still carries the actor's own authored
+	// descriptor — a picture is of the THING — plus the bust framing.
+	if want := spriteCellPrompt(descriptor, spriteNeutralEmotion); f.lastBootstrapDescription != want {
+		t.Fatalf("bootstrap description = %q, want the neutral cell prompt %q", f.lastBootstrapDescription, want)
 	}
 	if got := f.upsertAppearanceByOwner[actorID]; got != descriptor {
 		t.Fatalf("upsert appearance = %q, want descriptor %q", got, descriptor)
@@ -236,8 +240,8 @@ func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
 
 	// The pack cells are CALLER-authored: each prompt carries the actor's own descriptor, the bust
 	// framing, and its emotion phrase. The platform never composes these — pin that they crossed
-	// the wire composed.
-	for _, emotion := range spriteEmotionOrder {
+	// the wire composed. Neutral is absent here BY DESIGN: the anchor is that cell.
+	for _, emotion := range spriteEmotionsWithoutNeutral {
 		prompt := f.lastPackVariantPrompts[spriteVariantKey(emotion)]
 		if !strings.Contains(prompt, descriptor) || !strings.Contains(prompt, spriteFramingPrompt) ||
 			!strings.Contains(prompt, spriteEmotionPrompts[emotion]) {
