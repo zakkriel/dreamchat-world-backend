@@ -70,6 +70,11 @@ func TestSchedule_NamespaceThenContent(t *testing.T) {
 	}
 
 	// Packs cap at ten: the founder's number, and a cost decision rather than a quality one.
+	//
+	// I replaced this with a work-weighted budget on 2026-08-31 to shorten the slowest call, measured it
+	// over two runs, and reverted it: wall clock stayed inside its own noise band (390-540 s, sigma ~55)
+	// while calls went 29 -> 47 and cost doubled. The rewrite is in the git history; the measurement said
+	// no, so head count stands.
 	doc.Cast = nil
 	for i := 0; i < 23; i++ {
 		doc.Cast = append(doc.Cast, genesisActor{
