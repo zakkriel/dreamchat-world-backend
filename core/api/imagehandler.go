@@ -238,13 +238,37 @@ func spriteVariantKey(emotion string) string {
 // pack cells verbatim — it stores, anchors, and reuses variants without knowing what a key means —
 // so what a "happy" bust looks like is this repo's decision, changeable without touching their API.
 const (
-	// spriteFramingPrompt is the visual-novel staging contract: a bust the frontend layers over a
-	// backdrop, so never a full body and never a scene.
-	spriteFramingPrompt = "bust portrait, head and chest only, subject centered, facing viewer, plain uniform background"
+	// spriteFramingPrompt is the visual-novel staging contract: a THREE-QUARTER-LENGTH standing figure
+	// the frontend layers over a backdrop, so never a scene and never a landscape.
+	//
+	// It was a bust — head and chest only — and a bust cannot be staged like a visual novel. Founder,
+	// 2026-09-01, with five reference screenshots: every one of them frames its characters from the head
+	// to about mid-thigh, and the hands are doing half the acting. A hand clasped at the chest, a fist
+	// half-raised, gloved fingers laced — a bust crops all of that away.
+	//
+	// WHY A COMPLETE FIGURE AND NOT A BOTTOM-CROPPED ONE. The frontend anchors sprites `center bottom`
+	// and scales them, so it already crops from the bottom for free: the same asset reads as a
+	// head-and-chest foreground speaker or a fuller standing figure further back, which is exactly the
+	// depth staging the references use — one shows three tiers on screen at once. And the image platform
+	// requires the subject NOT touch the frame edges, because its chroma key needs a clean border
+	// (`jobs.ChromaBackdropInstruction`). A complete figure satisfies both; a pre-cropped one satisfies
+	// neither.
+	//
+	// The BACKGROUND is deliberately not mentioned. The platform owns it: this repo sends
+	// `background: "transparent"` and the platform appends its own flat-magenta backdrop instruction and
+	// keys it out. Saying "plain uniform background" here was a second, weaker instruction for something
+	// across the seam (D-3).
+	spriteFramingPrompt = "three-quarter length standing figure, framed from the top of the head to mid-thigh, " +
+		"both hands visible and unobscured, the whole outfit and its accessories legible, " +
+		"subject centered, standing, facing the viewer at a slight angle"
 	// spriteConsistencyPrompt holds the outfit constant across the four renders of one anchored
 	// identity — the whole reason the variants are one pack against one anchor.
 	spriteConsistencyPrompt = "same character, same outfit, same hairstyle as the reference"
-	// spriteAspectRatio is portrait orientation for a bust.
+	// spriteAspectRatio stays 3:4 even though the framing changed from a bust to a figure. The ratio
+	// decides the box, the framing prompt decides how much body is in it, and 3:4 holds a figure to
+	// mid-thigh — the founder's references do exactly that. A taller 2:3 was tried and reverted: it buys
+	// a little vertical room and costs a cross-repo question, because the platform's mock provider maps
+	// unknown ratios to a square (`providers/mock.dimensionsFor`).
 	spriteAspectRatio = "3:4"
 )
 
