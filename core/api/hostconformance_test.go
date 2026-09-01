@@ -18,10 +18,13 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // hostProbePlaceholder is the token ci/host_conformance.py substitutes with each corpus sentence. The
@@ -147,4 +150,101 @@ func TestGenFillHostProbe(t *testing.T) {
 	}
 	t.Logf("fill probe material: prompt %d bytes, pack of %d in %q, %d place(s)/%d person(s) already authored, schema %d bytes",
 		len(prompt), len(person.Members), person.Subject, len(doc.Places), len(doc.Cast), len(worldFillSchemaJSON))
+}
+
+// TestFillProbe runs THE FILL AND NOTHING ELSE against the real seats: understanding pass, every wave,
+// the reconciliation, the belt. No database, no commit, no kickstart, no play.
+//
+// WHY IT IS NOT THE GENESIS ENDPOINT. The filling stage is the thing under development, and measuring it
+// through `POST /worlds/genesis` measures the whole pipeline: it needs a database, it writes a half-world
+// into production on the way to answering a question about prose, it is cut off by a 900-second proxy
+// edge, and its logs are gone within the hour. This runs the fill in-process, prints the document to a
+// file you can read, and prints the ledger of where every token went.
+//
+// NOT A CI GATE — it spends real money. Run it when you want to know what the fill costs or whether it
+// got better:
+//
+//	FILL_PROBE_DIR=/tmp/fill ci/fill_probe.sh path/to/brief.md
+func TestFillProbe(t *testing.T) {
+	dir := os.Getenv("FILL_PROBE_DIR")
+	if dir == "" {
+		t.Skip("FILL_PROBE_DIR unset — this probe spends real money and is never part of a suite")
+	}
+	briefPath := os.Getenv("FILL_PROBE_BRIEF")
+	if briefPath == "" {
+		t.Fatal("FILL_PROBE_BRIEF unset — the probe needs a brief to fill from")
+	}
+	raw, err := os.ReadFile(briefPath)
+	if err != nil {
+		t.Fatalf("read brief: %v", err)
+	}
+	brief := strings.TrimSpace(string(raw))
+	if brief == "" {
+		t.Fatal("the brief is empty")
+	}
+	depth := 1
+	if v := os.Getenv("FILL_PROBE_DEPTH"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			depth = n
+		}
+	}
+
+	cfg, err := seatConfigFromEnv(os.Getenv)
+	if err != nil {
+		t.Fatalf("seat config: %v", err)
+	}
+	bridge, err := NewBridge(cfg, DefaultDriverFactory, SeatWorldUnderstanding, SeatWorldFill, SeatWorldFillReview)
+	if err != nil {
+		t.Fatalf("bridge: %v", err)
+	}
+	for _, s := range []Seat{SeatWorldUnderstanding, SeatWorldFill, SeatWorldFillReview} {
+		d := bridge.Driver(s.Name)
+		if d == nil {
+			t.Fatalf("seat %s is not bound — set DREAMCHAT_SEAT_DEFAULT or DREAMCHAT_SEATS", s.Name)
+		}
+		t.Logf("seat %-20s -> %s", s.Name, d.Name())
+	}
+
+	// The same cost sink the handler installs, so the probe reports the same dollars production would.
+	ctx, costs := withCostSink(context.Background())
+	start := time.Now()
+	doc, ident, ferr := authorWorld(ctx,
+		bridge.Driver(SeatWorldUnderstanding.Name),
+		bridge.Driver(SeatWorldFill.Name),
+		bridge.Driver(SeatWorldFillReview.Name),
+		brief, nil, nil, nil, depth)
+	wall := time.Since(start)
+	usd, tokIn, tokOut, cached, calls := costs.snapshot()
+
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	// The document is the product of this stage. Write it whether or not the belt accepted it: a refused
+	// document is the one you most want to read.
+	if doc != nil {
+		body, _ := json.MarshalIndent(doc, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, "document.json"), body, 0o644); err != nil {
+			t.Fatalf("write document.json: %v", err)
+		}
+		t.Logf("document.json: %d bytes", len(body))
+	}
+	if ident != nil {
+		body, _ := json.MarshalIndent(ident, "", "  ")
+		_ = os.WriteFile(filepath.Join(dir, "identity.json"), body, 0o644)
+	}
+
+	t.Logf("FILL: wall=%.0fs calls=%d tok_in=%d cached=%d tok_out=%d usd=%.4f depth=%d",
+		wall.Seconds(), calls, tokIn, cached, tokOut, usd, depth)
+	if ferr != nil {
+		// A refusal is a RESULT here, not a test failure: the probe exists to report what the fill did.
+		t.Logf("FILL REFUSED: %v", ferr)
+		return
+	}
+	t.Logf("WORLD: %d location(s), %d person/people, %d faction(s), %d concept(s), %d object(s), %d way(s), %d event(s)",
+		len(doc.Places), len(doc.Cast), len(doc.Factions), len(doc.Concepts), len(doc.Objects), len(doc.Ways), len(doc.History))
+	rel := map[int]int{}
+	for _, a := range doc.Cast {
+		rel[a.Relevance]++
+	}
+	t.Logf("PEOPLE BY RELEVANCE: 1=%d 2=%d 3=%d 4=%d", rel[1], rel[2], rel[3], rel[4])
 }
