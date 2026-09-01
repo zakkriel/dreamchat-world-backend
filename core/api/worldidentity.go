@@ -465,6 +465,26 @@ func dropMalformed(doc *genesisDoc) {
 			log.Printf("malformed: dropping concept %d — no name, or it does not say what it is", i+1)
 			continue
 		}
+		// A concept that says WHAT IT IS and forgets its first sight is not broken, so it is repaired
+		// rather than refused. I added the descriptor rule to the belt and gave it no repair, and a live
+		// depth-3 build was refused at 882 seconds for exactly this — the fourth time in one session that
+		// a new belt check arrived without one.
+		//
+		// The first clause of `what_it_is` IS the first sight. Taking it is bookkeeping, like title-casing
+		// a name; inventing one would be authorship.
+		if strings.TrimSpace(c.Descriptor) == "" {
+			d := strings.TrimSpace(c.WhatItIs)
+			for _, cut := range []string{". ", "; ", " — ", ", "} {
+				if k := strings.Index(d, cut); k > 0 {
+					d = d[:k]
+					break
+				}
+			}
+			d = strings.TrimRight(strings.TrimSpace(d), ".;,")
+			log.Printf("repair: the concept %q had no descriptor — taking one from what it says it is: %q",
+				c.CanonicalName, d)
+			c.Descriptor = d
+		}
 		concepts = append(concepts, c)
 	}
 	doc.Concepts = concepts
@@ -845,9 +865,26 @@ func settleUnauthored(doc *genesisDoc) {
 			doc.Factions[i].Relevance = 1
 		}
 	}
+	owingConcepts := map[string]bool{}
+	for _, n := range conceptsOwing(doc) {
+		owingConcepts[n] = true
+	}
 	for i := range doc.Concepts {
-		if doc.Concepts[i].Relevance >= 2 && strings.TrimSpace(doc.Concepts[i].Contested) == "" {
+		if owingConcepts[strings.TrimSpace(doc.Concepts[i].CanonicalName)] {
+			log.Printf("settle: the concept %q reached relevance 1, not %d",
+				doc.Concepts[i].CanonicalName, doc.Concepts[i].Relevance)
 			doc.Concepts[i].Relevance = 1
+		}
+	}
+	owingObjects := map[string]bool{}
+	for _, n := range objectsOwing(doc) {
+		owingObjects[n] = true
+	}
+	for i := range doc.Objects {
+		if owingObjects[strings.TrimSpace(doc.Objects[i].CanonicalName)] {
+			log.Printf("settle: the object %q reached relevance 1, not %d",
+				doc.Objects[i].CanonicalName, doc.Objects[i].Relevance)
+			doc.Objects[i].Relevance = 1
 		}
 	}
 }
@@ -903,6 +940,7 @@ func ensurePlayableFloor(doc *genesisDoc) {
 	if speakable {
 		return
 	}
+	floorOneConceptAndObject(doc)
 	where := strings.TrimSpace(doc.Places[best].CanonicalName)
 	for i, a := range doc.Cast {
 		if strings.TrimSpace(a.StartsIn) == where {
@@ -956,6 +994,92 @@ func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
 		})
 	}
 	return items
+}
+
+// floorOneConceptAndObject guarantees the world has one thing worth arguing over and one thing worth
+// picking up. The naming stage is told, correctly and forcefully, that most of what it names is relevance
+// 1 — and at depth 3 it applied that to EVERY concept and EVERY object, so neither of the stages that
+// author them ever ran. The concepts call is asked to mark "the ones this world turns on"; when it marks
+// none, the first one it emitted is the one it thought of first.
+func floorOneConceptAndObject(doc *genesisDoc) {
+	argued := false
+	for _, c := range doc.Concepts {
+		if c.Relevance >= 2 {
+			argued = true
+			break
+		}
+	}
+	if !argued && len(doc.Concepts) > 0 {
+		log.Printf("fill: nothing in this world is contested above relevance 1 — promoting %q, the first one named",
+			doc.Concepts[0].CanonicalName)
+		doc.Concepts[0].Relevance = 2
+	}
+	worth := false
+	for _, o := range doc.Objects {
+		if o.Relevance >= 2 {
+			worth = true
+			break
+		}
+	}
+	if !worth && len(doc.Objects) > 0 {
+		log.Printf("fill: nothing in this world is worth picking up above relevance 1 — promoting %q",
+			doc.Objects[0].CanonicalName)
+		doc.Objects[0].Relevance = 2
+	}
+}
+
+// promoteObjectsThatMatter is the object half of the same rule canon already applies to people: what the
+// story touches, matters.
+//
+// MEASURED at depth 3, twice: ALL TWELVE objects came back at relevance 1, so `objectsOwing` found nothing
+// and the wave that authors objects never ran at all — a stage gated on a level nobody ever sets. Two of
+// those objects were carried by relevance-3 people and three were named in canon events.
+//
+// A thing in the hand of somebody who matters, matters. A thing the world's history mentions, matters.
+// Everything else stays furniture, which is correct: most objects in a world are.
+func promoteObjectsThatMatter(doc *genesisDoc) {
+	rich := map[string]bool{}
+	for _, a := range doc.Cast {
+		if a.Relevance >= 3 {
+			rich[strings.TrimSpace(a.CanonicalName)] = true
+		}
+	}
+	for i := range doc.Objects {
+		name := strings.TrimSpace(doc.Objects[i].CanonicalName)
+		if name == "" {
+			continue
+		}
+		reasons := 0
+		why := ""
+		if rich[strings.TrimSpace(doc.Objects[i].Where.CarriedBy)] {
+			reasons++
+			why = "carried by " + doc.Objects[i].Where.CarriedBy
+		}
+		lower := strings.ToLower(name)
+		for _, h := range doc.History {
+			if strings.Contains(strings.ToLower(h.WhatHappened), lower) {
+				reasons++
+				if why != "" {
+					why += " and "
+				}
+				why += "named in canon"
+				break
+			}
+		}
+		if reasons == 0 {
+			continue
+		}
+		want := 2
+		if reasons >= 2 {
+			want = 3
+		}
+		if doc.Objects[i].Relevance >= want {
+			continue
+		}
+		log.Printf("promote: the object %q is %s — raising relevance %d to %d so somebody authors what it is",
+			name, why, doc.Objects[i].Relevance, want)
+		doc.Objects[i].Relevance = want
+	}
 }
 
 // promoteCanonWitnesses raises anyone the canon put in the room. KNOWING SOMETHING IS MATTERING, and the
@@ -1086,8 +1210,57 @@ func afterCanonSchedule(doc *genesisDoc, b depthBudget) []workItem {
 		})
 	}
 	wave = append(wave, peoplePacks(doc, concepts)...)
+	// OBJECTS. The founder's ordering, 2026-08-28: places -> key history -> lives -> OBJECTS. Four of
+	// those had a wave and this one did not, so the thing a player picks up was furniture. It belongs
+	// here because an object's account needs the canon, its location and whoever holds it — all of which
+	// this wave already sees.
+	if owed := objectsOwing(doc); len(owed) > 0 {
+		for _, part := range packNames(owed, 8) {
+			wave = append(wave, workItem{
+				ID: "objects", Kind: "content", Subject: "objects", Members: part,
+				Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: castNames(doc)},
+				Text: "Author the objects NAMED IN THIS ITEM and nothing else. For each: what it actually IS beyond " +
+					"first sight — what it was made for, what it has been used for since, what state it is in, and why " +
+					"that state matters to somebody named below. The canon below is what happened here; if one of these " +
+					"things was part of it, say so in its description. Do not move anything: where each object sits or " +
+					"who carries it is already decided.",
+				Therefore: "a thing a body can pick up and learn nothing from is scenery",
+			})
+		}
+	}
+	// CONCEPTS, same class of gap: named with what they are, and never argued over.
+	if owed := conceptsOwing(doc); len(owed) > 0 {
+		wave = append(wave, workItem{
+			ID: "concepts-deepen", Kind: "content", Subject: "concepts", Members: owed,
+			Scope: fillScope{Places: placeNames(doc), Factions: factionNames(doc), Concepts: concepts, People: castNames(doc)},
+			Text: "Author the bodies of knowledge NAMED IN THIS ITEM and nothing else. For each: what is CONTESTED " +
+				"about it — the disagreement that a competent person can be on the wrong side of — and who teaches or " +
+				"carries it, named from the factions or people below. A craft is taught by a person as readily as by " +
+				"an institution. Do not rename anything and do not invent a new body of knowledge.",
+			Therefore: "a body of knowledge nobody argues over and nobody teaches is a dictionary entry",
+		})
+	}
 	wave = append(wave, arrivalWork())
 	return wave
+}
+
+// packNames splits a plain list of names into calls of at most n. The people packs group by faction and
+// location because a pack shares a context; objects and concepts have no such grouping worth keeping, so
+// they only need bounding.
+func packNames(in []string, n int) [][]string {
+	if n < 1 {
+		n = 1
+	}
+	var out [][]string
+	for len(in) > 0 {
+		k := n
+		if len(in) < k {
+			k = len(in)
+		}
+		out = append(out, in[:k])
+		in = in[k:]
+	}
+	return out
 }
 
 // peoplePacks groups the people who are OWED content — relevance 2 and up — into packs of about ten,
@@ -1168,6 +1341,29 @@ func personOwing(a genesisActor) bool {
 
 func placeOwing(p genesisPlace) bool {
 	return p.Relevance >= 2 && strings.TrimSpace(p.Description) == ""
+}
+
+// objectsOwing and conceptsOwing complete the set. Objects and concepts were the two entity kinds with no
+// content stage at all: named once and never authored (SPEC-049). Measured at depth 3 — 12 objects for 35
+// locations and 76 people, six of them marked relevance 2, a level nothing wrote a word for.
+func objectsOwing(doc *genesisDoc) []string {
+	var out []string
+	for _, o := range doc.Objects {
+		if o.Relevance >= 2 && strings.TrimSpace(o.Description) == "" {
+			out = append(out, strings.TrimSpace(o.CanonicalName))
+		}
+	}
+	return out
+}
+
+func conceptsOwing(doc *genesisDoc) []string {
+	var out []string
+	for _, c := range doc.Concepts {
+		if c.Relevance >= 2 && (strings.TrimSpace(c.Contested) == "" || strings.TrimSpace(c.TaughtBy) == "") {
+			out = append(out, strings.TrimSpace(c.CanonicalName))
+		}
+	}
+	return out
 }
 
 func factionsOwing(doc *genesisDoc) []string {
@@ -1400,6 +1596,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	// is raised here so the wave below authors them, rather than shipping a witness who cannot answer for
 	// what they saw.
 	promoteCanonWitnesses(doc)
+	promoteObjectsThatMatter(doc)
 
 	// The institutions, the lives and the way in: one wave, because none of them reads another's output.
 	if wave := afterCanonSchedule(doc, b); len(wave) > 0 {
@@ -2881,6 +3078,8 @@ func deepenFaction(have *genesisFaction, add genesisFaction) {
 func deepenConcept(have *genesisConcept, add genesisConcept) {
 	ratchetRelevance(&have.Relevance, add.Relevance)
 	fillIfEmpty(&have.Tag, add.Tag)
+	fillIfEmpty(&have.Descriptor, add.Descriptor)
+	fillIfEmpty(&have.WhatItIs, add.WhatItIs)
 	fillIfEmpty(&have.Contested, add.Contested)
 	fillIfEmpty(&have.TaughtBy, add.TaughtBy)
 }
@@ -2888,6 +3087,7 @@ func deepenConcept(have *genesisConcept, add genesisConcept) {
 func deepenObject(have *genesisObject, add genesisObject) {
 	ratchetRelevance(&have.Relevance, add.Relevance)
 	fillIfEmpty(&have.Tag, add.Tag)
+	fillIfEmpty(&have.Description, add.Description)
 	// Placement is not deepened: an object is in exactly one somewhere, and two waves disagreeing about
 	// where is a conflict the belt should see rather than a gap to fill.
 }

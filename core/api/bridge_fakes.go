@@ -1271,6 +1271,36 @@ func (f *fakeWorldFillDriver) Generate(_ context.Context, req GenRequest) (strin
 			cast = append(cast, person)
 		}
 		return string(mustJSON(map[string]any{"empty": false, "cast": cast})), nil
+	case "objects":
+		if len(members) == 0 {
+			return "", fmt.Errorf("%s: objects with no members", f.name)
+		}
+		// Authors what each thing IS, and never moves it: placement was decided when it was named.
+		rows := make([]map[string]any, 0, len(members))
+		for _, m := range members {
+			rows = append(rows, map[string]any{
+				"canonical_name": m.Name, "descriptor": "a book open at the current page",
+				"kind": "ledger", "relevance": m.Relevance, "tag": "heavier than it looks",
+				"description": "Kept in the room where the tally is agreed, and corrected by hand twice that anyone " +
+					"will admit to. The current page is the only one anybody is allowed to read.",
+				"where": map[string]any{"in_place": "The Counting Room"},
+			})
+		}
+		return string(mustJSON(map[string]any{"empty": false, "objects": rows})), nil
+	case "concepts-deepen":
+		if len(members) == 0 {
+			return "", fmt.Errorf("%s: concepts-deepen with no members", f.name)
+		}
+		rows := make([]map[string]any, 0, len(members))
+		for _, m := range members {
+			rows = append(rows, map[string]any{
+				"canonical_name": m.Name, "descriptor": "the doctrine of the written tally",
+				"what_it_is": "the doctrine that a written tally outranks anyone's memory of the night",
+				"contested":  "whether a page corrected by hand is still the account",
+				"taught_by":  "The Tally", "relevance": m.Relevance, "tag": "what is written arrived",
+			})
+		}
+		return string(mustJSON(map[string]any{"empty": false, "concepts": rows})), nil
 	case "arrival":
 		arrival := map[string]any{
 			"empty": false,
@@ -1428,7 +1458,8 @@ func fillOwed(prompt string) (people, places []string) {
 func fillBatchID(prompt string) string {
 	// The layered fill (design 2026-08-31, ADR-P027): a namespace, then content waves, then the arrival.
 	for _, id := range []string{
-		"concepts", "scaffold-1", "scaffold-2", "geography", "canon", "faction", "people",
+		"concepts-deepen", "concepts", "scaffold-1", "scaffold-2", "geography", "canon", "faction",
+		"objects", "people",
 		"arrival", "closing", "repair",
 	} {
 		if strings.Contains(prompt, "\nid: "+id+"\n") {

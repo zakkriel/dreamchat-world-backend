@@ -203,6 +203,7 @@ type genesisObject struct {
 	Relevance     int    `json:"relevance"`
 	Tag           string `json:"tag,omitempty"`
 	Descriptor    string `json:"descriptor"`
+	Description   string `json:"description,omitempty"`
 	CanonicalName string `json:"canonical_name"`
 	Kind          string `json:"kind"`
 	Where         struct {
@@ -515,6 +516,8 @@ func (d *genesisDoc) validate() error {
 			return refuse("the object %q has no kind", name)
 		case !validRelevance(o.Relevance):
 			return refuse("the object %q has relevance %d, outside 1-4", name, o.Relevance)
+		case o.Relevance >= 2 && strings.TrimSpace(o.Description) == "":
+			return refuse("the object %q is relevance %d but says only what it looks like — what is it for, and what state is it in", name, o.Relevance)
 		case in == "" && held == "":
 			return refuse("the object %q is nowhere — it must sit in a place or be carried by someone", name)
 		case in != "" && held != "":
@@ -575,8 +578,14 @@ func (d *genesisDoc) validate() error {
 			return refuse("%q is a concept and also a place, a person or a faction", name)
 		case strings.TrimSpace(c.WhatItIs) == "":
 			return refuse("the concept %q does not say what it is", name)
+		// Structural at every level: a descriptor is how a body of knowledge is shown at all. Measured at
+		// depth 3 — one concept arrived at relevance 3 with this empty.
+		case strings.TrimSpace(c.Descriptor) == "":
+			return refuse("the concept %q has no descriptor", name)
 		case !validRelevance(c.Relevance):
 			return refuse("the concept %q has relevance %d, outside 1-4", name, c.Relevance)
+		case c.Relevance >= 2 && strings.TrimSpace(c.TaughtBy) == "":
+			return refuse("the concept %q is relevance %d but nobody teaches or carries it", name, c.Relevance)
 		case c.Relevance >= 2 && strings.TrimSpace(c.Contested) == "":
 			return refuse("the concept %q is relevance %d but nothing about it is contested — a body of knowledge nobody argues over is a dictionary entry", name, c.Relevance)
 		// A PERSON or a faction. The first version accepted only a faction, and one live build filled it
