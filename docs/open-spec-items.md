@@ -1969,6 +1969,37 @@ location and one person.
 
 **Status, newest first.**
 
+**BUILT 2026-09-01.** Objects and concepts now have a content stage in the post-canon wave, and — the part
+that mattered more — something that decides they are worth one.
+
+Measured at depth 3, same brief and seats:
+
+|  | before | after |
+|---|---|---|
+| objects **authored** (a real description) | **0 of 12** | **2 of 16** |
+| concepts with a descriptor | 2 of 8 | **11 of 11** |
+| concepts with a teacher | 3 of 8 | **7 of 11** |
+
+**The stage alone did nothing**, which is the useful part. Both waves are gated on relevance ≥2 and the
+naming stage marked *every* object and *every* concept relevance 1 — correctly, since it is told most of
+what it names is 1. The first live run after building the stages authored exactly zero objects: a stage
+fired by a level nobody sets.
+
+What fixed it is the rule canon already applies to people. **What the story touches, matters:** an object
+the canon names, or one carried by somebody at relevance 3, is promoted; both, and it reaches 3. Everything
+else stays furniture, because most objects in a world are. Plus a floor like the one for locations and
+people — one thing worth arguing over, one worth picking up.
+
+**And a fifth belt check arrived without a repair path.** Making a concept's `descriptor` structural
+refused a live depth-3 build at 882 seconds over *"the concept El Silencio del Parte has no descriptor"*. A
+concept that says what it is and forgets its first sight is not broken: the first clause of `what_it_is`
+**is** the first sight, so it is taken, the way a name is title-cased.
+
+**Still open, as a budget question rather than a gap:** two authored objects in a city and its region is
+thin. Promotion is deliberately narrow, so volume is governed by how often canon names a thing — which is
+`SPEC-048`'s per-kind depth budget, not this entry.
+
+
 **OPEN, discovered 2026-08-31** while answering whether the fill was ready.
 
 The founder's 2026-08-28 ordering was **places → key history → lives → objects**. Four of those have a

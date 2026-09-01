@@ -2240,3 +2240,284 @@ func TestFillFromIdentity_AWitnessInventedLateIsStillAuthored(t *testing.T) {
 		t.Errorf("the late witness was promoted but never authored: standing=%q hiding=%q", late.Standing, late.Hiding)
 	}
 }
+
+// SPEC-049: objects and concepts were the two entity kinds with NO content stage — named once and never
+// authored. The founder's 2026-08-28 ordering was places -> key history -> lives -> OBJECTS, and four of
+// those had a wave. Measured at depth 3: 12 objects for 35 locations and 76 people, six marked relevance 2
+// with nothing written for it, and a relevance-3 concept with an empty descriptor.
+func TestObjectsAndConceptsAreAuthoredNotJustNamed(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, NewFakeWorldFillDriver(), NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	authored, thin := 0, 0
+	for _, o := range doc.Objects {
+		if o.Relevance >= 2 {
+			if strings.TrimSpace(o.Description) == "" {
+				t.Errorf("the object %q is relevance %d and says only what it looks like", o.CanonicalName, o.Relevance)
+			} else {
+				authored++
+			}
+			continue
+		}
+		thin++
+	}
+	if authored == 0 {
+		t.Error("no object was authored past its name — the thing a player picks up is furniture")
+	}
+	for _, c := range doc.Concepts {
+		if strings.TrimSpace(c.Descriptor) == "" {
+			t.Errorf("the concept %q has no descriptor at relevance %d", c.CanonicalName, c.Relevance)
+		}
+		if c.Relevance >= 2 && strings.TrimSpace(c.TaughtBy) == "" {
+			t.Errorf("the concept %q is relevance %d and nobody teaches it", c.CanonicalName, c.Relevance)
+		}
+	}
+	// The naming leash must STILL be unable to describe an object, or the cheap stage gets expensive again.
+	if strings.Contains(worldScaffoldSchemaJSON, `"description"`) {
+		var s map[string]any
+		if err := json.Unmarshal([]byte(worldScaffoldSchemaJSON), &s); err == nil {
+			objs := s["properties"].(map[string]any)["objects"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+			if _, leaked := objs["description"]; leaked {
+				t.Error("a naming call can describe an object, which is how the naming stage became 62.8% of output")
+			}
+		}
+	}
+}
+
+// An object or concept nobody authored records the level it reached rather than costing the world — the
+// same settlement every other kind already gets.
+func TestSettleUnauthored_CoversObjectsAndConcepts(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Objects = []genesisObject{
+		{CanonicalName: "Owed", Descriptor: "d", Kind: "k", Relevance: 2},
+		{CanonicalName: "Done", Descriptor: "d", Kind: "k", Relevance: 2, Description: "authored"},
+	}
+	doc.Concepts = []genesisConcept{
+		{CanonicalName: "Owed", Descriptor: "d", WhatItIs: "w", Relevance: 2},
+		{CanonicalName: "Done", Descriptor: "d", WhatItIs: "w", Relevance: 2, Contested: "c", TaughtBy: "f"},
+	}
+	settleUnauthored(doc)
+	if doc.Objects[0].Relevance != 1 {
+		t.Errorf("an object owing a description sits at %d", doc.Objects[0].Relevance)
+	}
+	if doc.Objects[1].Relevance != 2 {
+		t.Errorf("an authored object was demoted to %d", doc.Objects[1].Relevance)
+	}
+	if doc.Concepts[0].Relevance != 1 {
+		t.Errorf("a concept owing a teacher sits at %d", doc.Concepts[0].Relevance)
+	}
+	if doc.Concepts[1].Relevance != 2 {
+		t.Errorf("an authored concept was demoted to %d", doc.Concepts[1].Relevance)
+	}
+}
+
+// A concept that says WHAT IT IS and forgets its first sight is repaired, not refused. I added the
+// descriptor rule to the belt with no repair path and a live depth-3 build was thrown away at 882 seconds
+// for it — the fourth new belt check in one session to arrive without one.
+func TestConceptWithoutADescriptorIsRepairedNotRefused(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Concepts = []genesisConcept{
+		{CanonicalName: "El Silencio del Parte", Relevance: 1,
+			WhatItIs: "the practice of omitting a heard irregularity from the monthly report; it is never written down"},
+		{CanonicalName: "Kept", Descriptor: "already had one", Relevance: 1, WhatItIs: "something else"},
+		{CanonicalName: "Hopeless", Relevance: 1},
+	}
+	dropMalformed(doc)
+
+	if len(doc.Concepts) != 2 {
+		t.Fatalf("concepts = %d, want 2 — one repaired, one kept, one with nothing to say dropped", len(doc.Concepts))
+	}
+	got := doc.Concepts[0].Descriptor
+	if got != "the practice of omitting a heard irregularity from the monthly report" {
+		t.Errorf("descriptor = %q — it must be the first clause of what it says it is, not the whole paragraph", got)
+	}
+	if doc.Concepts[1].Descriptor != "already had one" {
+		t.Errorf("an existing descriptor was overwritten with %q", doc.Concepts[1].Descriptor)
+	}
+	// And the belt must now accept it, or the repair is decorative.
+	doc.Concepts[0].Relevance = 1
+	for _, c := range doc.Concepts {
+		if strings.TrimSpace(c.Descriptor) == "" {
+			t.Errorf("the concept %q still has no descriptor after the repair", c.CanonicalName)
+		}
+	}
+}
+
+// The object half of the rule canon already applies to people: what the story touches, matters. Measured
+// at depth 3 twice — ALL TWELVE objects came back at relevance 1, so the stage that authors objects never
+// ran. Two were carried by relevance-3 people; three were named in canon.
+func TestObjectsPromoteFromCanonAndFromWhoCarriesThem(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Cast = []genesisActor{
+		{CanonicalName: "Isca Barra", Relevance: 3},
+		{CanonicalName: "Nobody", Relevance: 1},
+	}
+	mk := func(name, held string, rel int) genesisObject {
+		o := genesisObject{CanonicalName: name, Relevance: rel, Descriptor: "d", Kind: "k"}
+		o.Where.CarriedBy = held
+		return o
+	}
+	doc.Objects = []genesisObject{
+		mk("Trompetilla de Isca", "Isca Barra", 1), // held by someone who matters
+		mk("La Cuerda", "Nobody", 1),               // named in canon only
+		mk("Both", "Isca Barra", 1),                // both
+		mk("Furniture", "Nobody", 1),               // neither
+	}
+	doc.History = []genesisEvent{
+		{WhatHappened: "la cuerda snapped during the Convergence", Where: "x"},
+		{WhatHappened: "Both was left on the table", Where: "x"},
+	}
+
+	promoteObjectsThatMatter(doc)
+	got := map[string]int{}
+	for _, o := range doc.Objects {
+		got[o.CanonicalName] = o.Relevance
+	}
+	if got["Trompetilla de Isca"] != 2 {
+		t.Errorf("an object in the hand of a relevance-3 person sits at %d", got["Trompetilla de Isca"])
+	}
+	if got["La Cuerda"] != 2 {
+		t.Errorf("an object the canon names sits at %d", got["La Cuerda"])
+	}
+	if got["Both"] != 3 {
+		t.Errorf("an object that is both named in canon and held by someone who matters sits at %d", got["Both"])
+	}
+	if got["Furniture"] != 1 {
+		t.Errorf("furniture was promoted to %d — most objects in a world are furniture and that is correct", got["Furniture"])
+	}
+}
+
+// A world where nothing is worth picking up and nothing is worth arguing over is the same defect as a
+// world with nowhere described. The naming stage is told most of what it names is relevance 1, and at
+// depth 3 it applied that to EVERY concept and EVERY object.
+func TestFloor_OneThingWorthArguingOverAndOneWorthPickingUp(t *testing.T) {
+	doc := &genesisDoc{}
+	doc.Places = []genesisPlace{{CanonicalName: "Somewhere", Relevance: 1}}
+	doc.Cast = []genesisActor{{CanonicalName: "Someone", StartsIn: "Somewhere", Relevance: 1}}
+	doc.Concepts = []genesisConcept{
+		{CanonicalName: "First Named", Relevance: 1},
+		{CanonicalName: "Second", Relevance: 1},
+	}
+	doc.Objects = []genesisObject{
+		{CanonicalName: "First Object", Relevance: 1},
+		{CanonicalName: "Second Object", Relevance: 1},
+	}
+	ensurePlayableFloor(doc)
+
+	if doc.Concepts[0].Relevance < 2 {
+		t.Error("nothing in this world is contested above relevance 1, so the concepts stage can never run")
+	}
+	if doc.Concepts[1].Relevance != 1 {
+		t.Error("the floor promoted every concept — it is a floor, not a policy")
+	}
+	if doc.Objects[0].Relevance < 2 {
+		t.Error("nothing in this world is worth picking up, so the objects stage can never run")
+	}
+	if doc.Objects[1].Relevance != 1 {
+		t.Error("the floor promoted every object")
+	}
+
+	// A world that already has both must be left alone.
+	rich := &genesisDoc{}
+	rich.Places = []genesisPlace{{CanonicalName: "P", Relevance: 2}}
+	rich.Cast = []genesisActor{{CanonicalName: "A", StartsIn: "P", Relevance: 3}}
+	rich.Concepts = []genesisConcept{{CanonicalName: "C", Relevance: 2}, {CanonicalName: "D", Relevance: 1}}
+	rich.Objects = []genesisObject{{CanonicalName: "O", Relevance: 2}, {CanonicalName: "Q", Relevance: 1}}
+	ensurePlayableFloor(rich)
+	if rich.Concepts[1].Relevance != 1 || rich.Objects[1].Relevance != 1 {
+		t.Error("the floor promoted things in a world that already had a scene")
+	}
+}
+
+// canonNamedObjectDriver puts a SECOND object in the world and names it in canon. The floor only ever
+// promotes the first object, so this one can be saved by promoteObjectsThatMatter and by nothing else —
+// which is what makes the wiring testable. Removing that call left every other test green.
+type canonNamedObjectDriver struct {
+	real Driver
+	mu   sync.Mutex
+	done bool
+}
+
+func (d *canonNamedObjectDriver) Name() string { return "canon-named-object" }
+func (d *canonNamedObjectDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *canonNamedObjectDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil {
+		return "", err
+	}
+	if fillBatchID(req.Prompt) != "canon" {
+		return raw, nil
+	}
+	d.mu.Lock()
+	first := !d.done
+	d.done = true
+	d.mu.Unlock()
+	if !first {
+		return raw, nil
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	subject := fillSubject(req.Prompt)
+	// An object nobody named yet, introduced by canon, in the room where it happened.
+	frag["objects"] = []any{map[string]any{
+		"canonical_name": "The Sealed Note", "descriptor": "a folded page with no address",
+		"kind": "note", "relevance": 1, "tag": "nobody admits to writing it",
+		"where": map[string]any{"in_place": subject},
+	}}
+	hist, _ := frag["history"].([]any)
+	frag["history"] = append(hist, map[string]any{
+		"what_happened": "The Sealed Note was left on the table in " + subject + " and nobody claimed it",
+		"where":         subject,
+		"who":           []string{"Keeper Of " + subject},
+		"knowledge": []any{map[string]any{
+			"holder": "Keeper Of " + subject, "epistemic_type": "direct",
+			"content": "they found it and did not open it",
+		}},
+	})
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// An object the canon names must come out AUTHORED, not just named. This is the wiring guard: the floor
+// promotes only the first object, so nothing but promoteObjectsThatMatter can reach this one.
+func TestFillFromIdentity_AnObjectTheCanonNamesGetsAuthored(t *testing.T) {
+	ctx := context.Background()
+	id, err := inferIdentity(ctx, NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(ctx, &canonNamedObjectDriver{real: NewFakeWorldFillDriver()},
+		NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var note *genesisObject
+	for i := range doc.Objects {
+		if doc.Objects[i].CanonicalName == "The Sealed Note" {
+			note = &doc.Objects[i]
+		}
+	}
+	if note == nil {
+		t.Fatal("the object canon introduced is gone")
+	}
+	if note.Relevance < 2 {
+		t.Errorf("an object the canon names sits at relevance %d — nothing will ever author what it is", note.Relevance)
+	}
+	if strings.TrimSpace(note.Description) == "" {
+		t.Error("the promoted object was never authored: canon names it and it says only what it looks like")
+	}
+}
