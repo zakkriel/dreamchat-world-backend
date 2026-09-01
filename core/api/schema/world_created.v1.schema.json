@@ -1,26 +1,58 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "world_created/1",
-  "title": "world_created/1 — POST /worlds 201: the directory entry that now exists (SPEC-028)",
-  "description": "Mirrors one world_directory/1 entry, so a client parses the thing it just created with the same reader it uses for the list. playable is always false here: creation writes a directory row and the world's operating defaults, and authors NO entities — no player, no rooms, nothing to perceive. A freshly created world is real, listed, and not yet enterable, which is the honest state rather than a template's invented fiction.",
+  "title": "world_created/1 \u2014 POST /worlds 201: the directory entry that now exists (SPEC-028)",
+  "description": "Mirrors one world_directory/1 entry, so a client parses the thing it just created with the same reader it uses for the list. playable is always false here: creation writes a directory row and the world's operating defaults, and authors NO entities \u2014 no player, no places, nothing to perceive. A freshly created world is real, listed, and not yet enterable, which is the honest state rather than a template's invented fiction.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schema_version", "id", "display_name", "theme", "playable"],
+  "required": [
+    "schema_version",
+    "id",
+    "display_name",
+    "theme",
+    "playable"
+  ],
   "properties": {
-    "schema_version": { "const": "world_created/1" },
-    "id": { "type": "string", "format": "uuid" },
-    "display_name": { "type": "string", "minLength": 1 },
+    "schema_version": {
+      "const": "world_created/1"
+    },
+    "id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "display_name": {
+      "type": "string",
+      "minLength": 1
+    },
     "theme": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "accent", "mood", "ornament"],
+      "required": [
+        "schema_version",
+        "accent",
+        "mood",
+        "ornament"
+      ],
       "properties": {
-        "schema_version": { "const": "world_theme/1" },
-        "accent": { "type": "string", "pattern": "^#[0-9a-fA-F]{6}$" },
-        "mood": { "type": "string", "minLength": 1 },
-        "ornament": { "type": "string", "minLength": 1 }
+        "schema_version": {
+          "const": "world_theme/1"
+        },
+        "accent": {
+          "type": "string",
+          "pattern": "^#[0-9a-fA-F]{6}$"
+        },
+        "mood": {
+          "type": "string",
+          "minLength": 1
+        },
+        "ornament": {
+          "type": "string",
+          "minLength": 1
+        }
       }
     },
-    "playable": { "const": false }
+    "playable": {
+      "const": false
+    }
   }
 }

@@ -986,7 +986,7 @@ func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
 				"`who` IS NOT `knowledge`. `who` is who was there. `knowledge` is who KNOWS, and a knower need " +
 				"never have been present — that is what `told`, `overheard`, `public`, `rumor` and `inference` are " +
 				"for. USE THE GAP: an event with two people present and five who have heard some version of it is a " +
-				"world with lore. An event known only to the people in the room is a world where nothing travels.\n\n" +
+				"world with lore. An event known only to the people who were present is a world where nothing travels.\n\n" +
 				"Every event needs at least one holder from the list below. Two people at one event never hold " +
 				"identical beliefs about it, and somebody should be wrong. Author no new people and no new " +
 				"locations: everyone and everywhere you need is already named.",
@@ -1313,11 +1313,10 @@ func peoplePacks(doc *genesisDoc, concepts []string) []workItem {
 					"belongs to ONE holder, so two of them may contradict each other; that disagreement is the world " +
 					"working.\n\nTHE CANON BELOW IS WHAT THEY LIVED THROUGH, and each event lists what each person " +
 					"already knows about it. Write their inner life so it ACCOUNTS FOR THAT. And note where it must " +
-					"not agree: what a person's record says they know is a public position, and what they privately " +
-					"believe about the same event may be its opposite — a woman whose recorded knowledge is \"the " +
-					"pulse was regular\" and whose hiding is \"she will not say she heard the skip\" is not a " +
-					"contradiction to fix, she is the whole point. DO NOT INVENT NEW CANON and do not author anyone " +
-					"not named here.",
+					"not agree: what a person's record says they know is a PUBLIC POSITION, and what they privately " +
+					"believe about the same event may be its opposite. Someone whose recorded knowledge is the " +
+					"official account and whose hiding is what they actually witnessed is not a contradiction to " +
+					"fix — that gap IS the person. DO NOT INVENT NEW CANON and do not author anyone not named here.",
 				Therefore: "uniqueness comes from circumstance, and character comes from what they did with it",
 			})
 		}
@@ -1620,7 +1619,7 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 				"MOSTLY AT RELEVANCE 1: canon named them, nobody has met them, so a name, a one-line descriptor, a "+
 				"kind or a place to stand, and a tag — nothing more.\n\n"+
 				"THE EXCEPTION IS A WITNESS. If the canon below gives one of these people DIRECT knowledge of an "+
-				"event, or puts them in the room when it happened, they are relevance 2 and they need what that "+
+				"event, or puts them there when it happened, they are relevance 2 and they need what that "+
 				"takes: a standing, how they speak, one thing they will not say, and a trait with the manner it "+
 				"shows in. A person who watched the thing happen and can only answer with one line is the single "+
 				"worst object this pipeline can produce.",

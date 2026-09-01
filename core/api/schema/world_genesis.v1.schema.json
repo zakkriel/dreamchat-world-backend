@@ -1,14 +1,28 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "world_genesis/1",
-  "title": "world_genesis/1 — ONE world's FICTION, authored from a user's brief: who is here, what the places are, what happened before, and who came away knowing it. Never structure. No uuid, no coordinate, no tick, no radius, no count, no number of any kind appears anywhere in this schema, because the engine owns all of it: ids come from gen_random_uuid(), footprints from fn_extent_class_metres + fn_area_around, time from the genesis tick ladder, acceptance from the gate. Qualities the engine needs numerically (a trait's strength, how malleable a mind is) are emitted as CLASSES from closed enums and mapped by the engine, exactly as extent_class already works for place_author. Cross-references between parts use canonical_name, the only join key the seat can express; every reference must resolve or the build is refused. Array ceilings bound COST, not shape — they are not a statement about what a world usually contains (GA-2/GA-3).",
+  "title": "world_genesis/1 \u2014 ONE world's FICTION, authored from a user's brief: who is here, what the places are, what happened before, and who came away knowing it. Never structure. No uuid, no coordinate, no tick, no radius, no count, no number of any kind appears anywhere in this schema, because the engine owns all of it: ids come from gen_random_uuid(), footprints from fn_extent_class_metres + fn_area_around, time from the genesis tick ladder, acceptance from the gate. Qualities the engine needs numerically (a trait's strength, how malleable a mind is) are emitted as CLASSES from closed enums and mapped by the engine, exactly as extent_class already works for place_author. Cross-references between parts use canonical_name, the only join key the seat can express; every reference must resolve or the build is refused. Array ceilings bound COST, not shape \u2014 they are not a statement about what a world usually contains (GA-2/GA-3).",
   "type": "object",
-  "required": ["world", "region", "places", "ways", "cast", "objects", "history", "arrival"],
+  "required": [
+    "world",
+    "region",
+    "places",
+    "ways",
+    "cast",
+    "objects",
+    "history",
+    "arrival"
+  ],
   "additionalProperties": false,
   "properties": {
     "world": {
       "type": "object",
-      "required": ["display_name", "tagline", "mood", "ornament"],
+      "required": [
+        "display_name",
+        "tagline",
+        "mood",
+        "ornament"
+      ],
       "additionalProperties": false,
       "properties": {
         "display_name": {
@@ -35,22 +49,37 @@
     },
     "region": {
       "type": "object",
-      "required": ["descriptor", "extent_class"],
+      "required": [
+        "descriptor",
+        "extent_class"
+      ],
       "additionalProperties": false,
-      "description": "The parent place every other place sits inside — a quarter, a valley, a station, a district. The engine draws its footprint from extent_class and places the children within it.",
+      "description": "The parent place every other place sits inside \u2014 a quarter, a valley, a station, a district. The engine draws its footprint from extent_class and places the children within it.",
       "properties": {
-        "descriptor": { "type": "string", "minLength": 1 },
-        "extent_class": { "$ref": "#/definitions/extent_class" }
+        "descriptor": {
+          "type": "string",
+          "minLength": 1
+        },
+        "extent_class": {
+          "$ref": "#/definitions/extent_class"
+        }
       }
     },
     "places": {
       "type": "array",
       "minItems": 2,
       "maxItems": 8,
-      "description": "The rooms of the opening world. At least two, because a world with one room has no way out and cannot be travelled (the SPEC-030 floor).",
+      "description": "The places of the opening world. At least two, because a world with one place has no way out and cannot be travelled (the SPEC-030 floor).",
       "items": {
         "type": "object",
-        "required": ["descriptor", "canonical_name", "kind", "description", "tension", "extent_class"],
+        "required": [
+          "descriptor",
+          "canonical_name",
+          "kind",
+          "description",
+          "tension",
+          "extent_class"
+        ],
         "additionalProperties": false,
         "properties": {
           "descriptor": {
@@ -71,10 +100,14 @@
           "description": {
             "type": "string",
             "minLength": 1,
-            "description": "What is concretely here — surfaces, exits, objects, light, smell. The narrator reads this; when it is thin the narrator invents, so make it load-bearing."
+            "description": "What is concretely here \u2014 surfaces, exits, objects, light, smell. The narrator reads this; when it is thin the narrator invents, so make it load-bearing."
           },
-          "tension": { "$ref": "#/definitions/tension" },
-          "extent_class": { "$ref": "#/definitions/extent_class" }
+          "tension": {
+            "$ref": "#/definitions/tension"
+          },
+          "extent_class": {
+            "$ref": "#/definitions/extent_class"
+          }
         }
       }
     },
@@ -82,16 +115,21 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 12,
-      "description": "How the places join. Each becomes a portal artifact; without at least one, no one can leave the room they start in.",
+      "description": "How the places join. Each becomes a portal artifact; without at least one, no one can leave the place they start in.",
       "items": {
         "type": "object",
-        "required": ["descriptor", "from_place", "to_place", "state"],
+        "required": [
+          "descriptor",
+          "from_place",
+          "to_place",
+          "state"
+        ],
         "additionalProperties": false,
         "properties": {
           "descriptor": {
             "type": "string",
             "minLength": 1,
-            "description": "A door, a hatch, a stair, a gap in the fence — what a stranger sees."
+            "description": "A door, a hatch, a stair, a gap in the fence \u2014 what a stranger sees."
           },
           "from_place": {
             "type": "string",
@@ -103,7 +141,9 @@
             "minLength": 1,
             "description": "canonical_name of a different place in `places`."
           },
-          "state": { "$ref": "#/definitions/way_state" }
+          "state": {
+            "$ref": "#/definitions/way_state"
+          }
         }
       }
     },
@@ -114,13 +154,21 @@
       "description": "Everyone in the world except the player. At least one: a world with nobody in it is legal but inert.",
       "items": {
         "type": "object",
-        "required": ["descriptor", "canonical_name", "standing", "speech_manner", "traits", "hiding", "starts_in"],
+        "required": [
+          "descriptor",
+          "canonical_name",
+          "standing",
+          "speech_manner",
+          "traits",
+          "hiding",
+          "starts_in"
+        ],
         "additionalProperties": false,
         "properties": {
           "descriptor": {
             "type": "string",
             "minLength": 1,
-            "description": "How a stranger sees this person before learning anything — 'a hooded figure by the bar'. This is what renders until the player earns the name, so it must stand alone as an introduction."
+            "description": "How a stranger sees this person before learning anything \u2014 'a hooded figure by the bar'. This is what renders until the player earns the name, so it must stand alone as an introduction."
           },
           "canonical_name": {
             "type": "string",
@@ -135,7 +183,7 @@
           "speech_manner": {
             "type": "string",
             "minLength": 1,
-            "description": "How they talk — clipped, formal, wheedling, flat. The cognition seats read this."
+            "description": "How they talk \u2014 clipped, formal, wheedling, flat. The cognition seats read this."
           },
           "traits": {
             "type": "array",
@@ -143,7 +191,11 @@
             "maxItems": 6,
             "items": {
               "type": "object",
-              "required": ["key", "strength", "manner"],
+              "required": [
+                "key",
+                "strength",
+                "manner"
+              ],
               "additionalProperties": false,
               "properties": {
                 "key": {
@@ -151,7 +203,9 @@
                   "minLength": 1,
                   "description": "A single genre-agnostic disposition word."
                 },
-                "strength": { "$ref": "#/definitions/strength" },
+                "strength": {
+                  "$ref": "#/definitions/strength"
+                },
                 "manner": {
                   "type": "string",
                   "minLength": 1,
@@ -163,9 +217,11 @@
           "hiding": {
             "type": "string",
             "minLength": 1,
-            "description": "The one thing this person knows and does not say. It becomes a private perception only they hold — the planted secret the engine's own I-3 test hunts for leaks of."
+            "description": "The one thing this person knows and does not say. It becomes a private perception only they hold \u2014 the planted secret the engine's own I-3 test hunts for leaks of."
           },
-          "malleability": { "$ref": "#/definitions/strength" },
+          "malleability": {
+            "$ref": "#/definitions/strength"
+          },
           "starts_in": {
             "type": "string",
             "minLength": 1,
@@ -178,22 +234,44 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 12,
-      "description": "Things that matter — a ledger, a key, a sealed note, a crate. Not scenery: scenery belongs in a place's description.",
+      "description": "Things that matter \u2014 a ledger, a key, a sealed note, a crate. Not scenery: scenery belongs in a place's description.",
       "items": {
         "type": "object",
-        "required": ["descriptor", "canonical_name", "kind", "where"],
+        "required": [
+          "descriptor",
+          "canonical_name",
+          "kind",
+          "where"
+        ],
         "additionalProperties": false,
         "properties": {
-          "descriptor": { "type": "string", "minLength": 1 },
-          "canonical_name": { "type": "string", "minLength": 1 },
-          "kind": { "type": "string", "minLength": 1 },
+          "descriptor": {
+            "type": "string",
+            "minLength": 1
+          },
+          "canonical_name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "kind": {
+            "type": "string",
+            "minLength": 1
+          },
           "where": {
             "type": "object",
             "description": "Exactly one of `in_place` or `carried_by`. An object must be somewhere findable.",
             "additionalProperties": false,
             "oneOf": [
-              { "required": ["in_place"] },
-              { "required": ["carried_by"] }
+              {
+                "required": [
+                  "in_place"
+                ]
+              },
+              {
+                "required": [
+                  "carried_by"
+                ]
+              }
             ],
             "properties": {
               "in_place": {
@@ -215,10 +293,14 @@
       "type": "array",
       "minItems": 1,
       "maxItems": 8,
-      "description": "What happened before the player arrived, oldest first. The engine assigns each one a tick in ascending order below the arrival; the seat states only the ORDER by position in this array. Every piece of knowledge anyone holds at genesis must come from one of these — knowledge is authored WITH its path, never as a free-floating fact (B-2, B-7).",
+      "description": "What happened before the player arrived, oldest first. The engine assigns each one a tick in ascending order below the arrival; the seat states only the ORDER by position in this array. Every piece of knowledge anyone holds at genesis must come from one of these \u2014 knowledge is authored WITH its path, never as a free-floating fact (B-2, B-7).",
       "items": {
         "type": "object",
-        "required": ["what_happened", "where", "knowledge"],
+        "required": [
+          "what_happened",
+          "where",
+          "knowledge"
+        ],
         "additionalProperties": false,
         "properties": {
           "what_happened": {
@@ -234,7 +316,10 @@
           "who": {
             "type": "array",
             "maxItems": 8,
-            "items": { "type": "string", "minLength": 1 },
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "description": "canonical_names from `cast` who took part."
           },
           "knowledge": {
@@ -244,7 +329,11 @@
             "description": "Who came away knowing, in what way, and what they took from it. NOTHING may name the player: the player was not there and holds no perception of any of this.",
             "items": {
               "type": "object",
-              "required": ["holder", "content", "epistemic_type"],
+              "required": [
+                "holder",
+                "content",
+                "epistemic_type"
+              ],
               "additionalProperties": false,
               "properties": {
                 "holder": {
@@ -255,11 +344,18 @@
                 "content": {
                   "type": "string",
                   "minLength": 1,
-                  "description": "What they believe, in their own terms — not a summary of the event, but what they took from it."
+                  "description": "What they believe, in their own terms \u2014 not a summary of the event, but what they took from it."
                 },
                 "epistemic_type": {
                   "type": "string",
-                  "enum": ["direct", "told", "overheard", "public", "rumor", "inference"],
+                  "enum": [
+                    "direct",
+                    "told",
+                    "overheard",
+                    "public",
+                    "rumor",
+                    "inference"
+                  ],
                   "description": "How this holder came to know, from the canonical enum (01_epistemic_type_canonical_enum.md). 'direct' means they were there. The play-time transitions (shared/mistaken/confirmed/disputed) are not authorable at genesis: nothing has been contested yet. Written out here rather than $ref'd on purpose: ci/schema_contract.py's DDL-nullability check reads `type` off the property itself, and perception_record.epistemic_type is NOT NULL, so a reference hides the very thing it has to see."
                 }
               }
@@ -270,34 +366,39 @@
     },
     "arrival": {
       "type": "object",
-      "required": ["descriptor", "canonical_name", "place", "stated"],
+      "required": [
+        "descriptor",
+        "canonical_name",
+        "place",
+        "stated"
+      ],
       "additionalProperties": false,
-      "description": "The player walking in. This is a PREMISE, not a mind: the player gets a name and a way of being seen, and nothing else. No traits, no disposition, no personality — the engine refuses to write an inner state for the player (B-4).",
+      "description": "The player walking in. This is a PREMISE, not a mind: the player gets a name and a way of being seen, and nothing else. No traits, no disposition, no personality \u2014 the engine refuses to write an inner state for the player (B-4).",
       "properties": {
         "descriptor": {
           "type": "string",
           "minLength": 1,
-          "description": "How the room sees the stranger who just walked in."
+          "description": "How a stranger is first seen by whoever is the stranger who just walked in."
         },
         "canonical_name": {
           "type": "string",
           "minLength": 1,
-          "description": "The player's name. Nobody in the world holds a perception of it — no one here knows who walked in."
+          "description": "The player's name. Nobody in the world holds a perception of it \u2014 no one here knows who walked in."
         },
         "place": {
           "type": "string",
           "minLength": 1,
-          "description": "canonical_name of the place they walk into. AT LEAST ONE member of `cast` MUST have `starts_in` equal to this exact place — the visitor walks in on people, never into an empty room they must then search. This is validated and a mismatch is rejected."
+          "description": "canonical_name of the place they walk into. AT LEAST ONE member of `cast` MUST have `starts_in` equal to this exact place \u2014 the visitor walks in on people, never into an empty place they must then search. This is validated and a mismatch is rejected."
         },
         "stated": {
           "type": "string",
           "minLength": 1,
-          "description": "The arrival in the player's own first person — 'I stepped into the Drowned Lantern.' This becomes their single perception, and it is the only thing they know."
+          "description": "The arrival in the player's own first person \u2014 'I stepped into the Drowned Lantern.' This becomes their single perception, and it is the only thing they know."
         },
         "why": {
           "type": "string",
           "minLength": 1,
-          "description": "Why they are here, as premise. Never an interior state, never a feeling — a situation."
+          "description": "Why they are here, as premise. Never an interior state, never a feeling \u2014 a situation."
         }
       }
     },
@@ -305,15 +406,31 @@
       "type": "array",
       "minItems": 3,
       "maxItems": 3,
-      "description": "Present ONLY when the brief and answers leave the player's identity open — if the user said who they are, their words outrank you and this array is omitted entirely. Three ways the player could enter THIS world, each drawn from the authored cast, places and history — never from a stock of archetypes. Exactly one candidate's canonical_name must equal arrival.canonical_name: that one is the recommended default, and arrival is its full premise.",
+      "description": "Present ONLY when the brief and answers leave the player's identity open \u2014 if the user said who they are, their words outrank you and this array is omitted entirely. Three ways the player could enter THIS world, each drawn from the authored cast, places and history \u2014 never from a stock of archetypes. Exactly one candidate's canonical_name must equal arrival.canonical_name: that one is the recommended default, and arrival is its full premise.",
       "items": {
         "type": "object",
-        "required": ["descriptor", "canonical_name", "why"],
+        "required": [
+          "descriptor",
+          "canonical_name",
+          "why"
+        ],
         "additionalProperties": false,
         "properties": {
-          "descriptor": { "type": "string", "minLength": 1, "description": "How the room sees this stranger at first sight." },
-          "canonical_name": { "type": "string", "minLength": 1, "description": "This candidate's name. Nobody in the world holds a perception of it." },
-          "why": { "type": "string", "minLength": 1, "description": "Why they are here, as premise — a situation, never an interior state. It must connect to this world's authored content." }
+          "descriptor": {
+            "type": "string",
+            "minLength": 1,
+            "description": "How a stranger is first seen by whoever is this stranger at first sight."
+          },
+          "canonical_name": {
+            "type": "string",
+            "minLength": 1,
+            "description": "This candidate's name. Nobody in the world holds a perception of it."
+          },
+          "why": {
+            "type": "string",
+            "minLength": 1,
+            "description": "Why they are here, as premise \u2014 a situation, never an interior state. It must connect to this world's authored content."
+          }
         }
       }
     }
@@ -321,22 +438,43 @@
   "definitions": {
     "extent_class": {
       "type": "string",
-      "enum": ["intimate", "small", "medium", "large", "vast"],
+      "enum": [
+        "intimate",
+        "small",
+        "medium",
+        "large",
+        "vast"
+      ],
       "description": "A size CLASS, qualitative. The engine turns it into metres."
     },
     "tension": {
       "type": "string",
-      "enum": ["frantic", "tense", "normal", "calm", "none"],
-      "description": "How pressed this place feels. The engine turns it into the beat budget; an unstamped room would get an infinite one."
+      "enum": [
+        "frantic",
+        "tense",
+        "normal",
+        "calm",
+        "none"
+      ],
+      "description": "How pressed this place feels. The engine turns it into the beat budget; an unstamped place would get an infinite one."
     },
     "way_state": {
       "type": "string",
-      "enum": ["open", "shut", "locked"],
+      "enum": [
+        "open",
+        "shut",
+        "locked"
+      ],
       "description": "open: passable. shut: closed but openable. locked: needs something. The engine writes {open, locked} from this."
     },
     "strength": {
       "type": "string",
-      "enum": ["faint", "moderate", "strong", "defining"],
+      "enum": [
+        "faint",
+        "moderate",
+        "strong",
+        "defining"
+      ],
       "description": "A qualitative magnitude. The engine maps it to the number the schema forbids the seat from emitting."
     }
   }

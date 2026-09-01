@@ -1,7 +1,7 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
   "$id": "world_kickstart/1",
-  "title": "world_kickstart/1 — three ways this player's story could start, or the user's own opening grounded. The seat emits fiction only: no id, no coordinate, no tick, no number of any kind, anywhere.",
+  "title": "world_kickstart/1 \u2014 three ways this player's story could start, or the user's own opening grounded. The seat emits fiction only: no id, no coordinate, no tick, no number of any kind, anywhere.",
   "type": "object",
   "required": [
     "identity",
@@ -16,12 +16,12 @@
         "canonical_name"
       ],
       "additionalProperties": false,
-      "description": "The player as chosen or written by the user, echoed as premise. When the user wrote their own words, author descriptor and name FROM those words — their words outrank yours. No traits, no disposition, no interior (B-4).",
+      "description": "The player as chosen or written by the user, echoed as premise. When the user wrote their own words, author descriptor and name FROM those words \u2014 their words outrank yours. No traits, no disposition, no interior (B-4).",
       "properties": {
         "descriptor": {
           "type": "string",
           "minLength": 1,
-          "description": "How the room sees this stranger at first sight."
+          "description": "How a stranger is first seen by whoever is this stranger at first sight."
         },
         "canonical_name": {
           "type": "string",
@@ -47,17 +47,17 @@
           "label": {
             "type": "string",
             "minLength": 1,
-            "description": "The opening in a short line, the way a chapter is named — this renders as the option the user picks."
+            "description": "The opening in a short line, the way a chapter is named \u2014 this renders as the option the user picks."
           },
           "place": {
             "type": "string",
             "minLength": 1,
-            "description": "canonical_name of the place they walk into. It must be a place the world authored, and at least one member of the cast must already start there — a visitor never enters an empty room."
+            "description": "canonical_name of the place they walk into. It must be a place the world authored, and at least one member of the cast must already start there \u2014 a visitor never enters an empty place."
           },
           "why": {
             "type": "string",
             "minLength": 1,
-            "description": "Why they are here, as premise — a situation, never a feeling."
+            "description": "Why they are here, as premise \u2014 a situation, never a feeling."
           },
           "stated": {
             "type": "string",
@@ -74,7 +74,7 @@
     "new_cast": {
       "type": "array",
       "maxItems": 3,
-      "description": "People the chosen identity references who do not exist in the cast — 'Joe, son of Dalma and Harry' makes Dalma and Harry real. Same shape as the world's own cast; each starts_in must be a place the world authored. Emit ONLY people the identity itself references; empty or absent is the ordinary case.",
+      "description": "People the chosen identity references who do not exist in the cast \u2014 'Joe, son of Dalma and Harry' makes Dalma and Harry real. Same shape as the world's own cast; each starts_in must be a place the world authored. Emit ONLY people the identity itself references; empty or absent is the ordinary case.",
       "items": {
         "type": "object",
         "required": [
@@ -91,7 +91,7 @@
           "descriptor": {
             "type": "string",
             "minLength": 1,
-            "description": "How a stranger sees this person before learning anything — 'a hooded figure by the bar'. This is what renders until the player earns the name, so it must stand alone as an introduction."
+            "description": "How a stranger sees this person before learning anything \u2014 'a hooded figure by the bar'. This is what renders until the player earns the name, so it must stand alone as an introduction."
           },
           "canonical_name": {
             "type": "string",
@@ -106,7 +106,7 @@
           "speech_manner": {
             "type": "string",
             "minLength": 1,
-            "description": "How they talk — clipped, formal, wheedling, flat. The cognition seats read this."
+            "description": "How they talk \u2014 clipped, formal, wheedling, flat. The cognition seats read this."
           },
           "traits": {
             "type": "array",
@@ -147,7 +147,7 @@
           "hiding": {
             "type": "string",
             "minLength": 1,
-            "description": "The one thing this person knows and does not say. It becomes a private perception only they hold — the planted secret the engine's own I-3 test hunts for leaks of."
+            "description": "The one thing this person knows and does not say. It becomes a private perception only they hold \u2014 the planted secret the engine's own I-3 test hunts for leaks of."
           },
           "malleability": {
             "type": "string",

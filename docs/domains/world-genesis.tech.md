@@ -198,6 +198,16 @@ changing the schedule; what follows is the map, not the reasoning.
   mattering. One direct witness -> 2, two or more -> 3, hearsay promotes nobody.
 - **A witness invented by a closing pass needs the leftover pass.** The closing rounds run after
   promotion, so a person canon named late was hollow by construction — 7 of 17 witnesses in one run.
+- **GA-2 IS AN EDIT-TIME HAZARD, and only half of it is gateable.** A test world's language reaches a
+  production prompt when somebody debugging with that world writes an example into the standing
+  instruction. It has happened twice: `room` thirteen times in the fill prompt (2026-08-28), and an
+  Andantes example in the lives prompt (2026-09-01) — *a person whose record says "the pulse was regular"
+  and whose secret is that "she heard the skip"*.
+  `promptnames_test.go` guards the **proper-name** half and now covers the work-item text and the genesis
+  worlds as well as `prompts/*.txt`. It **cannot** catch the other half and must not try: "pulse", "skip"
+  and "room" are ordinary English, prompts are made of ordinary English, and a ban list over common nouns
+  would flag real prose and get switched off — that reasoning is already written into that file and was
+  right. The lowercase half is a review obligation, not a gate.
 - **Measured 2026-08-31, depth 1:** ~15–20 min, **$0.047–0.058**, 70–100 entities, ~65–90% of them
   complete at relevance 1, ~50–70% input cache hits. Depth above 1 has never been run.
 
