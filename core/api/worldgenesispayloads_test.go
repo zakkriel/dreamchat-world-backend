@@ -78,6 +78,17 @@ func TestGenSeatContractPayloads(t *testing.T) {
 	}
 	writePayload(t, dir, "world_identity_confirm_1.json", rec.Body.Bytes())
 
+	// SPEC-011: a published schema needs a real payload behind it. The naming leash is published, so a
+	// naming call's own answer is captured separately — it is a different shape from a content call's.
+	scaffold := &recordingDriver{Driver: NewFakeWorldFillDriver()}
+	if _, err := scaffold.Generate(ctx, GenRequest{
+		Prompt: "\nid: scaffold-1\nkind: namespace\n" + worldGenesisBriefMarker + "\n" + testBrief,
+		Schema: json.RawMessage(worldScaffoldSchemaJSON),
+	}); err != nil {
+		t.Fatalf("scaffold payload: %v", err)
+	}
+	writePayload(t, dir, "world_scaffold_1.json", []byte(scaffold.richest))
+
 	// The RICHEST fragment, not the last one — see recordingDriver. The arrival is the final call and
 	// carries no entities, so capturing it would leave world_fill.v1's own `relevance` and `tag` fields
 	// unexercised by the gate that exists to exercise them.

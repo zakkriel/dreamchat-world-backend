@@ -356,6 +356,10 @@ func (o *openAICompatDriver) content(ctx context.Context, raw []byte) (string, e
 	// exactly the pathology the number exists to catch.
 	costSinkFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens,
 		resp.Usage.PromptTokensDetails.CachedTokens)
+	// Per call, not differenced from a running total: the fill runs seats in parallel and a delta
+	// across a shared sink misattributes between whichever calls happen to overlap (costsink.go).
+	callUsageFrom(ctx).add(resp.Usage.Cost, resp.Usage.PromptTokens, resp.Usage.CompletionTokens,
+		resp.Usage.PromptTokensDetails.CachedTokens)
 	if len(resp.Choices) == 0 {
 		return "", fmt.Errorf("openai-compat: empty choices in response")
 	}

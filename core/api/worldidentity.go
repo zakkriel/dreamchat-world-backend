@@ -30,7 +30,7 @@ import (
 //go:embed prompts/world_understanding.txt schema/world_identity.v1.schema.json
 var worldUnderstandingFS embed.FS
 
-//go:embed prompts/world_fill.txt schema/world_fill.v1.schema.json
+//go:embed prompts/world_fill.txt schema/world_fill.v1.schema.json schema/world_scaffold.v1.schema.json
 var worldFillFS embed.FS
 
 //go:embed prompts/world_fill_review.txt schema/world_fill_review.v1.schema.json
@@ -41,6 +41,7 @@ var (
 	worldIdentitySchemaJSON        = mustReadUnderstandingFile("schema/world_identity.v1.schema.json")
 	worldFillSystemHeader          = mustReadFillFile("prompts/world_fill.txt")
 	worldFillSchemaJSON            = mustReadFillFile("schema/world_fill.v1.schema.json")
+	worldScaffoldSchemaJSON        = mustReadFillFile("schema/world_scaffold.v1.schema.json")
 	worldFillReviewSystemHeader    = mustReadFillReviewFile("prompts/world_fill_review.txt")
 	worldFillReviewSchemaJSON      = mustReadFillReviewFile("schema/world_fill_review.v1.schema.json")
 )
@@ -1239,7 +1240,8 @@ func authorWorld(ctx context.Context, understanding, fill, review Driver, brief 
 	}
 	doc, err := fillFromIdentity(ctx, fill, review, id, brief, answers, depth)
 	if err != nil {
-		return nil, id, err
+		// The document travels WITH the refusal, so the fill probe can print what was actually authored.
+		return doc, id, err
 	}
 	return doc, id, nil
 }
@@ -1276,6 +1278,10 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 	doc := &genesisDoc{}
 	var tags []taggedName
 	b := budgetForDepth(depth)
+	// Measured, not reasoned about. The report goes out on EVERY exit including a refusal, because a
+	// refused build is exactly the one whose cost you want to read back.
+	ctx, ledger := withFillLedger(ctx)
+	defer ledger.logReport()
 
 	// THE NAMESPACE. Three sequential calls, and they must be sequential: each one decides what the next
 	// is allowed to name. Concepts first, because what a world argues over decides what its places,
@@ -1376,12 +1382,16 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 			Therefore: "emit only what the belt is missing; do not re-author names already listed",
 		}, brief, answers, doc, "")
 		if rerr != nil {
-			return nil, err
+			return doc, err
 		}
 		mergeFill(doc, frag, "repair", &tags)
 		reconcileDocument(doc)
 		if err2 := doc.validate(); err2 != nil {
-			return nil, err2
+			// The DOCUMENT comes back with the refusal. It is the product of this stage, and a refused
+			// one is the only kind worth reading — the probe could not print it, which made the tool
+			// useless in the case it exists for. Callers must still check err before using it; the
+			// handler does, and commit is unreachable on this path.
+			return doc, err2
 		}
 	}
 	return doc, nil
@@ -1395,23 +1405,62 @@ func fillFromIdentity(ctx context.Context, seat, review Driver, id *worldIdentit
 // made it, which is the cheapest place to fix it. Neither loosens the belt — the fragment still has to
 // parse and validate.
 func fillOnce(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, doc *genesisDoc) (*fillFragment, error) {
+	ledger := fillLedgerFrom(ctx)
 	frag, err := fillOne(ctx, seat, id, item, brief, answers, doc, "")
 	if err != nil && IsGenesisRefusal(err) {
 		log.Printf("fill %s rejected, retrying once: %v", mergeTag(item), err)
+		// The first answer is discarded whole. Marking it here is what makes retry cost visible.
+		ledger.markLast(mergeTag(item), "retried")
 		frag, err = fillOne(ctx, seat, id, item, brief, answers, doc, err.Error())
 	}
 	if err != nil {
 		return nil, err
 	}
 	if bad := frag.danglingRefs(doc); len(bad) > 0 {
-		log.Printf("fill %s left %d reference(s) unpaid, asking once: %s", mergeTag(item), len(bad), strings.Join(bad, "; "))
-		again, aerr := fillOne(ctx, seat, id, item, brief, answers, doc,
-			"you referenced "+strings.Join(bad, "; ")+" — author those, in this same answer, alongside what you already wrote. Do not drop the reference.")
-		if aerr == nil && fillHasContent(again) {
-			frag = again
+		log.Printf("fill %s left %d reference(s) unpaid, patching: %s", mergeTag(item), len(bad), strings.Join(bad, "; "))
+		// A PATCH, NOT A RE-ASK. This used to re-run the same work item with "author those, in this same
+		// answer, alongside what you already wrote", which meant the model rewrote its entire answer and
+		// the first one was thrown away. Measured 2026-08-31: 24% of all output discarded, six of
+		// thirteen `scaffold-2` calls among it — and the answers being discarded were good.
+		//
+		// So the first answer is KEPT, and a small call authors only the missing names, at relevance 1,
+		// on the naming leash. mergeFill deepens rather than replaces, so the two compose.
+		patch, perr := fillOne(ctx, seat, id, workItem{
+			ID: item.ID, Kind: "namespace", Subject: item.Subject, Scope: item.Scope,
+			Text: "Author ONLY these, and nothing else: " + strings.Join(bad, "; ") + ".\n\n" +
+				"They are referenced by an answer that is already written and kept, so they must exist. " +
+				"AT RELEVANCE 1: a name, a one-line descriptor, a kind or a place to stand, and a tag. " +
+				"Do not re-author anything else, and do not restate what you wrote before — it is already " +
+				"in the world.",
+			Therefore: "a reference that points at nothing cannot be stored or walked into",
+		}, brief, answers, doc, "")
+		if perr == nil && fillHasContent(patch) {
+			absorbFragment(frag, patch)
+		} else if perr != nil {
+			log.Printf("fill %s could not patch its references, carrying the debt to the closing pass: %v", mergeTag(item), perr)
 		}
 	}
 	return frag, nil
+}
+
+// absorbFragment folds a patch into the answer it repairs, so ONE merge carries both. Kept separate from
+// mergeFill because mergeFill mutates the document and tags provenance; this composes two answers to the
+// same work item before either reaches it.
+func absorbFragment(into, patch *fillFragment) {
+	into.Places = append(into.Places, patch.Places...)
+	into.Ways = append(into.Ways, patch.Ways...)
+	into.Factions = append(into.Factions, patch.Factions...)
+	into.Concepts = append(into.Concepts, patch.Concepts...)
+	into.Cast = append(into.Cast, patch.Cast...)
+	into.Objects = append(into.Objects, patch.Objects...)
+	into.History = append(into.History, patch.History...)
+	if into.Arrival == nil {
+		into.Arrival = patch.Arrival
+	}
+	if len(into.ArrivalCandidates) == 0 {
+		into.ArrivalCandidates = patch.ArrivalCandidates
+	}
+	into.Empty = false
 }
 
 // runWave runs every item in a wave at once and merges them serially afterwards.
@@ -1491,9 +1540,26 @@ func mergeTag(item workItem) string {
 }
 
 func fillOne(ctx context.Context, seat Driver, id *worldIdentity, item workItem, brief string, answers []InterviewAnswer, soFar *genesisDoc, priorError string) (*fillFragment, error) {
-	raw, err := seat.Generate(ctx, GenRequest{
+	// THE LEASH IS PER STAGE, and this is the highest-value line in the fill.
+	//
+	// A naming call gets a schema that CANNOT express depth. Measured 2026-08-31, when every call shared
+	// one schema: `scaffold-2` produced 62.8% of all output tokens and wrote complete relevance-3
+	// interiors — upbringing, beliefs, mantras, traumas, example phrases — on people it then labelled
+	// relevance 1. The prompt said "names only". The schema offered sixteen fields. The schema won.
+	//
+	// Two things followed, and the second is worse than the cost. First, the cheapest stage became the
+	// most expensive. Second, `personOwing` saw people who already had everything, concluded nothing was
+	// owed, and THE PER-PERSON AUTHORING WAVE NEVER RAN — so relevance was decoration and the careful
+	// per-entity work was dead code in production.
+	//
+	// Prose is not discouraged here; it is unwritable.
+	schema := worldFillSchemaJSON
+	if item.Kind == "namespace" {
+		schema = worldScaffoldSchemaJSON
+	}
+	raw, err := seat.Generate(withWorkTag(ctx, mergeTag(item)), GenRequest{
 		Prompt: buildWorldFillPrompt(id, item, brief, answers, soFar, priorError),
-		Schema: json.RawMessage(worldFillSchemaJSON),
+		Schema: json.RawMessage(schema),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("fillOne %s: Generate: %w", item.ID, err)

@@ -1802,3 +1802,212 @@ func TestFillFromIdentity_CanonTravelsBeyondTheRoom(t *testing.T) {
 		t.Error("every event is known only to the people who were there — nothing in this world travels, and that is a world without lore")
 	}
 }
+
+// The leash is per stage, and this is the highest-value guard in the fill.
+//
+// Measured 2026-08-31 with one shared schema: `scaffold-2` produced 62.8% of all output tokens and wrote
+// complete relevance-3 interiors on people it labelled relevance 1 — median 1,695 chars for a "name".
+// The prompt said names only; the schema offered sixteen fields; the schema won.
+func TestNamingCallsCannotExpressDepth(t *testing.T) {
+	var scaffold, fill map[string]any
+	if err := json.Unmarshal([]byte(worldScaffoldSchemaJSON), &scaffold); err != nil {
+		t.Fatalf("scaffold schema: %v", err)
+	}
+	if err := json.Unmarshal([]byte(worldFillSchemaJSON), &fill); err != nil {
+		t.Fatalf("fill schema: %v", err)
+	}
+	castOf := func(s map[string]any) map[string]any {
+		props := s["properties"].(map[string]any)
+		return props["cast"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	}
+	sc, fl := castOf(scaffold), castOf(fill)
+
+	// Every field that IS depth must be absent from a naming call's leash.
+	for _, banned := range []string{
+		"standing", "speech_manner", "traits", "hiding", "malleability",
+		"upbringing", "beliefs", "mantras", "traumas", "goal", "sacrifice", "example_phrases",
+	} {
+		if _, present := sc[banned]; present {
+			t.Errorf("a naming call can write %q — the stage that should be cheapest can author an inner life", banned)
+		}
+		if _, present := fl[banned]; !present {
+			t.Errorf("the CONTENT schema lost %q — depth has to be writable somewhere", banned)
+		}
+	}
+	// And everything structural must survive, or the namespace cannot be built.
+	for _, needed := range []string{"canonical_name", "descriptor", "starts_in", "relevance", "tag", "belongs_to"} {
+		if _, present := sc[needed]; !present {
+			t.Errorf("a naming call cannot write %q, which is structural", needed)
+		}
+	}
+	// A location's description is depth; its placement and scale are not.
+	placeOf := func(s map[string]any) map[string]any {
+		props := s["properties"].(map[string]any)
+		return props["places"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	}
+	if _, present := placeOf(scaffold)["description"]; present {
+		t.Error("a naming call can write a location's description")
+	}
+	for _, needed := range []string{"within", "extent_class", "tension", "relevance"} {
+		if _, present := placeOf(scaffold)[needed]; !present {
+			t.Errorf("a naming call cannot write %q, which is structural", needed)
+		}
+	}
+	// Canon and the arrival belong to later stages entirely.
+	sp := scaffold["properties"].(map[string]any)
+	for _, banned := range []string{"history", "arrival", "arrival_candidates", "ways", "world", "region"} {
+		if _, present := sp[banned]; present {
+			t.Errorf("a naming call can write %q, which belongs to a later stage", banned)
+		}
+	}
+	if scaffold["additionalProperties"] != false {
+		t.Error("the scaffold schema is open, so the pruning buys nothing")
+	}
+}
+
+// And the wiring: a namespace item must actually be handed the narrow leash.
+func TestFillOne_NamespaceItemsGetTheScaffoldLeash(t *testing.T) {
+	seen := map[string]string{}
+	var mu sync.Mutex
+	spy := &schemaSpyDriver{real: NewFakeWorldFillDriver(), seen: seen, mu: &mu}
+	id, err := inferIdentity(context.Background(), NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fillFromIdentity(context.Background(), spy, NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	for _, stage := range []string{"concepts", "scaffold-1", "scaffold-2"} {
+		if seen[stage] != "scaffold" {
+			t.Errorf("%s was handed the %q leash, want scaffold — it can author prose with the wide one", stage, seen[stage])
+		}
+	}
+	for _, stage := range []string{"geography", "canon", "people", "arrival"} {
+		if got, ran := seen[stage]; ran && got != "fill" {
+			t.Errorf("%s was handed the %q leash, want fill — it cannot author depth without it", stage, got)
+		}
+	}
+}
+
+type schemaSpyDriver struct {
+	real Driver
+	seen map[string]string
+	mu   *sync.Mutex
+}
+
+func (d *schemaSpyDriver) Name() string { return "schema-spy" }
+func (d *schemaSpyDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *schemaSpyDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	kind := "fill"
+	if strings.Contains(string(req.Schema), "world_scaffold/1") {
+		kind = "scaffold"
+	}
+	d.mu.Lock()
+	d.seen[fillBatchID(req.Prompt)] = kind
+	d.mu.Unlock()
+	return d.real.Generate(ctx, req)
+}
+
+// An unpaid reference costs a small patch, never the answer that made it. This used to re-run the whole
+// work item — measured 2026-08-31: 24% of all output discarded, six of thirteen `scaffold-2` calls among
+// it, and the discarded answers were good.
+func TestUnpaidReferenceCostsAPatchNotTheAnswer(t *testing.T) {
+	var mu sync.Mutex
+	var prompts []string
+	seat := &danglingOnceDriver{real: NewFakeWorldFillDriver(), mu: &mu, prompts: &prompts}
+
+	id, err := inferIdentity(context.Background(), NewFakeWorldUnderstandingDriver(), testBrief, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	doc, err := fillFromIdentity(context.Background(), seat, NewFakeWorldFillReviewDriver(), id, testBrief, nil, 0)
+	if err != nil {
+		t.Fatalf("a single dangling reference cost the build: %v", err)
+	}
+
+	// The invented person must survive — keeping the first answer is the whole point.
+	found := false
+	for _, a := range doc.Cast {
+		if a.CanonicalName == "Ghost Of The Yard" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("the answer that made the dangling reference was discarded, along with the person it invented")
+	}
+	// And the place it referenced must now exist, or the reference still dangles.
+	place := false
+	for _, p := range doc.Places {
+		if p.CanonicalName == "The Unwritten Shed" {
+			place = true
+		}
+	}
+	if !place {
+		t.Error("the missing location was never authored, so the reference it left is still unpaid")
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	patched := 0
+	for _, p := range prompts {
+		if strings.Contains(p, "Author ONLY these, and nothing else") {
+			patched++
+			if strings.Contains(p, "alongside what you already wrote") {
+				t.Error("the patch still asks for the whole answer again")
+			}
+		}
+	}
+	if patched == 0 {
+		t.Error("no patch call was made — the reference was either ignored or the whole item was re-asked")
+	}
+}
+
+// danglingOnceDriver invents a person standing in a location nobody authored, exactly once.
+type danglingOnceDriver struct {
+	real    Driver
+	mu      *sync.Mutex
+	prompts *[]string
+	fired   bool
+}
+
+func (d *danglingOnceDriver) Name() string { return "dangling-once" }
+func (d *danglingOnceDriver) Capabilities() CapabilitySet {
+	return CapabilitySet{CapStructuredOutput: true}
+}
+func (d *danglingOnceDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
+	d.mu.Lock()
+	*d.prompts = append(*d.prompts, req.Prompt)
+	first := !d.fired && fillBatchID(req.Prompt) == "scaffold-2" && strings.Contains(req.Prompt, "Name what sits inside")
+	if first {
+		d.fired = true
+	}
+	d.mu.Unlock()
+
+	// The patch call authors the owed location: this is the real seat's job, done deterministically.
+	if strings.Contains(req.Prompt, "Author ONLY these, and nothing else") {
+		return `{"empty":false,"places":[{"canonical_name":"The Unwritten Shed","descriptor":"a shed nobody had written",` +
+			`"kind":"shed","extent_class":"intimate","tension":"calm","relevance":1,"tag":"it was always there"}]}`, nil
+	}
+	raw, err := d.real.Generate(ctx, req)
+	if err != nil || !first {
+		return raw, err
+	}
+	var frag map[string]any
+	if err := json.Unmarshal([]byte(raw), &frag); err != nil {
+		return "", err
+	}
+	cast, _ := frag["cast"].([]any)
+	frag["cast"] = append(cast, map[string]any{
+		"canonical_name": "Ghost Of The Yard", "descriptor": "someone standing where nothing was written",
+		"starts_in": "The Unwritten Shed", "relevance": 1, "tag": "points at a door that is not there",
+	})
+	out, err := json.Marshal(frag)
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}

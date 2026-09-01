@@ -226,14 +226,15 @@ type timedDriver struct {
 
 func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, error) {
 	start := time.Now()
-	sink := costSinkFrom(ctx)
-	usdBefore, inBefore, outBefore, cachedBefore, _ := sink.snapshot()
-	out, err := t.Driver.Generate(ctx, req)
+	// PER CALL, not a delta across a shared total. costsink.go's own warning: the delta is "exact while
+	// seats run sequentially… If seats are ever parallelised, this must become a per-call value threaded
+	// out of the driver — the failure would be silent misattribution." The layered fill runs waves of
+	// calls at once, so every per-call token count logged after that change was a share of whatever
+	// finished in the same window. This is the per-call value that comment asked for.
+	callCtx, usage := withCallUsage(ctx)
+	out, err := t.Driver.Generate(callCtx, req)
 	ms := time.Since(start).Milliseconds()
-	// The driver sees the bill but not the seat; this wrapper knows the seat but not the bill. The
-	// delta across the call joins them (costsink.go documents why a delta is sound here).
-	usdAfter, inAfter, outAfter, cachedAfter, _ := sink.snapshot()
-	usd, tokIn, tokOut, cached := usdAfter-usdBefore, inAfter-inBefore, outAfter-outBefore, cachedAfter-cachedBefore
+	usd, tokIn, tokOut, cached, _ := usage.read()
 	// Outcome, not just duration: a 6-second failure and a 6-second success are the same number and
 	// very different problems, and the retry that follows a failure is the founder's dead air.
 	status := "ok"
@@ -245,6 +246,15 @@ func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, erro
 	// Raindrop/Workshop: the same per-call truth the log line carries, as a span on the beat's
 	// interaction (raindrop.go; no-op when the context carries none).
 	trackSeatCall(ctx, t.seat, t.Driver.Name(), req.Prompt, out, start, err)
+	// One row per call, tagged with the work item that made it, when a fill is being measured. Written
+	// here because this decorator is the only place every seat call passes through.
+	if l := fillLedgerFrom(ctx); l != nil {
+		outcome := "kept"
+		if err != nil {
+			outcome = "failed"
+		}
+		l.record(fillRow{Item: workTagFrom(ctx), Outcome: outcome, Ms: ms, In: tokIn, Cached: cached, Out: tokOut, USD: usd})
+	}
 	return out, err
 }
 
