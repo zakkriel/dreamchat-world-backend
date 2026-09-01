@@ -79,7 +79,9 @@ func (u *callUsage) read() (usd float64, in, out, cached int64, seen bool) {
 // everything else was paid for and thrown away.
 type fillRow struct {
 	Item    string // the work item that made the call, e.g. "people:The Tally"
-	Outcome string // kept | retried | reasked | failed
+	Outcome string // kept | patched | retried | failed
+	Start   time.Time
+	End     time.Time
 	Ms      int64
 	In      int64
 	Cached  int64
@@ -146,6 +148,16 @@ func workTagFrom(ctx context.Context) string {
 
 // report is the line that answers "where did the time go". Grouped by work item KIND (the id before the
 // colon), because "people" is the question and "people:The Tally" is one instance of it.
+// report answers the question tokens cannot: WHERE DID THE TIME GO.
+//
+// Reporting only tokens is why I argued about wall clock instead of reading it — and argued it wrongly,
+// twice. First by dividing the total by a barrier count, which is assuming the answer. Then by summing
+// a per-call overhead across calls that RUN AT THE SAME TIME, in waves built so they would not be
+// serial. The measurement that settles it was already in these rows and the report threw it away.
+//
+// A stage costs the clock its SPAN — last end minus first start — never the sum of its calls, because
+// the calls inside it overlap. serial/span is the parallelism actually achieved: 1.0 means the wave
+// bought nothing, which is what a one-call-wide wave does.
 func (l *fillLedger) report() string {
 	if l == nil {
 		return ""
@@ -159,13 +171,14 @@ func (l *fillLedger) report() string {
 	}
 
 	type agg struct {
-		calls, wasted       int
-		out, in, cached, ms int64
-		usd                 float64
-		wastedOut           int64
+		calls, wasted          int
+		out, in, cached, sumMs int64
+		wastedOut              int64
+		usd                    float64
+		first, last            time.Time
 	}
 	byKind := map[string]*agg{}
-	var order []string
+	var kinds []string
 	total := agg{}
 	for _, r := range rows {
 		kind := r.Item
@@ -173,24 +186,31 @@ func (l *fillLedger) report() string {
 			kind = kind[:i]
 		}
 		if kind == "" {
-			kind = "(untagged)"
+			kind = "(review)"
 		}
 		a := byKind[kind]
 		if a == nil {
-			a = &agg{}
+			a = &agg{first: r.Start, last: r.End}
 			byKind[kind] = a
-			order = append(order, kind)
+			kinds = append(kinds, kind)
 		}
 		a.calls++
 		a.out += r.Out
 		a.in += r.In
-		a.cached += r.cachedOr()
-		a.ms += r.Ms
+		a.cached += r.Cached
+		a.sumMs += r.Ms
 		a.usd += r.USD
+		if !r.Start.IsZero() && (a.first.IsZero() || r.Start.Before(a.first)) {
+			a.first = r.Start
+		}
+		if r.End.After(a.last) {
+			a.last = r.End
+		}
 		total.calls++
 		total.out += r.Out
 		total.in += r.In
-		total.cached += r.cachedOr()
+		total.cached += r.Cached
+		total.sumMs += r.Ms
 		total.usd += r.USD
 		if r.Outcome != "kept" {
 			a.wasted++
@@ -199,18 +219,48 @@ func (l *fillLedger) report() string {
 			total.wastedOut += r.Out
 		}
 	}
-	sort.Slice(order, func(i, j int) bool { return byKind[order[i]].out > byKind[order[j]].out })
+	// In the order they ran: the question is about a critical path, and a path has an order.
+	sort.Slice(kinds, func(i, j int) bool { return byKind[kinds[i]].first.Before(byKind[kinds[j]].first) })
+
+	var span int64
+	for _, k := range kinds {
+		if s := byKind[k].last.Sub(byKind[k].first).Milliseconds(); s > 0 {
+			span += s
+		}
+	}
 
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "fill ledger: wall=%.0fs calls=%d out=%d in=%d cached=%d usd=%.4f discarded_out=%d (%.0f%%)\n",
 		wall.Seconds(), total.calls, total.out, total.in, total.cached, total.usd,
 		total.wastedOut, pct(total.wastedOut, total.out))
-	for _, kind := range order {
-		a := byKind[kind]
-		fmt.Fprintf(&sb, "fill ledger:   %-12s calls=%-3d out=%-7d (%4.1f%% of output) cached_in=%3.0f%% discarded=%d call(s)/%d tok\n",
-			kind, a.calls, a.out, pct(a.out, total.out), pct(a.cached, a.in), a.wasted, a.wastedOut)
+	fmt.Fprintf(&sb, "fill ledger: CRITICAL PATH %.0fs of %.0fs wall; serial equivalent %.0fs; parallelism %.1fx\n",
+		float64(span)/1000, wall.Seconds(), float64(total.sumMs)/1000,
+		safeDiv(float64(total.sumMs), float64(span)))
+	fmt.Fprintf(&sb, "fill ledger: %-12s %5s %7s %7s %6s  %s\n", "stage", "calls", "span", "serial", "par", "output")
+	for _, k := range kinds {
+		a := byKind[k]
+		sp := a.last.Sub(a.first).Milliseconds()
+		fmt.Fprintf(&sb, "fill ledger: %-12s %5d %6.0fs %6.0fs %5.1fx  out=%-7d (%4.1f%%) discarded=%d/%d tok\n",
+			k, a.calls, float64(sp)/1000, float64(a.sumMs)/1000,
+			safeDiv(float64(a.sumMs), float64(sp)), a.out, pct(a.out, total.out), a.wasted, a.wastedOut)
 	}
+	// A wave costs its slowest member and nothing else, so name it.
+	slowest := rows[0]
+	for _, r := range rows[1:] {
+		if r.Ms > slowest.Ms {
+			slowest = r
+		}
+	}
+	fmt.Fprintf(&sb, "fill ledger: slowest single call %.0fs — %s (out=%d tok)\n",
+		float64(slowest.Ms)/1000, slowest.Item, slowest.Out)
 	return strings.TrimRight(sb.String(), "\n")
+}
+
+func safeDiv(a, b float64) float64 {
+	if b == 0 {
+		return 0
+	}
+	return a / b
 }
 
 func (r fillRow) cachedOr() int64 { return r.Cached }

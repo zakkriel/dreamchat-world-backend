@@ -253,7 +253,7 @@ func (t timedDriver) Generate(ctx context.Context, req GenRequest) (string, erro
 		if err != nil {
 			outcome = "failed"
 		}
-		l.record(fillRow{Item: workTagFrom(ctx), Outcome: outcome, Ms: ms, In: tokIn, Cached: cached, Out: tokOut, USD: usd})
+		l.record(fillRow{Item: workTagFrom(ctx), Outcome: outcome, Start: start, End: start.Add(time.Duration(ms) * time.Millisecond), Ms: ms, In: tokIn, Cached: cached, Out: tokOut, USD: usd})
 	}
 	return out, err
 }
