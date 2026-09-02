@@ -754,6 +754,17 @@ func fillScenes(ctx context.Context, pool *pgxpool.Pool, client *imageClient, wo
 	// The cover and the places in one ordered list: cover first, because it is the card the founder
 	// is looking at, then places by id for determinism. A slot with a job in flight is excluded by
 	// the same predicate the portrait fill uses.
+	//
+	// DELIBERATELY WIDER THAN pendingArtCount. That function excludes owners whose last
+	// failure was terminal (terminalArtRefusalSQL) so the 2-minute sweep stops paying for a
+	// refusal that cannot change. This selection does NOT, and the asymmetry is the recovery
+	// path: the sweep only calls a fill when pendingArtCount is non-zero, so an all-doomed
+	// world costs nothing on a timer - but an explicit POST to /images/scenes still fills
+	// those owners, which is how art returns after someone settles the invoice.
+	//
+	// Do not "tidy" the two into one predicate. Narrowing this one would strand a terminally
+	// failed scene forever: regenerate deletes only ACTOR slots, so a world cover or place
+	// has no other way back into the pending set.
 	rows, err := pool.Query(ctx, `
 		SELECT 'world', w.world_id::text, w.tagline
 		  FROM world w
