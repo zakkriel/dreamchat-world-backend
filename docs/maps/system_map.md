@@ -81,12 +81,12 @@ never destroy an authored world.
 
 ```mermaid
 graph TD
-  R["art reconciler<br/>artcommission.go"] -->|"pendingArtCount — pure SQL gate"| Q{"anything<br/>undrawn?"}
+  R["art reconciler<br/>artcommission.go"] -->|"pendingArtCount — pure SQL gate<br/>skips terminal refusals"| Q{"anything<br/>undrawn?"}
   Q -->|no| STOP["return — no HTTP at all"]
   Q -->|yes| F["fillScenes / fillPortraits<br/>imagehandler.go"]
   F --> ST["ResolveArtStyle(world.art_style)<br/>artstyle.go"]
   ST --> ES["ensureStyle → style profile"]
-  F -->|"world, location, artifact"| SC["POST /v1/artifacts/{id}/generate<br/>prompt-only (bfl)"]
+  F -->|"world, location, artifact"| SC["POST /v1/artifacts/{id}/generate<br/>prompt-only (fal_t2i, bfl fallback)"]
   F -->|"actor"| AN{"identity has<br/>an anchor?"}
   AN -->|no| BS["POST /v1/characters/{id}/visual-identity/bootstrap-anchor<br/>prompt-only, worker binds it as the anchor"]
   AN -->|yes| GEN["POST /v1/generations<br/>reference-conditioned (fal)"]
@@ -101,6 +101,16 @@ Facts that are easy to get wrong:
   world, so entities created mid-story get art without any new wiring (ADR-P021).
   `POST /worlds/{w}/images/scenes` and `.../portraits` still exist and are now **manual/diagnostic
   only** — the reconciler is the writer. Do not wire a creation path to them.
+- **A terminal refusal leaves the pending set; a transient one does not.** `pendingArtCount` skips
+  slots whose `last_error` starts with `provider_unpaid` or `provider_content_rejected`
+  (`terminalArtRefusalSQL`) because asking again cannot change either. This function once *claimed in
+  prose* that a failed owner drops out on its own — it did not, since a failed slot has `asset_id
+  NULL` and `job_id NULL`, which IS the pending condition. That cost 875 doomed submits in 24h, which
+  drained the shared request budget the asset READ path spends and blacked out art that already
+  existed. The **fill selection deliberately does not** skip them: that asymmetry is the recovery
+  path, because `regenerate` deletes only ACTOR slots, so an explicit `POST .../images/scenes` is the
+  only way a failed cover or place returns after someone pays. Gated across repos by
+  `../harness/check.sh terminal-codes`.
 - **`image_slot` is ours, the asset is theirs.** The platform stores no `entity → asset` mapping and
   offers no "current asset for identity X" endpoint, so we persist it.
 - **A portrait carries its anchor** (`subject.anchor_asset_id`). The platform's reuse key folds it and
