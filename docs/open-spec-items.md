@@ -1627,6 +1627,25 @@ private persona needs its own home, or the link lives on the perception side. Un
 
 **Status, newest first.**
 
+**DESIGNED 2026-09-02, and this item's diagnosis was WRONG.** Settled by a sparring session; the design
+is `docs/design/2026-09-02-concepts-as-knowledge.md`, and the full system it defers is `SPEC-051`.
+
+Two corrections to what is written below. **First, the blocker was never `entity_kind`'s closed set.**
+That set is on `event_participant`; `entity_registry.entity_kind` is free text with no CHECK, and
+`perception_subject` carries no kind constraint and no FK on `entity_id` — so registering a concept and
+pointing a belief at it needs no DDL at all. **Second, the real blocker is one column:**
+`perception_record.source_event_id` is `NOT NULL`. A perception cannot exist without an event, and
+knowing a doctrine after twenty years of practice has no event to point at. That is what forces a
+separate kind of knowledge rather than a bent perception — the mirror of `SPEC-040`.
+
+The framing below ("we create an entity and we can link perception to that entity") was also
+superseded by the founder on 2026-09-02: a concept is **a type of knowledge**, not a thing bent into
+the entity model. `name_knowledge` is the precedent — the person exists as an entity AND knowing their
+name is its own table. Both, not either.
+
+Item 4 below ("does fill author concepts, and in which layer?") was answered by the shipped fill
+before the ruling: its own post-canon content wave, alongside objects.
+
 **OPEN. Founder-raised 2026-08-28.**
 
 Founder:
@@ -2047,3 +2066,69 @@ in proportion to a depth-5 breadth would be refused by `genesisDoc.validate()` w
 place before the world opens". Widening the ladder is a constant, not a redesign, but it has to move in
 the same round.
 
+
+---
+
+## SPEC-051 — Define the concept and knowledge system
+
+**Status, newest first.**
+
+**OPEN, BIG. Raised by the founder 2026-09-02** at the end of the sparring session that produced
+`docs/design/2026-09-02-concepts-as-knowledge.md`, with the instruction that the design doc is **the
+MVP and nothing more**: "a big SPEC - define concept and knowledge system in the future."
+
+### Why this exists as its own item
+
+The MVP gives a world's ideas somewhere to live and gets them in front of the models that write and run
+the world. It answers three questions — what an idea is, what holding one means, how both reach a
+prompt — and deliberately answers no others. Three quantities (truth, position, grade) and one law
+(chance from grade, deterministic roll, recall thins then application fails).
+
+That is enough to stop discarding seven concepts and six factions per world. It is **not** a knowledge
+system, and shipping it must not be mistaken for having designed one.
+
+### What the MVP deliberately leaves undefined
+
+Each of these is a real design question with no answer yet, and none of them block the MVP:
+
+1. **Concept-to-concept structure.** A school contains doctrines; a doctrine has prerequisites;
+   pyromancy and abjuration are both magic. The MVP has a flat list of concepts with no edges.
+2. **How mastery is expressed to a player.** The MVP renders grade as prose to a seat and shows the
+   player nothing. Whether there is ever a visible mastery — and whether that is a number, a phrase, or
+   only inference from what your character manages — is untouched. No skill tree is implied.
+3. **Divergence detection.** A fork is authored at genesis or produced by an inference in play. Nothing
+   scans for two holders drifting apart, and nothing should until someone decides what a drift *is*.
+4. **A teaching economy.** `taught` becomes an acquisition mode, but training time, capacity, who may
+   teach whom, and what a teacher spends are all undefined.
+5. **The compendium surface.** A concept is reachable through the knowledge about it, and the
+   compendium functions already read about-ness (`fn_collected_knowledge`, `fn_compendium_index`), but
+   no page contract exists for an idea rather than a thing in a room (`B-1` requires it be
+   perception-bound).
+6. **Concepts in canon events.** `event_participant`'s closed set is left intact by the MVP. If "the
+   Colegio published a doctrine" must be canon with the doctrine as a participant, that is a separate
+   engine ADR.
+7. **Whether the two axes stay two.** The MVP separates completeness-of-position from fluency-of-holder
+   and forbids storing "is this wrong". Whether a world ever needs a third axis — authority, say, or
+   how widely a position is held — is open.
+8. **Factions as knowledge holders at scale.** The MVP fixes the membership hole in
+   `fn_visible_perceptions` because it must. It does not design collective belief: how a faction's
+   published position relates to its members' private ones, or what happens to a member who diverges.
+
+### The constraint that governs the eventual design
+
+The founder's, verbatim, and it is the reason the MVP is small: *"do not go creating crazy gates and
+crazy test and validations in the code and call them a system. we want it to keep it clean as (speed,
+velocity and the physics engine)."*
+
+Whatever this becomes must stay a few quantities with clean relationships between them. The MVP's shape
+— three quantities, one law, no flags, no gate — is the standard to hold the full system to, not a
+scaffold to be replaced by something more elaborate.
+
+### Related
+
+`SPEC-040` (canon with no perception — this is its mirror: knowledge with no event) · `SPEC-041`
+(perceptions are replaced, never mutated — the same rule governs positions) · `SPEC-042` (traits are not
+connected to the perceptions that formed them — a held position is the adjacent case) · `SPEC-043`
+(intangible concepts cannot be entities — **superseded in framing** by the design doc: the blocker was
+never `entity_kind`, it was `perception_record.source_event_id NOT NULL`) · `SPEC-050` (canon does not
+scale with depth — adding ideas with no events makes thin canon measurably thinner).

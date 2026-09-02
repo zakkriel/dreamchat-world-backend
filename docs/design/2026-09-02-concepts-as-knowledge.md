@@ -1,0 +1,233 @@
+# Concepts as knowledge
+
+**Date:** 2026-09-02 · **Status:** design, settled by a sparring session with the founder. Not built.
+**Scope: MVP ONLY.** This is the minimum that lets a world's ideas exist and reach the models that
+write and run it. The full concept-and-knowledge system is deliberately future work — see `SPEC-051`.
+
+**What this closes.** The fill authors ideas a world argues over and the engine throws them away. This
+document says what an idea is, what it means for a character to hold one, and how both reach the
+models. It adds three quantities and one law. It adds no subsystem.
+
+---
+
+## 1. The problem, measured
+
+The fill authors `concepts` and `factions` in their own content waves. Neither reaches the engine.
+Measured on the committed Los Andantes world (`464550bd-7815-4ce7-9d2d-0835d1e5d09f`):
+
+| the document holds | count | reaches the engine as |
+|---|---|---|
+| `cast` | 29 | 29 `actor` |
+| `places` | 10 | 11 `location` |
+| `objects` + `ways` | 6 + 9 | 15 `artifact` (ways become portals) |
+| `history` | 8 | `canon_event` + participants + perceptions |
+| **`factions`** | **6** | **nothing** |
+| **`concepts`** | **7** | **nothing** |
+
+The strings `factions` and `concepts` appear nowhere in `worldgenesiscommit.go`. Thirteen named things
+are discarded per world, and with them the reference graph: every cast member carries `belongs_to`, so
+the engine sees twenty-nine unaffiliated people; factions carry `seat`, `controls`, `publishes`,
+`buries`; concepts carry `what_it_is`, `contested`, `taught_by`.
+
+**The history weaver already gets concept names and nothing else.** `canonSchedule` passes
+`Concepts: conceptNames(doc)` — the bare strings. The model writing a world's past is told those words
+exist and nothing about what they mean or who fights over them. After genesis, nothing survives at
+all, so the models that run *play* never hear of them.
+
+Nothing is broken in play today, and that is worth saying plainly: an NPC's knowledge reaches a seat
+as **prose**, and prose can already say "Del Vas thinks the pulse was regular". What cannot be done is
+ask the world a question — who holds this, who differs, what does the Colegio publish — because loose
+text is not attached to anything.
+
+---
+
+## 2. Why this is not a new subsystem
+
+Two register rules already govern it:
+
+- **B-6** — *"Contradiction lives in perception, never in canon. Perception-level contradictions are
+  preserved. Canon is never contradictory."* One truth, many conflicting accounts of it. That is this
+  design, already law.
+- **B-5** — *"Append-only time; canon and perception are forward-moving; no mutable `updated_at`
+  domain fields."* Accounts are never overwritten and a character's hold on one has a validity window.
+
+The founder's framing was that a concept is **a type of knowledge**, not a thing bent into the entity
+model. The engine already works that way: `name_knowledge (holder_id, entity_id, name, learned_tick,
+source_event_id)` is a separate table for a separate kind of knowing. The person exists as an entity;
+knowing their name is its own row. Both, not either.
+
+One hard fact forces the same split here: **`perception_record.source_event_id` is `NOT NULL`.** A
+perception cannot exist without an event. Del Vas knowing Auscultación after twenty years has no single
+event to point at, so this knowledge cannot be a perception. It is the mirror of `SPEC-040` (canon with
+no perceptions): knowledge with no event.
+
+---
+
+## 3. Three quantities
+
+**The truth.** What the idea actually is. Authored at genesis as **world identity, not canon** — it did
+not enter the world through an event, it is part of how the world works, like the condition and the
+bargain. One per concept. **Never spoken.** No character ever receives it as text.
+
+**A position.** One written account of the truth, *shared*: written once and pointed at by many
+characters. Not one row per believer.
+
+**A grade.** How fluently a given character holds a given position. It is **not** closeness to truth —
+that idea was raised and discarded, because truth is permanently obscured. A character can be right and
+will never know it. Grade is investment: how reliably they can bring the position to bear, and
+therefore how likely they are to fail at it.
+
+```
+Concept truth  1 ──┬── Position A ──── Characters {Del Vas, Onn, Lur}
+   (identity,      └── Position B ──── Characters {Marbán, Ciso}
+    never spoken)
+```
+
+**Divergence forks.** When two characters holding one position begin to differ, a **new** position is
+created pointing at the same concept. The old one survives for whoever still holds it. A fork is a
+**canon event** — someone realised something, and that is an action.
+
+**The holders of a position are a plain list, not a `group` entity.** Everyone who happens to believe
+something is not an organisation and must not be able to act like one.
+
+---
+
+## 4. Two axes that must never be conflated
+
+| axis | measures | who sees it | affects |
+|---|---|---|---|
+| position ↔ truth | how complete the account is | nobody, ever | what is *possible* |
+| character ↔ position | how fluently it is held | rendered as prose | how *reliably* it is managed |
+
+The founder's example settles it. Pyromancy's truth is *elemental power, focused*. One branch says
+emotion-driven, another says rune-driven. **Both cast fire. Both work.** So a position is not false, it
+is **partial** — a working route described incompletely. A shaky apprentice holding a perfectly good
+branch still fizzles. Different axis.
+
+**Consequence: nothing stores "is this wrong."** There is no flag. There is a truth and there are
+positions, and whether a position is complete is something the weaver resolves and never says out loud.
+A stored wrongness flag would eventually reach a prompt and the irony would collapse.
+
+---
+
+## 5. One law
+
+Reusing `core/api/pressure.go`, which already does exactly this for world pressure:
+
+```
+chance = f(grade)
+roll   = hash(world, tick, holder, position)      -- pure; never math/rand, never wall-clock
+fired  = roll < chance
+```
+
+`pressure.go` states the constraint: *"replay must reproduce the identical result byte-for-byte"*
+(invariant **I-1**). So the grade must be committed data and the same beat replayed must fumble
+identically. The roll is **recomputed, never stored**.
+
+**Two outcomes, by degree.** Recall thins first; application fails at the bottom.
+
+1. **Recall** — the position is not brought to mind this beat, or arrives thinner.
+2. **Application** — it is brought to mind, acted on, and does not work. The auscultation reads
+   nothing; the fire does not catch.
+
+Reaching for a rival branch's answer was considered and **rejected**: it is a third mechanic for no
+gain.
+
+### What follows without any new rule
+
+**Does the character know they fumbled?** Not a setting. It is whether the action left something
+observable. Fire that fails to catch is visible, so they know. A misread silence produces nothing, so
+they do not. Pure theory knowledge, no. Knowledge that takes shape and can be seen, yes.
+
+**Is a fumble canon?** Everything that is action is canon (**ADR-010**, **C-5**, and **D-1** for how it
+gets there):
+
+- a fumbled **application** is an action → **an event**
+- a fumbled **recall** is not an action → **nothing is written.** An absence in that beat, and the roll
+  is recomputable anyway.
+
+---
+
+## 6. What reaches the models
+
+This is the point of the work, and the half the engine currently fails.
+
+**The history weaver gets the truth**, plus the fact that each character holds their own understanding
+of it. It always resolves the truth and does not speak about it. That is what lets it write a past in
+which people are wrong: the Colegio publishes the recognised position, *hoping* it is the truth.
+
+A faction's published position is **just another position** — carrying authority, carrying no guarantee.
+
+**A play seat gets prose, never numbers.** Not `depth: 4`. Instead:
+
+> "Your Auscultación knowledge taught you how to read and understand the sounds and movements of the
+> giant's heart."
+
+and, in a specific moment:
+
+> "Your knowledge of the topic tells you silence is death."
+
+**The seat is never told its character is wrong.** The truth surfaces only when it clashes with the
+position *and* the character infers a new understanding — which is a fork, which is an event.
+
+---
+
+## 7. One bug this design uncovered, which blocks it
+
+```sql
+fn_visible_perceptions:
+  WHERE pr.holder_id = p_viewer_id
+     OR pr.holder_id IN (SELECT entity_id FROM entity_registry
+                          WHERE entity_kind IN ('faction','group'))
+```
+
+**No membership check.** Knowledge held by any faction is visible to *every character in the world*.
+That is broadcast, not shared knowledge. It is dead today because no faction is ever registered — and
+it means transcribing factions **without fixing this first** would leak every faction's private
+position to everybody.
+
+---
+
+## 8. Vocabulary
+
+Acquisition modes map onto the existing `epistemic_type` set (`direct`, `shared`, `told`, `overheard`,
+`public`, `rumor`, `inference`, `mistaken`, `confirmed`, `disputed`):
+
+| mode | existing | note |
+|---|---|---|
+| experienced | `direct` | as-is |
+| inferred | `inference` | as-is — and this is what a fork is |
+| taught | — | `told` means *someone said a thing happened*. Training someone is not that. **Add `taught`.** |
+| granted | — | transmitted memory or knowledge. Nothing covers it. **Add `granted`.** |
+
+`mistaken` and `disputed` already existing is further evidence this design is not new ground.
+
+---
+
+## 9. What this MVP is not
+
+Explicitly out of scope, recorded as **SPEC-051**:
+
+- no skill tree, no numeric display, no player-facing mastery UI
+- no concept-to-concept relationships (prerequisites, schools containing doctrines)
+- no automatic detection of divergence — a fork is authored or inferred, never inferred by a scanner
+- no teaching economy, no training time model
+- no compendium surface for concepts yet
+- no concept participation in events (`event_participant`'s closed set is left intact; about-ness is
+  `perception_subject`, per **ADR-035**)
+
+**Deliberately not built:** no validation gate, no belt check, no "knowledge subsystem", no test suite
+proving a taxonomy. The founder's constraint, in his words: keep it clean as *speed, velocity and the
+physics engine*. Three quantities, one law.
+
+---
+
+## 10. Law relied on
+
+`B-5` append-only time · `B-6` contradiction lives in perception · `D-1` nothing mutates canon directly ·
+`C-5` a beat may produce zero, one or several canonical changes · `ADR-006` invalidation never deletion ·
+`ADR-010` mechanical actions write accepted events · `ADR-035` about-ness is an explicit junction ·
+`I-1` replay determinism · `D-5` additions to the frozen set are ADR-gated, not code workarounds.
+
+Any schema this needs goes through an engine ADR in `docs/law/02_world_state_adrs.md`, the route
+`ADR-035` took. **No such ADR is written yet, and none should be until this document is approved.**
