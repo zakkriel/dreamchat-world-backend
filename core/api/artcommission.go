@@ -55,6 +55,28 @@ var inFlightWorlds sync.Map
 // It is pure SQL and runs BEFORE anything reaches for the image platform. The fill functions open
 // with ensureStyle, an HTTP round trip, so a sweep that started there would call another service on
 // every tick of every world forever just to be told there was nothing to do.
+// terminalArtRefusalSQL is the ONE definition of "asking again cannot change this".
+//
+// The image platform names two refusals terminal (its docs/api/errors.md): an unpaid
+// provider account and a content rejection. Both need a human - a payment, or different
+// content - so re-commissioning them on a timer spends requests to be told the same thing.
+//
+// WHY IT IS A GATE AND NOT A COMMENT. This function used to claim in prose that a failed
+// owner "drops out of the pending set on its own"; it did not, because a failed slot has
+// asset_id NULL and job_id NULL, which IS the pending condition. Production 2026-09-01:
+// 875 artifact jobs in 24h, every one "submit returned status 402", re-submitted by the
+// 2-minute sweep. They drained the platform's 1000-requests/hour budget, and the asset
+// READ path shares that budget - so every picture that already existed became unfetchable.
+// The blackout was caused by the retrying, not by the unpaid invoice.
+//
+// coalesce is load-bearing: NOT (NULL LIKE 'x%') is NULL, which WHERE drops. Without it a
+// slot never yet attempted would vanish from the pending set - the opposite bug, and a
+// silent one. Absence of an error means drawable.
+//
+// A transient failure is deliberately NOT here: retrying it is the self-healing the sweep
+// exists for, and a 500 or a 429 genuinely can succeed next time.
+const terminalArtRefusalSQL = `coalesce(s.last_error LIKE 'provider_unpaid%' OR s.last_error LIKE 'provider_content_rejected%', false)`
+
 func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (int, error) {
 	var n int
 	err := pool.QueryRow(ctx, `
@@ -64,7 +86,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			  LEFT JOIN image_slot s
 			    ON s.world_id = w.world_id AND s.owner_kind = 'world' AND s.owner_id = w.world_id AND s.variant = 'default'
 			 WHERE w.world_id = $1 AND w.tagline IS NOT NULL
-			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL AND NOT `+terminalArtRefusalSQL+`))
 			UNION ALL
 			SELECT er.entity_id
 			  FROM entity_registry er
@@ -73,7 +95,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			    ON s.world_id = er.world_id AND s.owner_kind = 'location' AND s.owner_id = er.entity_id AND s.variant = 'default'
 			 WHERE er.world_id = $1 AND er.entity_kind = 'location'
 			   AND coalesce(btrim(l.attrs->>'description'), '') <> ''
-			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL AND NOT `+terminalArtRefusalSQL+`))
 			UNION ALL
 			SELECT er.entity_id
 			  FROM entity_registry er
@@ -83,7 +105,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 			 WHERE er.world_id = $1 AND er.entity_kind = 'artifact'
 			   AND coalesce(btrim(a.attrs->>'descriptor'), '') <> ''
 			   AND NOT (a.attrs ? 'connects')
-			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL))
+			   AND (s.owner_id IS NULL OR (s.asset_id IS NULL AND s.job_id IS NULL AND NOT `+terminalArtRefusalSQL+`))
 			UNION ALL
 			SELECT er.entity_id
 			  FROM entity_registry er
@@ -93,7 +115,8 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 					count(*) FILTER (WHERE s.variant = ANY(ARRAY['neutral','happy','angry','sad'])) AS emotion_rows,
 					count(*) FILTER (WHERE s.variant = ANY(ARRAY['neutral','happy','angry','sad']) AND s.asset_id IS NOT NULL) AS emotion_filled,
 					count(*) FILTER (WHERE s.variant = 'default' AND s.asset_id IS NOT NULL) AS default_filled,
-					bool_or(s.variant = 'default' AND s.job_id IS NOT NULL) AS default_in_flight
+					bool_or(s.variant = 'default' AND s.job_id IS NOT NULL) AS default_in_flight,
+					bool_or(`+terminalArtRefusalSQL+`) AS refused_for_good
 				  FROM image_slot s
 				 WHERE s.world_id = er.world_id AND s.owner_kind = 'actor' AND s.owner_id = er.entity_id
 			  ) st ON true
@@ -105,6 +128,7 @@ func pendingArtCount(ctx context.Context, pool *pgxpool.Pool, worldID string) (i
 				 -- sprites; a FILLED legacy slot is left alone until the regenerate button clears it.
 				 (st.emotion_rows = 0 AND st.default_filled = 0 AND NOT coalesce(st.default_in_flight, false))
 			   )
+			   AND NOT coalesce(st.refused_for_good, false)
 		) pending`, worldID).Scan(&n)
 	return n, err
 }

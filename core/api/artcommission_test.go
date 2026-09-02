@@ -179,3 +179,157 @@ func count(t *testing.T, ctx context.Context, pool *pgxpool.Pool, worldID string
 	}
 	return n
 }
+
+// A TERMINAL provider refusal must leave the pending set. The old code's comment
+// claimed a failed owner "drops out of the pending set on its own" because it is
+// "no longer nothing in flight" — but a failed slot has asset_id NULL and job_id
+// NULL, which is exactly the pending condition, so it never dropped out at all.
+//
+// Measured in production 2026-09-01: 875 artifact jobs failed in 24h, all
+// `submit returned status 402` (the BFL account had no credit), because the
+// 2-minute sweep re-commissioned the same doomed owners forever. Those submits
+// consumed the image platform's entire 1000-requests/hour token budget, and the
+// asset READ path shares that budget — so every already-rendered picture in the
+// product became unfetchable. The art blackout was caused by retrying, not by
+// the billing failure itself.
+//
+// A transient failure must keep being retried: that is the self-healing the
+// sweep exists for. Only a refusal that cannot change is excluded.
+func TestPendingArtCount_TerminalRefusalStopsCostingSweeps(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID := "a17c0000-0000-0000-0000-000000000201"
+	placeID := "a17c0000-0000-0000-0000-000000000202"
+
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM location_state WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	// A world with no tagline: the cover is not drawable, so the place is the only
+	// owner in play and the count reads as one thing, not two.
+	if _, err := pool.Exec(ctx, `INSERT INTO world (world_id, display_name) VALUES ($1,'Unpaid World')`, worldID); err != nil {
+		t.Fatalf("seed world: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		VALUES ($1,$2,'location','somewhere')`, placeID, worldID); err != nil {
+		t.Fatalf("seed entity: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO location_state (entity_id, world_id, attrs)
+		VALUES ($1,$2,'{"description":"a room worth drawing"}'::jsonb)`, placeID, worldID); err != nil {
+		t.Fatalf("seed place: %v", err)
+	}
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("a described place with no picture is 1 unillustrated owner, got %d", n)
+	}
+
+	failWith := func(msg string) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, last_error, updated_at)
+			VALUES ($1,'location',$2,'default',$3, now())
+			ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
+			   SET last_error = EXCLUDED.last_error, asset_id = NULL, job_id = NULL, updated_at = now()`,
+			worldID, placeID, msg); err != nil {
+			t.Fatalf("record failure: %v", err)
+		}
+	}
+
+	// Transient: the account is fine and the next sweep can genuinely succeed.
+	failWith("provider_failure: bfl: submit returned status 500")
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("a transient failure must stay pending so the sweep heals it, got %d", n)
+	}
+
+	// Terminal: an unpaid invoice is not settled by asking again.
+	failWith("provider_unpaid: bfl: submit returned status 402")
+	if n := count(t, ctx, pool, worldID); n != 0 {
+		t.Fatalf("an unpaid refusal must stop costing sweeps, want 0 pending, got %d", n)
+	}
+
+	// Terminal: re-sending identical content re-bills a deterministic refusal.
+	failWith(`provider_content_rejected: bfl: provider returned terminal status "Content Moderated"`)
+	if n := count(t, ctx, pool, worldID); n != 0 {
+		t.Fatalf("a content rejection must stop costing sweeps, want 0 pending, got %d", n)
+	}
+
+	// And a cleared error is drawable again: paying the invoice and clearing the
+	// slot must bring it back, or the world could never heal.
+	if _, err := pool.Exec(ctx, `UPDATE image_slot SET last_error=NULL WHERE world_id=$1`, worldID); err != nil {
+		t.Fatalf("clear error: %v", err)
+	}
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("clearing the error must make the owner drawable again, got %d", n)
+	}
+}
+
+// The cast has its own pending shape - four emotion slots per actor rather than one
+// picture - so it needs its own proof. Without this the actor exclusion is deletable
+// code: removing it leaves the location test green, which is how a guard nobody has
+// watched go red gets shipped.
+func TestPendingArtCount_TerminalRefusalStopsCostingSweepsForTheCast(t *testing.T) {
+	pool := testPool(t)
+	t.Cleanup(func() { pool.Close() })
+	ctx := context.Background()
+
+	worldID := "a17c0000-0000-0000-0000-000000000301"
+	actorID := "a17c0000-0000-0000-0000-000000000302"
+
+	clear := func() {
+		_, _ = pool.Exec(context.Background(), `DELETE FROM image_slot WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM entity_registry WHERE world_id=$1`, worldID)
+		_, _ = pool.Exec(context.Background(), `DELETE FROM world WHERE world_id=$1`, worldID)
+	}
+	clear()
+	t.Cleanup(clear)
+
+	// No tagline, so the cover is not drawable and the actor is the only owner in play.
+	if _, err := pool.Exec(ctx, `INSERT INTO world (world_id, display_name) VALUES ($1,'Unpaid Cast')`, worldID); err != nil {
+		t.Fatalf("seed world: %v", err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name)
+		VALUES ($1,$2,'actor','Someone')`, actorID, worldID); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("an actor with no sprites is 1 unillustrated owner, got %d", n)
+	}
+
+	failSprite := func(msg string) {
+		if _, err := pool.Exec(ctx, `
+			INSERT INTO image_slot (world_id, owner_kind, owner_id, variant, last_error, updated_at)
+			VALUES ($1,'actor',$2,'neutral',$3, now())
+			ON CONFLICT (world_id, owner_kind, owner_id, variant) DO UPDATE
+			   SET last_error = EXCLUDED.last_error, asset_id = NULL, job_id = NULL, updated_at = now()`,
+			worldID, actorID, msg); err != nil {
+			t.Fatalf("record failure: %v", err)
+		}
+	}
+
+	// Transient: an incomplete sprite set must keep being retried.
+	failSprite("provider_failure: fal: submit returned status 503")
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("a transient sprite failure must stay pending, got %d", n)
+	}
+
+	// Terminal: the pack cannot complete until someone pays, so stop asking.
+	failSprite("provider_unpaid: fal: submit returned status 402")
+	if n := count(t, ctx, pool, worldID); n != 0 {
+		t.Fatalf("an unpaid sprite refusal must stop costing sweeps, want 0, got %d", n)
+	}
+
+	if _, err := pool.Exec(ctx, `UPDATE image_slot SET last_error=NULL WHERE world_id=$1`, worldID); err != nil {
+		t.Fatalf("clear error: %v", err)
+	}
+	if n := count(t, ctx, pool, worldID); n != 1 {
+		t.Fatalf("clearing the error must make the cast drawable again, got %d", n)
+	}
+}
