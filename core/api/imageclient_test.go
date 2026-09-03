@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -148,8 +149,15 @@ func (f *fakePlatform) server(t *testing.T) *httptest.Server {
 			case body.Background != "transparent":
 				writeErr(w, 422, "invalid_request", "sprites are transparent; anything else is a caller bug")
 				return
-			case body.Aspect != "3:4":
-				writeErr(w, 422, "invalid_request", "sprites are portrait busts; aspect_ratio must be 3:4")
+			// The SHAPE, not the value. The platform validates `^\d{1,2}:\d{1,2}$`
+			// (`packs_handler.packAspectRatioRe`) and its 422 reads "aspect_ratio must look like 3:4" —
+			// an example of the form. This fake had turned that into `!= "3:4"` and said "sprites are
+			// portrait busts", which invented a constraint the service does not have and then enforced
+			// it: changing the framing from a bust to a three-quarter figure failed four tests here
+			// before failing anywhere real. A fake must be at least as strict as its service; it must
+			// not be stricter.
+			case !regexp.MustCompile(`^\d{1,2}:\d{1,2}$`).MatchString(body.Aspect):
+				writeErr(w, 422, "invalid_request", "aspect_ratio must look like 3:4")
 				return
 			case body.Governance == nil:
 				writeErr(w, 400, "invalid_request", "governance is required")

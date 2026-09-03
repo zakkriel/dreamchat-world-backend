@@ -121,7 +121,7 @@ func TestNeutralSlotIsFilledFromTheAnchorAsset(t *testing.T) {
 
 // An identity anchored BEFORE this change carries an unframed portrait. Showing
 // it as one of four sprites would put a differently-composed neutral beside
-// three framed busts, so those characters keep the four-cell pack.
+// three framed figures, so those characters keep the four-cell pack.
 func TestExistingAnchorStillGeneratesAllFourCells(t *testing.T) {
 	ctx := context.Background()
 	pool := testPool(t)

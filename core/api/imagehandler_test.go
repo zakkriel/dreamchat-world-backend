@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -230,7 +231,7 @@ func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
 	// The anchor is minted with the NEUTRAL CELL's prompt, not the bare
 	// descriptor: that is what lets it serve as the neutral sprite instead of a
 	// fifth render of the same face. It still carries the actor's own authored
-	// descriptor — a picture is of the THING — plus the bust framing.
+	// descriptor — a picture is of the THING — plus the sprite framing.
 	if want := spriteCellPrompt(descriptor, spriteNeutralEmotion); f.lastBootstrapDescription != want {
 		t.Fatalf("bootstrap description = %q, want the neutral cell prompt %q", f.lastBootstrapDescription, want)
 	}
@@ -238,7 +239,7 @@ func TestFillPortraits_BootstrapsBeforeGenerationWhenUnanchored(t *testing.T) {
 		t.Fatalf("upsert appearance = %q, want descriptor %q", got, descriptor)
 	}
 
-	// The pack cells are CALLER-authored: each prompt carries the actor's own descriptor, the bust
+	// The pack cells are CALLER-authored: each prompt carries the actor's own descriptor, the sprite
 	// framing, and its emotion phrase. The platform never composes these — pin that they crossed
 	// the wire composed. Neutral is absent here BY DESIGN: the anchor is that cell.
 	for _, emotion := range spriteEmotionsWithoutNeutral {
@@ -1186,5 +1187,52 @@ func TestGenImageRegeneratePayload(t *testing.T) {
 	}
 	if err := os.WriteFile(dir+"/image_regenerate_1.json", rec.Body.Bytes(), 0o644); err != nil {
 		t.Fatalf("write payload: %v", err)
+	}
+}
+
+// The FRAMING CONTRACT itself, not just that it was composed in. Every other test here references
+// `spriteFramingPrompt` as a variable, so they would pass whatever it said — including the bust it used
+// to say.
+//
+// Founder-ruled 2026-09-01 with five visual-novel reference screenshots: characters are staged as
+// figures, not busts. Every reference frames from the head to about mid-thigh, and the HANDS are doing
+// half the acting — a hand clasped at the chest, a fist half-raised, gloved fingers laced. A bust crops
+// all of that away, and no frontend layout can put it back.
+func TestSpriteFraming_IsAFigureAndLeavesTheBackgroundToThePlatform(t *testing.T) {
+	framing := strings.ToLower(spriteFramingPrompt)
+
+	// What it must ask for.
+	for _, want := range []string{"mid-thigh", "hands visible", "standing", "facing the viewer"} {
+		if !strings.Contains(framing, want) {
+			t.Errorf("the sprite framing does not ask for %q — it reads: %q", want, spriteFramingPrompt)
+		}
+	}
+	// What it must not go back to being.
+	for _, banned := range []string{"bust", "head and chest", "head and shoulders", "shoulders only"} {
+		if strings.Contains(framing, banned) {
+			t.Errorf("the sprite framing is back to a %q — a visual novel stages figures, and the hands are "+
+				"half the acting: %q", banned, spriteFramingPrompt)
+		}
+	}
+	// And it must not overreach the other way: a full body wastes the frame on legs the frontend crops,
+	// and a scene is the backdrop's job.
+	for _, banned := range []string{"full body", "full-length", "head to toe", "environment", "scene", "landscape"} {
+		if strings.Contains(framing, banned) {
+			t.Errorf("the sprite framing asks for %q — the frontend crops from the bottom and the backdrop is a "+
+				"separate asset: %q", banned, spriteFramingPrompt)
+		}
+	}
+	// THE SEAM. Background is the platform's: this repo sends background:"transparent" and the platform
+	// appends its own flat-magenta instruction and keys it out (jobs.ChromaBackdropInstruction). Saying it
+	// here too is a second, weaker instruction for something across the seam, and the two can disagree.
+	for _, theirs := range []string{"background", "backdrop", "magenta", "transparent", "green screen"} {
+		if strings.Contains(framing, theirs) {
+			t.Errorf("the sprite framing mentions %q, which the image platform owns and already instructs: %q",
+				theirs, spriteFramingPrompt)
+		}
+	}
+	// The aspect ratio is a shape the platform accepts, not a value it pins.
+	if !regexp.MustCompile(`^\d{1,2}:\d{1,2}$`).MatchString(spriteAspectRatio) {
+		t.Errorf("spriteAspectRatio %q is not the shape the platform validates", spriteAspectRatio)
 	}
 }
