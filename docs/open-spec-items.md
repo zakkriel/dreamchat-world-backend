@@ -2110,14 +2110,57 @@ Each of these is a real design question with no answer yet, and none of them blo
 7. **Whether the two axes stay two.** The MVP separates completeness-of-position from fluency-of-holder
    and forbids storing "is this wrong". Whether a world ever needs a third axis — authority, say, or
    how widely a position is held — is open.
-8. **Factions as knowledge holders at scale.** The MVP leaves the membership hole in
-   `fn_visible_perceptions` open — nothing in it touches that function. The mechanism cannot
-   distinguish common knowledge, a legitimate path per **B-2** and implemented today by a `faction`
-   pseudo-entity named "Common Knowledge" (`core/db/seeds/seed_mara_0A.sql:24`), from a real
-   faction's private position published to the same `holder_id` shape. That is why factions stay
-   untranscribed: registering a real faction would publish its private position to every character
-   in the world. It does not design collective belief: how a faction's published position relates
-   to its members' private ones, or what happens to a member who diverges.
+8. **Factions as knowledge holders — RULED 2026-09-04, and the ruling removed the problem.**
+   The MVP does not touch `fn_visible_perceptions`, and it no longer needs to. The founder rejected
+   the model this item was written under: *"Not sure that if belonging to a faction or group makes
+   you automatically have that knowledge... it sounds more like a character creator / validator to
+   check what position does the character have in that faction and assign knowledge accordingly."*
+
+   **Membership is not a knowledge path.** `B-2` lists the valid ones — observation, told, record,
+   broadcast, inference, propagation, common knowledge. *Belonging* is not among them; being **told**
+   is. A live membership-visibility rule would have invented a path the law does not have. Knowledge
+   is instead **assigned at creation, joining, or promotion**, by the character's `standing`, using
+   the paths that exist (`told`, `taught`, `granted`).
+
+   Four reasons it is the better model, all of which the rejected one failed:
+   - **Rank.** A novice and the Auscultadora Mayor are both members. Live visibility gives them
+     identical knowledge; assignment by standing does not.
+   - **Leaving.** Live visibility makes expulsion instant amnesia. Assignment lets you keep what you
+     learned — a disgraced ex-member who still knows the secret is a story; one who forgets it is a bug.
+   - **Provenance (I-2).** With the faction as `holder_id` there is one row and many readers, so who
+     knew what, when, and how is unanswerable. With assignment every character carries their own row,
+     its own `epistemic_type`, its own acquisition tick.
+   - **The leak stops being a leak.** If no membership rule exists, a faction holding a *private*
+     perception was never legitimate. The only proper collective holder is the ambient
+     "Common Knowledge" path (`core/db/seeds/seed_mara_0A.sql:24`), which is exactly what that branch
+     is used for. `fn_visible_perceptions` needs no change, and **factions become transcribable** —
+     they need registering and membership, with no visibility consequence.
+
+   **Published versus buried, settled by real-world example.** Asked how a real faction behaves — "the
+   holy church, or any other group" — the split falls out of fields the fill already authors. A
+   catechism is *public*: a heretic knows the official position perfectly, which is often why they are
+   a heretic, and a rival guild knows exactly what the Colegio publishes. What a closed synod decided
+   is known *by rank*; a parish priest cannot read the Vatican archive.
+
+   | field | who holds it | may it be false? |
+   |---|---|---|
+   | `publishes` | anyone, members and outsiders alike — ambient | **yes, and that is the point** |
+   | `buries` | only standings close enough to it | it is what makes the published line false |
+
+   Measured on Los Andantes: the Auscultator College `publishes` "The Monthly Report: a single page of
+   numbers and a verdict" and `buries` "inconvenient readings, especially from junior Auscultators".
+   The Apprentice's standing reads *"trusted to take readings but not to interpret them"* — so they
+   hold the Report and not what was buried. The assignment rule is already written in prose.
+
+   **A faction is more than a name** (founder, same ruling: *"they have things, properties, they have
+   members, reach, goals"*), and the fill already authors seven such fields per faction — `kind`,
+   `goal`, `sacrifice`, `seat`, `controls`, `publishes`, `buries` — every build, all discarded.
+
+   **What remains open, and it is now small:** whether membership carries a coarse rank alongside the
+   prose `standing` (nothing can currently query "who is senior in the Weight Guild"); what happens to
+   a member who diverges from the published position; and whether assignment is one fill call reading
+   `standing` against the faction's concepts, which the founder agreed it should be — prose cannot be
+   parsed by code, so only a model can turn "not to interpret them" into rows.
 
 ### The constraint that governs the eventual design
 

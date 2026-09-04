@@ -266,10 +266,19 @@ stands even though the diagnosis changed: **registering a real faction would pub
 position to every character in the world**, because it would be indistinguishable from the
 "Common Knowledge" holder.
 
-**This is why factions are not transcribed.** Fixing it is a design decision — a dedicated
-public-knowledge path, or a membership table, or both — and it is `SPEC-051` item 8, not a
-migration to be written on the way past. Nothing in this MVP depends on it: concepts are held by
-nobody yet.
+**Superseded 2026-09-04 by a founder ruling, and the overload stops mattering.** Membership was never
+going to grant knowledge: *"if belonging to a faction or group makes you automatically have that
+knowledge… it sounds more like a character creator / validator to check what position does the
+character have in that faction and assign knowledge accordingly."* `B-2` backs it — *belonging* is not
+one of the valid knowledge paths; being **told** is. Knowledge is assigned by `standing` at creation,
+joining or promotion, using `told` / `taught` / `granted`.
+
+So a faction holding a *private* perception was never legitimate, and the only proper collective holder
+is the ambient "Common Knowledge" path this branch already uses. **`fn_visible_perceptions` needs no
+change, and factions become transcribable** — registering plus membership, with no visibility
+consequence. A faction's `publishes` is public (an outsider knows the official line, which is what lets
+it be a lie everyone repeats); its `buries` is assigned only to standings close enough to it. Full
+ruling, reasoning and the remaining open questions: `SPEC-051` item 8.
 
 ## 8. Vocabulary
 
