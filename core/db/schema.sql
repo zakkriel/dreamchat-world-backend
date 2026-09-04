@@ -3133,18 +3133,17 @@ CREATE TABLE public.perception_record (
 CREATE FUNCTION public.fn_visible_perceptions(p_world_id uuid, p_viewer_id uuid) RETURNS SETOF public.perception_record
     LANGUAGE sql STABLE
     AS $$
+  -- A perception is visible to its holder. The previous version also returned every
+  -- perception held by ANY 'faction'/'group' entity to EVERY viewer, with no membership
+  -- condition -- broadcast, not shared knowledge. It was inert only because genesis never
+  -- registers a faction. Restored when membership exists; see
+  -- docs/design/2026-09-02-concepts-as-knowledge.md §7 and SPEC-051 item 8.
   SELECT pr.*
   FROM perception_record pr
   WHERE pr.world_id = p_world_id
     AND pr.invalid_tick IS NULL
     AND pr.expired_at  IS NULL
-    AND ( pr.holder_id = p_viewer_id
-          OR pr.holder_id IN (
-            SELECT er.entity_id FROM entity_registry er
-            WHERE er.world_id = p_world_id
-              AND er.entity_kind IN ('faction','group')
-          )
-        );
+    AND pr.holder_id = p_viewer_id;
 $$;
 
 
@@ -5156,4 +5155,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260825130000'),
     ('20260825140000'),
     ('20260828090000'),
-    ('20260828120000');
+    ('20260828120000'),
+    ('20260904090000');
