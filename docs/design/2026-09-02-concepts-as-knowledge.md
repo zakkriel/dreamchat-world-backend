@@ -1,6 +1,9 @@
 # Concepts as knowledge
 
-**Date:** 2026-09-02 · **Status:** design, settled by a sparring session with the founder. Not built.
+**Date:** 2026-09-02 · **Status:** design, settled by a sparring session with the founder. Concept
+registration shipped on `engine/concepts-and-factions-are-entities`: a concept is now an
+`entity_registry` row carrying its truth. Positions, grades, and the roll (§3–§5 below) are not
+built and are deferred to `SPEC-051`.
 **Scope: MVP ONLY.** This is the minimum that lets a world's ideas exist and reach the models that
 write and run it. The full concept-and-knowledge system is deliberately future work — see `SPEC-051`.
 
@@ -22,12 +25,14 @@ Measured on the committed Los Andantes world (`464550bd-7815-4ce7-9d2d-0835d1e5d
 | `objects` + `ways` | 6 + 9 | 15 `artifact` (ways become portals) |
 | `history` | 8 | `canon_event` + participants + perceptions |
 | **`factions`** | **6** | **nothing** |
-| **`concepts`** | **7** | **nothing** |
+| **`concepts`** | **7** | 7 `concept` entities carrying their truth (`entity_registry.descriptor`) |
 
-The strings `factions` and `concepts` appear nowhere in `worldgenesiscommit.go`. Thirteen named things
-are discarded per world, and with them the reference graph: every cast member carries `belongs_to`, so
-the engine sees twenty-nine unaffiliated people; factions carry `seat`, `controls`, `publishes`,
-`buries`; concepts carry `what_it_is`, `contested`, `taught_by`.
+`factions` still appears nowhere in `worldgenesiscommit.go`; `concepts` now does, at line 363, where
+each concept registers as an `entity_kind='concept'` row carrying `what_it_is` as its descriptor. Six
+named things — the factions — are still discarded per world, and with them their reference graph:
+every cast member carries `belongs_to`, so the engine sees twenty-nine unaffiliated people; factions
+carry `seat`, `controls`, `publishes`, `buries`. A concept's `contested` and `taught_by` axes are
+still discarded — only its truth registers.
 
 **The history weaver already gets each concept's meaning, and this document originally claimed it
 did not.** Corrected 2026-09-04 after the claim was implemented and reverted. `canonSchedule` passes
@@ -106,6 +111,37 @@ created pointing at the same concept. The old one survives for whoever still hol
 
 **The holders of a position are a plain list, not a `group` entity.** Everyone who happens to believe
 something is not an organisation and must not be able to act like one.
+
+**A latent silent-drop, unreachable today.** `apply_mutation`
+(`core/db/migrations/20260610090006_apply_mutation_and_triggers.sql:11-32`) dispatches
+`IF actor / ELSIF location / ELSIF artifact / ELSIF relationship` with no `ELSE`.
+`apply_attribute_writes` (`20260724100002_apply_ruled_event.sql:255-268`) only `CONTINUE`s when the
+kind is NULL, so a concept target would write a `state_mutation` row with `status='applied'` (the
+column default), the trigger would fire, the chain would fall through every branch, and nothing
+would be projected — while `core/api/orchestrator.go:1667`'s guard compares row *count*, not effect,
+so it would pass. Ledger says applied; nothing applied. It is unreachable today only because a
+concept has no state row and no location, so it never enters a slice (`gather_slice`), never gets
+whitelisted by `core/api/verdict.go:142`, and can never be named as an `attribute_write` target — a
+concept is not rejected, it is unnameable. No gate is added for this; it is recorded so the deferred
+`SPEC-051` work does not walk into it blind.
+
+**The ten-dispatch-site review, recorded.** Every place a concept's `entity_kind` reaches a branch
+that assumes actor/location/artifact was checked before this document was approved. Three classes:
+
+1. **Kind-equality filters** (~30 sites, e.g. `core/api/artcommission.go:96,105,123`,
+   `core/api/imagehandler.go:373,781,797`, the name-token wall) — a concept fails them all; safe by
+   construction.
+2. **CASE dispatch with a fallback** (`gather_slice`, `core/api/journey.go:288-292` via `COALESCE`)
+   — safe.
+3. **CASE/IF with no fallback** (`apply_mutation`, `fn_target_position`, `fn_distance`, mint
+   persistence) — safe only because a concept cannot reach them; see the silent-drop above.
+
+Two unfiltered registry enumerations were also cleared: `fn_unearned_names` / `fn_viewer_text` do
+not leak the truth only because `fn_display_name` does not read `entity_registry.descriptor` — an
+accident of which column it reads, not a designed boundary (see the caution on that column in
+`core/api/worldgenesiscommit.go`, above `registerEntities`) — and `fn_names_in_text` has no kind
+filter, so an NPC speaking a concept's name creates a `name_knowledge` row for a concept entity
+(benign, but a new undocumented row type).
 
 ---
 

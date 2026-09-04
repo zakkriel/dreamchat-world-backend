@@ -2110,9 +2110,14 @@ Each of these is a real design question with no answer yet, and none of them blo
 7. **Whether the two axes stay two.** The MVP separates completeness-of-position from fluency-of-holder
    and forbids storing "is this wrong". Whether a world ever needs a third axis — authority, say, or
    how widely a position is held — is open.
-8. **Factions as knowledge holders at scale.** The MVP fixes the membership hole in
-   `fn_visible_perceptions` because it must. It does not design collective belief: how a faction's
-   published position relates to its members' private ones, or what happens to a member who diverges.
+8. **Factions as knowledge holders at scale.** The MVP leaves the membership hole in
+   `fn_visible_perceptions` open — nothing in it touches that function. The mechanism cannot
+   distinguish common knowledge, a legitimate path per **B-2** and implemented today by a `faction`
+   pseudo-entity named "Common Knowledge" (`core/db/seeds/seed_mara_0A.sql:24`), from a real
+   faction's private position published to the same `holder_id` shape. That is why factions stay
+   untranscribed: registering a real faction would publish its private position to every character
+   in the world. It does not design collective belief: how a faction's published position relates
+   to its members' private ones, or what happens to a member who diverges.
 
 ### The constraint that governs the eventual design
 
