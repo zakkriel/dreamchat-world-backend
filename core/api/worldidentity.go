@@ -968,7 +968,7 @@ func ensurePlayableFloor(doc *genesisDoc) {
 // the holders already have NAMES from the scaffold, and their inner lives are written later knowing what
 // they lived through — rather than canon being invented afterwards to match a personality.
 func canonSchedule(doc *genesisDoc, b depthBudget) []workItem {
-	concepts := conceptNames(doc)
+	concepts := conceptLines(doc)
 	var items []workItem
 	for _, top := range topLocations(doc) {
 		tree := locationTree(doc, top)
@@ -1457,6 +1457,28 @@ func conceptNames(d *genesisDoc) []string {
 		if n := strings.TrimSpace(c.CanonicalName); n != "" {
 			out = append(out, n)
 		}
+	}
+	return out
+}
+
+// conceptLines gives the history weaver each idea AND what it is. conceptNames gave it only the bare
+// word, which is why authored history never referenced a concept: a model cannot weave a doctrine it
+// knows nothing about. It receives the truth and no position — positions do not exist yet, and the
+// weaver resolves the truth without speaking it (design 2026-09-02 §6, SPEC-051). Used only by
+// canonSchedule; the other conceptNames call sites (naming, content, after-canon, fill) keep the bare
+// name because they have not been shown to need more.
+func conceptLines(d *genesisDoc) []string {
+	var out []string
+	for _, c := range d.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		if name == "" {
+			continue
+		}
+		if what := strings.TrimSpace(c.WhatItIs); what != "" {
+			out = append(out, name+" — "+what)
+			continue
+		}
+		out = append(out, name)
 	}
 	return out
 }

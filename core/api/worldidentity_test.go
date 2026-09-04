@@ -2521,3 +2521,32 @@ func TestFillFromIdentity_AnObjectTheCanonNamesGetsAuthored(t *testing.T) {
 		t.Error("the promoted object was never authored: canon names it and it says only what it looks like")
 	}
 }
+
+// The history weaver was handed concept NAMES only, so it could not weave an idea it
+// knew nothing about. It gets the truth; it never gets a character's position on it,
+// and there are no positions yet (design §6, SPEC-051).
+func TestCanonScope_CarriesConceptTruthNotJustNames(t *testing.T) {
+	doc := &genesisDoc{Concepts: []genesisConcept{{
+		CanonicalName: "Auscultation",
+		WhatItIs:      "The craft of reading a beast's health through its deep pulse.",
+	}}}
+	got := conceptLines(doc)
+	if len(got) != 1 {
+		t.Fatalf("want 1 line, got %d", len(got))
+	}
+	if !strings.Contains(got[0], "Auscultation") {
+		t.Errorf("line must name the concept: %q", got[0])
+	}
+	if !strings.Contains(got[0], "deep pulse") {
+		t.Errorf("line must carry what_it_is, or the weaver knows only the word: %q", got[0])
+	}
+	// The weaver gets the truth, never a position on it — there are no positions yet
+	// (design §6, SPEC-051), so the one extra assertion checks the line carries neither a
+	// number nor position/wrongness language, since the constraints forbid both reaching
+	// the prompt.
+	if strings.ContainsAny(got[0], "0123456789") ||
+		strings.Contains(strings.ToLower(got[0]), "wrong") ||
+		strings.Contains(strings.ToLower(got[0]), "position") {
+		t.Errorf("line leaks a number or position/wrongness language: %q", got[0])
+	}
+}
