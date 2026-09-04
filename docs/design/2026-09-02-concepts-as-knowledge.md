@@ -29,10 +29,27 @@ are discarded per world, and with them the reference graph: every cast member ca
 the engine sees twenty-nine unaffiliated people; factions carry `seat`, `controls`, `publishes`,
 `buries`; concepts carry `what_it_is`, `contested`, `taught_by`.
 
-**The history weaver already gets concept names and nothing else.** `canonSchedule` passes
-`Concepts: conceptNames(doc)` — the bare strings. The model writing a world's past is told those words
-exist and nothing about what they mean or who fights over them. After genesis, nothing survives at
-all, so the models that run *play* never hear of them.
+**The history weaver already gets each concept's meaning, and this document originally claimed it
+did not.** Corrected 2026-09-04 after the claim was implemented and reverted. `canonSchedule` passes
+`Concepts: conceptNames(doc)`, which reads like a bare-names payload and is not one: `scope.Concepts`
+is a **selector**, matched by exact string equality in `buildWorldFillPrompt` (`want(scope.Concepts,
+strings.TrimSpace(c.CanonicalName))`), and the renderer beside it already emits
+
+```
+- concept "Auscultation"
+    is: The craft of reading a beast's health through its deep pulse.
+    contested: Whether the monthly report tells the full truth.
+```
+
+So the weaver receives the truth **and** the axis of dispute already. Changing the selector to carry
+joined `"name — meaning"` lines made every concept fail the equality check and dropped all of them from
+the prompt — the exact opposite of the intent, silently, with no log and no failing test. It also
+recreated a format this repo removed after a live failure: the prompt marker at `worldidentity.go:78`
+reads *"Cross-reference these by the EXACT string inside the quotes and nothing else — never the
+descriptor, never the quotes, never the two joined."*
+
+**What is actually missing is only the second half:** after genesis nothing survives, so the models
+that run *play* never hear of a concept, and no character can hold a position on one.
 
 Nothing is broken in play today, and that is worth saying plainly: an NPC's knowledge reaches a seat
 as **prose**, and prose can already say "Del Vas thinks the pulse was regular". What cannot be done is
@@ -152,9 +169,12 @@ gets there):
 
 This is the point of the work, and the half the engine currently fails.
 
-**The history weaver gets the truth**, plus the fact that each character holds their own understanding
-of it. It always resolves the truth and does not speak about it. That is what lets it write a past in
-which people are wrong: the Colegio publishes the recognised position, *hoping* it is the truth.
+**The history weaver gets the truth** — and it already does, via the renderer described in §1. It
+always resolves the truth and does not speak about it. Nothing needs building here. What is missing is
+the *positions*: it cannot yet be told that each character holds their own understanding, because no
+character holds one. That is what will let it write a past in which people are wrong — the Colegio
+publishing the recognised position, *hoping* it is the truth — and it arrives with the knowledge
+table, not before.
 
 A faction's published position is **just another position** — carrying authority, carrying no guarantee.
 

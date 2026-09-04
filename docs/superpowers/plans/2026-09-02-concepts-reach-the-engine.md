@@ -232,7 +232,25 @@ git commit -m "A world's ideas survive genesis."
 
 ---
 
-### Task 3: The weaver gets the truth, not a list of names
+### Task 3: ~~The weaver gets the truth, not a list of names~~ — **VOID, do not run**
+
+**Attempted, reverted, void — two Critical findings.** Its premise was wrong in the same way Task 1's
+was: I read `Concepts: conceptNames(doc)` and concluded bare names reach the model, without following
+it to the consumer.
+
+`scope.Concepts` is a **selector**, not a payload. `buildWorldFillPrompt` filters with exact string
+equality — `want(scope.Concepts, strings.TrimSpace(c.CanonicalName))` — and the renderer beside it
+already emits `is: <what_it_is>` and `contested: <contested>` for every scoped concept. Replacing the
+selector with joined `"name — meaning"` lines matched nothing, so **every concept was dropped from the
+canon prompt**: the exact inverse of the deliverable, silent, with no log and no failing test.
+
+It also recreated a format this repo deleted after a live failure — the prompt marker at
+`worldidentity.go:78` reads *"never the descriptor, never the quotes, never the two joined."*
+
+The weaver already has the truth. What it lacks is *positions*, which arrive with the knowledge table
+in a later round (`SPEC-051`). The original text follows for the record only.
+
+### Task 3 (original, void): The weaver gets the truth, not a list of names
 
 `canonSchedule` passes `Concepts: conceptNames(doc)` — bare strings. The model writing a world's past is told those words exist and nothing about what they mean, which is why history never references them.
 
