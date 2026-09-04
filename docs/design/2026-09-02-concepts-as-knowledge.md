@@ -15,8 +15,9 @@ models. It adds three quantities and one law. It adds no subsystem.
 
 ## 1. The problem, measured
 
-The fill authors `concepts` and `factions` in their own content waves. Neither reaches the engine.
-Measured on the committed Los Andantes world (`464550bd-7815-4ce7-9d2d-0835d1e5d09f`):
+The fill authors `concepts` and `factions` in their own content waves. When this was measured on the
+committed Los Andantes world (`464550bd-7815-4ce7-9d2d-0835d1e5d09f`), **neither reached the engine**.
+Concepts now do; factions still do not:
 
 | the document holds | count | reaches the engine as |
 |---|---|---|
