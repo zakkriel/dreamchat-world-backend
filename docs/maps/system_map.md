@@ -75,6 +75,15 @@ The build is one transaction so a failure leaves no directory row. **Art is deli
 (ADR-P021): a dozen images is minutes of another service, and a provider outage must delay pictures,
 never destroy an authored world.
 
+**A world's ideas are entities too.** `registerEntities` (`worldgenesiscommit.go`) writes each
+authored concept into `entity_registry` as `entity_kind='concept'` at the same genesis commit, so a
+belief can point at one. `entity_registry.descriptor` carries the concept's `what_it_is` — the
+descriptor IS the truth, one field with one meaning, authored identity that is never spoken to a
+character. A concept has **no state row and no position** and cannot act: `loadGenesisIDs`'
+`default` branch deliberately drops it rather than filing it under `things` (a concept is not an
+artifact). Not built yet: no positions, no grade, nobody holds a concept yet — see `SPEC-051` and
+`docs/design/2026-09-02-concepts-as-knowledge.md`.
+
 ---
 
 ## 3. The art pipeline
