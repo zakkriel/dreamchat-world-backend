@@ -80,7 +80,7 @@ type genesisIDs struct {
 	player string
 	places map[string]string
 	cast   map[string]string
-	things map[string]string // objects and ways alike: both are artifacts
+	things map[string]string // objects and ways: both are artifacts. Concepts are never keyed here — see loadGenesisIDs.
 }
 
 // commitWorldContent writes everything the world IS inside the caller's transaction and returns the
@@ -267,8 +267,10 @@ func loadGenesisIDs(ctx context.Context, tx pgx.Tx, worldID string) (*genesisIDs
 			ids.places[name] = id
 		case "actor":
 			ids.cast[name] = id
-		default:
+		case "artifact":
 			ids.things[name] = id
+		default:
+			// concepts, and any later kind, have no state row and nothing to look up here
 		}
 	}
 	return ids, rows.Err()
