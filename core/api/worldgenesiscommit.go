@@ -355,6 +355,18 @@ func registerEntities(ctx context.Context, tx pgx.Tx, worldID string, doc *genes
 		}
 		ids.things[key] = id
 	}
+	// A world's ideas are entities so a belief can point at one, and the descriptor IS the truth
+	// (design 2026-09-02 §3): authored identity, never spoken to a character, never mutated. No state
+	// row -- a concept has no position and cannot act, so it is registered and nothing else.
+	for _, c := range doc.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		if name == "" {
+			continue
+		}
+		if _, err := insert("concept", name, strings.TrimSpace(c.WhatItIs)); err != nil {
+			return nil, err
+		}
+	}
 	return ids, nil
 }
 
