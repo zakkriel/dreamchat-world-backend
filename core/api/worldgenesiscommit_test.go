@@ -59,4 +59,19 @@ func TestCommit_ConceptsAreRegisteredWithTheirTruth(t *testing.T) {
 			t.Errorf("%q: a concept has no position and cannot act; got %d state row(s)", c.CanonicalName, stateRows)
 		}
 	}
+
+	// The arrival path rebuilds its id map with loadGenesisIDs (commitArrival, already run by
+	// genesisFixture above) — same package, so it is directly callable here rather than inferred.
+	// A concept must never land under ids.things: that map is what every artifact-shaped write in
+	// writeArrival/commitContent keys off, and filing a concept there would let it be treated as one.
+	ids, err := loadGenesisIDs(ctx, tx, worldID)
+	if err != nil {
+		t.Fatalf("loadGenesisIDs: %v", err)
+	}
+	for _, c := range doc.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		if _, ok := ids.things[name]; ok {
+			t.Errorf("%q: the arrival path filed a concept under ids.things — it would be treated as an artifact", name)
+		}
+	}
 }
