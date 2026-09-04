@@ -42,7 +42,23 @@ So the knowledge table, the grade, and the roll are **deferred to the round that
 
 ---
 
-### Task 1: Close the faction knowledge leak
+### Task 1: ~~Close the faction knowledge leak~~ — **VOID, do not run**
+
+**This task was attempted, reverted, and is void.** Its premise was wrong. The faction/group branch
+in `fn_visible_perceptions` is **the common-knowledge implementation** (**B-2** names common
+knowledge a valid path; the dev seed registers a `faction` pseudo-entity named "Common Knowledge"
+as the holder of public facts, `seed_mara_0A.sql:24`). Removing it broke 11 assertions across 7
+pgTAP files. The implementer reported this instead of rewriting those tests, which was the right
+call.
+
+The real defect is narrower — the mechanism cannot tell common knowledge from a faction's private
+position, because both are `holder_id` pointing at a faction entity — and it is a design decision,
+now `SPEC-051` item 8 and design §7. **Factions stay untranscribed until it is settled.** Nothing
+in Tasks 2-4 depends on it.
+
+The original text follows for the record only.
+
+### Task 1 (original, void): Close the faction knowledge leak
 
 `fn_visible_perceptions` returns any perception whose holder is a `faction` or `group` entity, to **every** viewer, with no membership condition. It is inert today only because no faction is ever registered. It must not be relied on by anything.
 

@@ -172,7 +172,10 @@ position *and* the character infers a new understanding — which is a fork, whi
 
 ---
 
-## 7. One bug this design uncovered, which blocks it
+## 7. Common knowledge is an overloaded holder, not a bug
+
+**This section originally claimed a leak, and that claim was wrong.** It was corrected on
+2026-09-02 when an implementer refused to make the failing tests pass and reported instead.
 
 ```sql
 fn_visible_perceptions:
@@ -181,12 +184,35 @@ fn_visible_perceptions:
                           WHERE entity_kind IN ('faction','group'))
 ```
 
-**No membership check.** Knowledge held by any faction is visible to *every character in the world*.
-That is broadcast, not shared knowledge. It is dead today because no faction is ever registered — and
-it means transcribing factions **without fixing this first** would leak every faction's private
-position to everybody.
+That branch is **the common-knowledge implementation**, and common knowledge is a mandated
+knowledge path — **B-2**: *"unknown facts enter a perspective's knowledge only through valid
+in-world paths — observation, told, record, broadcast, inference, propagation, **or common
+knowledge**"*, with the Glossary defining it as *"World facts the current perspective is presumed
+to know without an explicit acquisition event."* The dev seed implements it by registering a
+`faction` pseudo-entity literally named **"Common Knowledge"**
+(`eeeeeeee-…-eeee`, `seed_mara_0A.sql:24`) and attributing public facts to it as holder. Removing
+the branch broke **11 assertions across 7 pgTAP files**.
 
----
+So the earlier claim that it is "dead code because no faction is ever registered" was false: a
+faction *is* registered, on purpose, and the branch is load-bearing.
+
+**The real defect is narrower and still real.** The mechanism cannot distinguish two different
+things, because both are expressed the same way — `holder_id` pointing at a `faction`/`group`
+entity:
+
+- *common knowledge*, which every character is presumed to hold
+- *a faction's private position*, which only its members should hold
+
+There is no membership representation anywhere in the schema (`belongs_to` is parsed into
+`genesisActor.BelongsTo` and never persisted), so the two cannot be told apart. The consequence
+stands even though the diagnosis changed: **registering a real faction would publish its private
+position to every character in the world**, because it would be indistinguishable from the
+"Common Knowledge" holder.
+
+**This is why factions are not transcribed.** Fixing it is a design decision — a dedicated
+public-knowledge path, or a membership table, or both — and it is `SPEC-051` item 8, not a
+migration to be written on the way past. Nothing in this MVP depends on it: concepts are held by
+nobody yet.
 
 ## 8. Vocabulary
 
