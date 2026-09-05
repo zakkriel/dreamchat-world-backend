@@ -40,6 +40,7 @@ world-genesis
   core/api/worldactor*
   core/api/worldgenesis*
   core/api/fillledger.go
+  core/api/unwitnessed_test.go
   core/api/worldidentity*
   core/api/worldinterview*
   core/api/worldkickstart*
