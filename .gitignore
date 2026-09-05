@@ -10,3 +10,6 @@ core/api/api
 # SPEC-011 schema-contract build artifact (generated payloads)
 ci/.payloads/
 venv/
+
+# subagent-driven-development scratch (ledger, briefs, review packages)
+.superpowers/

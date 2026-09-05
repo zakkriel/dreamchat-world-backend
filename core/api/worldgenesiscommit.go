@@ -80,7 +80,7 @@ type genesisIDs struct {
 	player string
 	places map[string]string
 	cast   map[string]string
-	things map[string]string // objects and ways alike: both are artifacts
+	things map[string]string // objects and ways: both are artifacts. Concepts are never keyed here — see loadGenesisIDs.
 }
 
 // commitWorldContent writes everything the world IS inside the caller's transaction and returns the
@@ -267,8 +267,10 @@ func loadGenesisIDs(ctx context.Context, tx pgx.Tx, worldID string) (*genesisIDs
 			ids.places[name] = id
 		case "actor":
 			ids.cast[name] = id
-		default:
+		case "artifact":
 			ids.things[name] = id
+		default:
+			// concepts, and any later kind, have no state row and nothing to look up here
 		}
 	}
 	return ids, rows.Err()
@@ -298,9 +300,12 @@ func nullableArtStyleChoice(choice string) any {
 }
 
 // registerEntities mints an id for every authored thing and writes entity_registry. The descriptor goes
-// on the row as well as into attrs later: the registry descriptor is what fn_display_name falls back to
-// before the canonical name, and the canonical name is the LAST resort — reaching it means a viewer read
-// a name nobody gave them.
+// on the row as well as into attrs later, but `fn_display_name` never reads entity_registry.descriptor:
+// it falls back through fn_perceived_name -> actor_state/artifact_state attrs->>'descriptor' ->
+// entity_registry.canonical_name (`20260808100003_distinguishing_labels.sql`). For a concept, the
+// registry descriptor column below is the ONLY place its truth is written (design 2026-09-02 §3): a
+// concept's truth must never become a display label, so if fn_display_name is ever changed to read
+// this column, every concept's truth becomes its player-facing name.
 func registerEntities(ctx context.Context, tx pgx.Tx, worldID string, doc *genesisDoc) (*genesisIDs, error) {
 	ids := &genesisIDs{
 		places: make(map[string]string, len(doc.Places)),
@@ -354,6 +359,15 @@ func registerEntities(ctx context.Context, tx pgx.Tx, worldID string, doc *genes
 			return nil, err
 		}
 		ids.things[key] = id
+	}
+	// A world's ideas are entities so a belief can point at one, and the descriptor IS the truth
+	// (design 2026-09-02 §3): authored identity, never spoken to a character, never mutated. No state
+	// row -- a concept has no position and cannot act, so it is registered and nothing else.
+	for _, c := range doc.Concepts {
+		name := strings.TrimSpace(c.CanonicalName)
+		if _, err := insert("concept", name, strings.TrimSpace(c.WhatItIs)); err != nil {
+			return nil, err
+		}
 	}
 	return ids, nil
 }

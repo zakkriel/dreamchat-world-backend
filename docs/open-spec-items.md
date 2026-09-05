@@ -1456,6 +1456,37 @@ including the new holder.**
 
 **Status, newest first.**
 
+**PARTLY BUILT 2026-09-04 (`ADR-037`), and this item's premise about the law was WRONG.**
+
+The belt no longer refuses an event nobody witnessed, and `epistemic_type` gained `indirect` —
+knowledge perceived through a medium (a recording, a spell, a dream). Founder's case, and it is
+physical rather than epistemic: *"a car getting on fire and blowing up alone… it destroys an item so
+a canon event needs to be there."*
+
+**The correction:** §1 below says the reversal *"needs a superseding ADR"*. It never did. `ADR-005`
+already decided it — *"One canon event fans out to **zero-to-N** perceptions"* — so the belt was
+contradicting the engine's own founding ADR, and removing the refusal was a bug fix. `ADR-037` exists
+for the `indirect` addition, which genuinely is a frozen-set change (**D-5**).
+
+A carrier is **not** required, and an earlier draft of the design that required one was rejected by
+the founder on the car case. The medium is an *affordance* for revealing, never a condition of
+existing.
+
+**Still open — the reveal, and it is all of §2 below.** `generate_perceptions` derives holders from
+`event_participant` and hardcodes `acquired_tick = valid_tick = the event's tick`, so it cannot grant
+a late perception to someone who was not there. `provenance_edge` is declared and **written by
+nothing**, though its `source_kind` already admits `'perception'` and its `how_type` already carries
+`witnessed_by`, `reported_by` and `inferred_from`. And no action exists for watching a tape or casting
+a divination, so the minting path has no caller and building it first would be dead code.
+
+**The settled shape of the reveal** (founder, 2026-09-04: *"NOTHING ever links to cannon but
+perceptions. if a recording shows something. it shows the perception."*): the medium **holds its own
+perception** of the event — legal today, since `holder_id` has no FK and no kind check — and whoever
+reaches it acquires theirs `indirect`, joined by a `provenance_edge` with `source_kind='perception'`.
+The tape never points at the event. Decisions 1 and 2 below are answered by that; decision 3's
+"what makes it discoverable" is the medium; decision 4's proportion floor is **withdrawn** — canon is
+too thin already (`SPEC-050`), not too thick.
+
 **OPEN, HIGH PRIORITY. Founder-ruled 2026-08-28 and blocking the depth of every generated world.**
 
 A canon event with **zero perceptions is legitimate and necessary**. A faction keeps a record nobody
@@ -1626,6 +1657,25 @@ private persona needs its own home, or the link lives on the perception side. Un
 ## SPEC-043 — Intangible concepts cannot be entities, so nobody can hold a belief about one
 
 **Status, newest first.**
+
+**DESIGNED 2026-09-02, and this item's diagnosis was WRONG.** Settled by a sparring session; the design
+is `docs/design/2026-09-02-concepts-as-knowledge.md`, and the full system it defers is `SPEC-051`.
+
+Two corrections to what is written below. **First, the blocker was never `entity_kind`'s closed set.**
+That set is on `event_participant`; `entity_registry.entity_kind` is free text with no CHECK, and
+`perception_subject` carries no kind constraint and no FK on `entity_id` — so registering a concept and
+pointing a belief at it needs no DDL at all. **Second, the real blocker is one column:**
+`perception_record.source_event_id` is `NOT NULL`. A perception cannot exist without an event, and
+knowing a doctrine after twenty years of practice has no event to point at. That is what forces a
+separate kind of knowledge rather than a bent perception — the mirror of `SPEC-040`.
+
+The framing below ("we create an entity and we can link perception to that entity") was also
+superseded by the founder on 2026-09-02: a concept is **a type of knowledge**, not a thing bent into
+the entity model. `name_knowledge` is the precedent — the person exists as an entity AND knowing their
+name is its own table. Both, not either.
+
+Item 4 below ("does fill author concepts, and in which layer?") was answered by the shipped fill
+before the ruling: its own post-canon content wave, alongside objects.
 
 **OPEN. Founder-raised 2026-08-28.**
 
@@ -2047,3 +2097,117 @@ in proportion to a depth-5 breadth would be refused by `genesisDoc.validate()` w
 place before the world opens". Widening the ladder is a constant, not a redesign, but it has to move in
 the same round.
 
+
+---
+
+## SPEC-051 — Define the concept and knowledge system
+
+**Status, newest first.**
+
+**OPEN, BIG. Raised by the founder 2026-09-02** at the end of the sparring session that produced
+`docs/design/2026-09-02-concepts-as-knowledge.md`, with the instruction that the design doc is **the
+MVP and nothing more**: "a big SPEC - define concept and knowledge system in the future."
+
+### Why this exists as its own item
+
+The MVP gives a world's ideas somewhere to live and gets them in front of the models that write and run
+the world. It answers three questions — what an idea is, what holding one means, how both reach a
+prompt — and deliberately answers no others. Three quantities (truth, position, grade) and one law
+(chance from grade, deterministic roll, recall thins then application fails).
+
+That is enough to stop discarding seven concepts and six factions per world. It is **not** a knowledge
+system, and shipping it must not be mistaken for having designed one.
+
+### What the MVP deliberately leaves undefined
+
+Each of these is a real design question with no answer yet, and none of them block the MVP:
+
+1. **Concept-to-concept structure.** A school contains doctrines; a doctrine has prerequisites;
+   pyromancy and abjuration are both magic. The MVP has a flat list of concepts with no edges.
+2. **How mastery is expressed to a player.** The MVP renders grade as prose to a seat and shows the
+   player nothing. Whether there is ever a visible mastery — and whether that is a number, a phrase, or
+   only inference from what your character manages — is untouched. No skill tree is implied.
+3. **Divergence detection.** A fork is authored at genesis or produced by an inference in play. Nothing
+   scans for two holders drifting apart, and nothing should until someone decides what a drift *is*.
+4. **A teaching economy.** `taught` becomes an acquisition mode, but training time, capacity, who may
+   teach whom, and what a teacher spends are all undefined.
+5. **The compendium surface.** A concept is reachable through the knowledge about it, and the
+   compendium functions already read about-ness (`fn_collected_knowledge`, `fn_compendium_index`), but
+   no page contract exists for an idea rather than a thing in a room (`B-1` requires it be
+   perception-bound).
+6. **Concepts in canon events.** `event_participant`'s closed set is left intact by the MVP. If "the
+   Colegio published a doctrine" must be canon with the doctrine as a participant, that is a separate
+   engine ADR.
+7. **Whether the two axes stay two.** The MVP separates completeness-of-position from fluency-of-holder
+   and forbids storing "is this wrong". Whether a world ever needs a third axis — authority, say, or
+   how widely a position is held — is open.
+8. **Factions as knowledge holders — RULED 2026-09-04, and the ruling removed the problem.**
+   The MVP does not touch `fn_visible_perceptions`, and it no longer needs to. The founder rejected
+   the model this item was written under: *"Not sure that if belonging to a faction or group makes
+   you automatically have that knowledge... it sounds more like a character creator / validator to
+   check what position does the character have in that faction and assign knowledge accordingly."*
+
+   **Membership is not a knowledge path.** `B-2` lists the valid ones — observation, told, record,
+   broadcast, inference, propagation, common knowledge. *Belonging* is not among them; being **told**
+   is. A live membership-visibility rule would have invented a path the law does not have. Knowledge
+   is instead **assigned at creation, joining, or promotion**, by the character's `standing`, using
+   the paths that exist (`told`, `taught`, `granted`).
+
+   Four reasons it is the better model, all of which the rejected one failed:
+   - **Rank.** A novice and the Auscultadora Mayor are both members. Live visibility gives them
+     identical knowledge; assignment by standing does not.
+   - **Leaving.** Live visibility makes expulsion instant amnesia. Assignment lets you keep what you
+     learned — a disgraced ex-member who still knows the secret is a story; one who forgets it is a bug.
+   - **Provenance (I-2).** With the faction as `holder_id` there is one row and many readers, so who
+     knew what, when, and how is unanswerable. With assignment every character carries their own row,
+     its own `epistemic_type`, its own acquisition tick.
+   - **The leak stops being a leak.** If no membership rule exists, a faction holding a *private*
+     perception was never legitimate. The only proper collective holder is the ambient
+     "Common Knowledge" path (`core/db/seeds/seed_mara_0A.sql:24`), which is exactly what that branch
+     is used for. `fn_visible_perceptions` needs no change, and **factions become transcribable** —
+     they need registering and membership, with no visibility consequence.
+
+   **Published versus buried, settled by real-world example.** Asked how a real faction behaves — "the
+   holy church, or any other group" — the split falls out of fields the fill already authors. A
+   catechism is *public*: a heretic knows the official position perfectly, which is often why they are
+   a heretic, and a rival guild knows exactly what the Colegio publishes. What a closed synod decided
+   is known *by rank*; a parish priest cannot read the Vatican archive.
+
+   | field | who holds it | may it be false? |
+   |---|---|---|
+   | `publishes` | anyone, members and outsiders alike — ambient | **yes, and that is the point** |
+   | `buries` | only standings close enough to it | it is what makes the published line false |
+
+   Measured on Los Andantes: the Auscultator College `publishes` "The Monthly Report: a single page of
+   numbers and a verdict" and `buries` "inconvenient readings, especially from junior Auscultators".
+   The Apprentice's standing reads *"trusted to take readings but not to interpret them"* — so they
+   hold the Report and not what was buried. The assignment rule is already written in prose.
+
+   **A faction is more than a name** (founder, same ruling: *"they have things, properties, they have
+   members, reach, goals"*), and the fill already authors seven such fields per faction — `kind`,
+   `goal`, `sacrifice`, `seat`, `controls`, `publishes`, `buries` — every build, all discarded.
+
+   **What remains open, and it is now small:** whether membership carries a coarse rank alongside the
+   prose `standing` (nothing can currently query "who is senior in the Weight Guild"); what happens to
+   a member who diverges from the published position; and whether assignment is one fill call reading
+   `standing` against the faction's concepts, which the founder agreed it should be — prose cannot be
+   parsed by code, so only a model can turn "not to interpret them" into rows.
+
+### The constraint that governs the eventual design
+
+The founder's, verbatim, and it is the reason the MVP is small: *"do not go creating crazy gates and
+crazy test and validations in the code and call them a system. we want it to keep it clean as (speed,
+velocity and the physics engine)."*
+
+Whatever this becomes must stay a few quantities with clean relationships between them. The MVP's shape
+— three quantities, one law, no flags, no gate — is the standard to hold the full system to, not a
+scaffold to be replaced by something more elaborate.
+
+### Related
+
+`SPEC-040` (canon with no perception — this is its mirror: knowledge with no event) · `SPEC-041`
+(perceptions are replaced, never mutated — the same rule governs positions) · `SPEC-042` (traits are not
+connected to the perceptions that formed them — a held position is the adjacent case) · `SPEC-043`
+(intangible concepts cannot be entities — **superseded in framing** by the design doc: the blocker was
+never `entity_kind`, it was `perception_record.source_event_id NOT NULL`) · `SPEC-050` (canon does not
+scale with depth — adding ideas with no events makes thin canon measurably thinner).
