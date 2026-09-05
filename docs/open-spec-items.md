@@ -1456,6 +1456,37 @@ including the new holder.**
 
 **Status, newest first.**
 
+**PARTLY BUILT 2026-09-04 (`ADR-037`), and this item's premise about the law was WRONG.**
+
+The belt no longer refuses an event nobody witnessed, and `epistemic_type` gained `indirect` —
+knowledge perceived through a medium (a recording, a spell, a dream). Founder's case, and it is
+physical rather than epistemic: *"a car getting on fire and blowing up alone… it destroys an item so
+a canon event needs to be there."*
+
+**The correction:** §1 below says the reversal *"needs a superseding ADR"*. It never did. `ADR-005`
+already decided it — *"One canon event fans out to **zero-to-N** perceptions"* — so the belt was
+contradicting the engine's own founding ADR, and removing the refusal was a bug fix. `ADR-037` exists
+for the `indirect` addition, which genuinely is a frozen-set change (**D-5**).
+
+A carrier is **not** required, and an earlier draft of the design that required one was rejected by
+the founder on the car case. The medium is an *affordance* for revealing, never a condition of
+existing.
+
+**Still open — the reveal, and it is all of §2 below.** `generate_perceptions` derives holders from
+`event_participant` and hardcodes `acquired_tick = valid_tick = the event's tick`, so it cannot grant
+a late perception to someone who was not there. `provenance_edge` is declared and **written by
+nothing**, though its `source_kind` already admits `'perception'` and its `how_type` already carries
+`witnessed_by`, `reported_by` and `inferred_from`. And no action exists for watching a tape or casting
+a divination, so the minting path has no caller and building it first would be dead code.
+
+**The settled shape of the reveal** (founder, 2026-09-04: *"NOTHING ever links to cannon but
+perceptions. if a recording shows something. it shows the perception."*): the medium **holds its own
+perception** of the event — legal today, since `holder_id` has no FK and no kind check — and whoever
+reaches it acquires theirs `indirect`, joined by a `provenance_edge` with `source_kind='perception'`.
+The tape never points at the event. Decisions 1 and 2 below are answered by that; decision 3's
+"what makes it discoverable" is the medium; decision 4's proportion floor is **withdrawn** — canon is
+too thin already (`SPEC-050`), not too thick.
+
 **OPEN, HIGH PRIORITY. Founder-ruled 2026-08-28 and blocking the depth of every generated world.**
 
 A canon event with **zero perceptions is legitimate and necessary**. A faction keeps a record nobody

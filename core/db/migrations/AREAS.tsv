@@ -90,3 +90,4 @@
 20260825140000_witnesses_malformed_is_refusal.sql	perception
 20260828090000_world_identity.sql	world-genesis
 20260828120000_beat_derivation.sql	play-loop
+20260904230000_epistemic_indirect.sql	canon-recording

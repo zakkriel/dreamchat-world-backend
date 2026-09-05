@@ -3122,7 +3122,7 @@ CREATE TABLE public.perception_record (
     visibility_scope text DEFAULT 'private'::text NOT NULL,
     dirty boolean DEFAULT false NOT NULL,
     importance real DEFAULT 5.0 NOT NULL,
-    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
+    CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'indirect'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
 );
 
 
@@ -5156,4 +5156,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260825130000'),
     ('20260825140000'),
     ('20260828090000'),
-    ('20260828120000');
+    ('20260828120000'),
+    ('20260904230000');
