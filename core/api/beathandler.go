@@ -161,31 +161,23 @@ func narrateMessages(segments []NarrationSegment, labelFor map[string]string) ([
 	return messages, strings.Join(view, "\n\n")
 }
 
-// speechTexts is the verbatim-speech belt's evidence: every Communicated perception content the viewer
-// holds THIS BEAT (acquired_tick >= the beat's start tick — the delta), keyed by the SPEAKER of that
-// event. Extraction note (documented honestly): the perception content is the line the engine wrote for
-// a Communicated event — apply_event writes the canon summary (the spoken 'stated'); apply_ruled_event
-// writes COALESCE(receiver-variant, appearance, truth). Either way the spoken words ride inside the
-// perception content the viewer actually sees, so DecodeAndValidateNarration substring-matches a speech
-// segment's text against these strings — the exact-words test that rejects narrator paraphrase. Both the
-// non-legacy 'Communicated' label (the orchestrator's path, p_legacy_types=false) and the legacy
-// 'private_disclosure' label are matched, defensively.
+// speechTexts is the verbatim-speech belt's evidence: every heard word THIS VIEWER holds from
+// perceived speech since sinceTick (the beat's start tick — the delta), keyed by the SPEAKER. It
+// reads fn_perceived_speech (perception_record.spoken) — the per-holder heard words the shared
+// speech-perception application records for exactly this viewer — never
+// canon_event.payload->>'spoken', the single canonical utterance every listener used to be handed
+// regardless of what they individually perceived.
+//
+// No canon fallback for an unrecoverable historical row: the migration's backfill only sets
+// perception_record.spoken where the source words are demonstrably present as the complete
+// utterance in the holder's own existing perception content, and a row it could not recover, or a
+// listener judged blocked/attentional this beat, is left with no spoken words at all — the honest
+// answer is that this viewer's evidence for that utterance is empty, not canon's truth-side words.
+// DecodeAndValidateNarration substring-matches a speech segment's quote against these strings — the
+// exact-words test that rejects narrator paraphrase (narration.go).
 func (h *beatHandler) speechTexts(ctx context.Context, worldID, viewerID string, sinceTick int64) (map[string][]string, error) {
-	// The words come from CANON (payload.spoken), not from the perception line. That line is the
-	// referee's account of the utterance, and substring-matching a quote against it let a paraphrase
-	// authenticate itself: under narration/1 the narrator passed the belt by quoting the account as
-	// dialogue. The perception join stays — it is what proves this viewer HEARD it — but the evidence
-	// is now the words canon actually recorded. An utterance with no spoken words backs no quote at
-	// all, which is the honest answer: nobody knows what was said.
 	rows, err := h.pool.Query(ctx,
-		`SELECT ep.entity_id::text, ce.payload->>'spoken'
-		   FROM perception_record pr
-		   JOIN canon_event ce ON ce.event_id = pr.source_event_id AND ce.world_id = pr.world_id
-		   JOIN event_participant ep ON ep.event_id = ce.event_id AND ep.role_qualifier = 'speaker'
-		  WHERE pr.world_id = $1 AND pr.holder_id = $2
-		    AND ce.event_type IN ('Communicated', 'private_disclosure')
-		    AND ce.payload->>'spoken' IS NOT NULL
-		    AND pr.acquired_tick >= $3`,
+		`SELECT speaker_id::text, spoken FROM fn_perceived_speech($1, $2::uuid, $3)`,
 		worldID, viewerID, sinceTick)
 	if err != nil {
 		return nil, err
@@ -193,11 +185,17 @@ func (h *beatHandler) speechTexts(ctx context.Context, worldID, viewerID string,
 	defer rows.Close()
 	out := map[string][]string{}
 	for rows.Next() {
-		var speaker, content string
-		if err := rows.Scan(&speaker, &content); err != nil {
+		var speaker string
+		var spoken *string
+		if err := rows.Scan(&speaker, &spoken); err != nil {
 			return nil, err
 		}
-		out[speaker] = append(out[speaker], content)
+		// A visible-but-unheard row (or one the function returns unfiltered) backs no quote —
+		// nobody knows what was said, and canon's words are not this viewer's evidence.
+		if spoken == nil || *spoken == "" {
+			continue
+		}
+		out[speaker] = append(out[speaker], *spoken)
 	}
 	return out, rows.Err()
 }

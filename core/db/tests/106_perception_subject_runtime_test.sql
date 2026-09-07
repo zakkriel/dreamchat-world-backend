@@ -44,7 +44,7 @@ INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
 SELECT apply_event(
   'f1060000-ffff-0000-0000-000000000000',
   'f1060000-0000-0000-0000-000000000001',
-  '{"type":"Communicated","stated":"S tells L something","listener_id":"f1060000-0000-0000-0000-000000000002","content":"S tells L something"}'::jsonb,
+  '{"type":"Communicated","stated":"S tells L something","listener_id":"f1060000-0000-0000-0000-000000000002","content":"S tells L something","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"f1060000-0000-0000-0000-000000000002","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"S tells L something"}]}}'::jsonb,
   2000, 0, 'freeform'
 );
 SELECT is(

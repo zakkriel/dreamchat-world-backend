@@ -1,0 +1,66 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "speech_perception/1",
+  "title": "speech_perception/1 — per-listener attention, name associations, and heard words for one Communicated event",
+  "type": "object",
+  "required": ["schema_version", "listeners"],
+  "properties": {
+    "schema_version": {"const": "speech_perception/1"},
+    "listeners": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["listener_id", "attention", "heard_words", "name_associations"],
+        "properties": {
+          "listener_id": {"type": "string", "format": "uuid"},
+          "attention": {
+            "oneOf": [
+              {
+                "type": "object",
+                "required": ["kind"],
+                "properties": {"kind": {"const": "abstain"}},
+                "additionalProperties": false
+              },
+              {
+                "type": "object",
+                "required": ["kind", "reason"],
+                "properties": {
+                  "kind": {"const": "blocked"},
+                  "reason": {"type": "string", "minLength": 1}
+                },
+                "additionalProperties": false
+              }
+            ]
+          },
+          "heard_words": {"type": "string"},
+          "name_associations": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["name", "owner"],
+              "properties": {
+                "name": {"type": "string", "minLength": 1},
+                "owner": {
+                  "type": "object",
+                  "required": ["actor_id", "description", "about_actor_ids"],
+                  "properties": {
+                    "actor_id": {"type": ["string", "null"], "format": "uuid"},
+                    "description": {"type": ["string", "null"], "minLength": 1},
+                    "about_actor_ids": {
+                      "type": "array",
+                      "items": {"type": "string", "format": "uuid"}
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

@@ -13,7 +13,7 @@ package main
 //
 // The seat is the leash; this file is the belt. Everything after the JSON decodes is a Go check, and
 // the checks that matter are the CROSS-REFERENCES: the seat can only join its parts by canonical_name,
-// so a way pointing at a place that does not exist, a secret held by nobody, or an arrival into an
+// so a way pointing at a place that does not exist, a name used twice, or an arrival into an
 // unauthored room are all expressible and all refused. A refusal is an ordinary answer here — the same
 // posture the World Actor takes with errIntrusionRejected — and it never leaves a half-built world,
 // because nothing has been written yet when validation runs.
@@ -294,7 +294,7 @@ var (
 )
 
 // validate is the belt. Every check here is something the schema permits and the world cannot survive:
-// a dangling reference, a name used twice, a room nobody can leave, a secret held by nobody, or the
+// a dangling reference, a name used twice, a room nobody can leave, or the
 // player being handed knowledge they did not earn. All of them are refusals — the document is wrong,
 // not the machine.
 func (d *genesisDoc) validate() error {
@@ -613,9 +613,16 @@ func (d *genesisDoc) validate() error {
 				return refuse("event %d involves %q, who is not in this world", i+1, who)
 			}
 		}
-		if len(h.Knowledge) == 0 {
-			return refuse("event %d left nobody knowing anything", i+1)
-		}
+		// An event NOBODY witnessed is legitimate and is not refused. A car burns in an
+		// empty garage: state changed, so canon must record it or replay breaks (I-1), and
+		// there is no secret and nobody hiding one. ADR-005 decided this at the start --
+		// "One canon event fans out to ZERO-to-N perceptions" -- so the refusal that used to
+		// live here contradicted the engine's own founding ADR. It is reachable later through
+		// a perception acquired `indirect`, via a medium that holds one (the camera in the
+		// garage), which is the only door into canon there is (ADR-037).
+		//
+		// The player floor below is a DIFFERENT rule and it stays: "nobody knows this" and
+		// "the player knows this" are not the same claim.
 		for _, k := range h.Knowledge {
 			holder := strings.TrimSpace(k.Holder)
 			switch {

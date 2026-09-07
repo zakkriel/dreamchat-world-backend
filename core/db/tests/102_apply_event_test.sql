@@ -47,7 +47,7 @@ SELECT is(
   (SELECT (apply_event(
       'e6000000-ffff-0000-0000-000000000000',
       'e6000000-0000-0000-0000-000000000001',
-      '{"type":"Communicated","stated":"hello","listener_id":"e6000000-0000-0000-0000-000000000002","content":"hello"}'::jsonb,
+      '{"type":"Communicated","stated":"hello","listener_id":"e6000000-0000-0000-0000-000000000002","content":"hello","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"e6000000-0000-0000-0000-000000000002","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"hello"}]}}'::jsonb,
       2000, 0, 'freeform'
   ))->>'halt_reason'),
   'committed',
@@ -112,7 +112,7 @@ SELECT is(
   (SELECT (apply_event(
       'e6000000-ffff-0000-0000-000000000000',
       'e6000000-0000-0000-0000-000000000001',
-      '{"type":"Communicated","stated":"hi","listener_id":"e6000000-0000-0000-0000-000000000003","content":"hi"}'::jsonb,
+      '{"type":"Communicated","stated":"hi","listener_id":"e6000000-0000-0000-0000-000000000003","content":"hi","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"e6000000-0000-0000-0000-000000000003","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"hi"}]}}'::jsonb,
       2001, 0, 'freeform'
   ))->>'halt_reason'),
   'gate_reject',

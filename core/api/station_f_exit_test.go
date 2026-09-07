@@ -232,13 +232,15 @@ func kadePosition(t *testing.T, ctx context.Context, pool *pgxpool.Pool, world, 
 
 func TestStationF_FakeE2E(t *testing.T) {
 	pool := testPool(t)
-	defer pool.Close()
+	t.Cleanup(pool.Close)
 	ctx := context.Background()
 
 	// ═══════════════════════════════════════════════════════════════════════════════════════════════
 	// PART A — the three moves against the Drowned Lantern's geometry.
 	// ═══════════════════════════════════════════════════════════════════════════════════════════════
 	m := setupStationFMoveWorld(t, ctx, pool)
+	// This fixture tests movement and encumbrance, not random world events.
+	wtDisableWorldActor(t, ctx, pool, m.World)
 
 	// ── move A: "approach the bar" — an IN-SCENE move to an artifact. Commits; Kade's coordinate
 	//    becomes the bar's {6,9}; his location_id stays the tavern; duration = CEIL(8 / 1.4) = 6 s,
@@ -328,6 +330,7 @@ func TestStationF_FakeE2E(t *testing.T) {
 	// PART B — §4 encumbrance: the heavy grab, and the pin it causes.
 	// ═══════════════════════════════════════════════════════════════════════════════════════════════
 	c := setupStationFCarryWorld(t, ctx, pool)
+	wtDisableWorldActor(t, ctx, pool, c.World)
 
 	// ── grab: "grab the ballast crate" — ObjectRelocated, contained_by → Kade. The crate weighs 100 kg
 	//    (empty 8 + stone 92); Kade's max_load is 80, so the eager rule sets `encumbered` and writes

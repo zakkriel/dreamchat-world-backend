@@ -82,8 +82,9 @@ func TestNamingWall_NilSafeAndInertWhenNothingIsUnearned(t *testing.T) {
 
 // SPEC-033 at the belt. The wall is loaded once per beat, so the question that matters for play is
 // whether the NEXT beat admits a name the player was just told. It must: the wall reads
-// fn_unearned_names, which reads fn_perceived_name, which now reads name_knowledge — so learning
-// propagates to the belt with no second code path and nothing to keep in sync.
+// fn_unheard_names (built on fn_unearned_names, which reads fn_perceived_name, which reads
+// name_knowledge) — so a listener's accepted owner recognition propagates to the belt with
+// no second code path and nothing to keep in sync.
 func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -97,14 +98,13 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 		t.Fatal("fixture is not meaningful: Kade already knows the name before hearing it")
 	}
 
-	// Mara says it where Kade can hear. Committed through the engine's own writer, not by inserting
-	// name_knowledge directly — the point of the test is that the FAN-OUT teaches.
-	//
-	// `summary` is the referee's ACCOUNT and `payload.spoken` is what was actually SAID — the split
-	// apply_event/apply_ruled_event have written for every Communicated event since migration
-	// 20260809090009. The name has to be in the WORDS: an account that merely mentions someone
-	// canonically teaches nothing (naming reach §3), which is what
-	// TestNamingWall_AnAccountThatNamesHimTeachesNobody pins directly below.
+	// Mara says it where Kade can hear, with an accepted speech-perception judgment recognizing
+	// Jonas for Kade — committed through the engine's own writer, not by inserting name_knowledge
+	// directly. Shared speech perception replaced the old "scan the spoken words for names" fan-out:
+	// a listener now learns a name only from his OWN judged owner actor_id, never
+	// merely because the name rode inside the words (naming reach §3) — see
+	// TestNamingWall_AnAccountThatNamesHimTeachesNobody for the account-side half of that rule, and
+	// TestNamingWall_QuotedHeardWordSurvivesUnidentified below for a heard-but-UNrecognized name.
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin: %v", err)
@@ -116,8 +116,21 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
 		 VALUES ($1, 'Communicated', 'Mara tells the stranger who the man at the bar is.',
 		         920, 0, 'accepted', 'freeform',
-		         jsonb_build_object('spoken', 'the man at the bar is called Jonas'))
-		 RETURNING event_id::text`, dlWorldID).Scan(&eventID); err != nil {
+		         jsonb_build_object(
+		           'spoken', 'the man at the bar is called Jonas',
+		           'speech_perception', jsonb_build_object(
+		             'schema_version', 'speech_perception/1',
+		             'listeners', jsonb_build_array(jsonb_build_object(
+		               'listener_id', $2::text,
+		               'attention', jsonb_build_object('kind', 'abstain'),
+		               'name_associations', jsonb_build_array(jsonb_build_object(
+		                 'name', 'Jonas',
+		                 'owner', jsonb_build_object('actor_id', '2ac70000-0000-0000-0000-0000000000a3', 'description', NULL, 'about_actor_ids', '[]'::jsonb))),
+		               'heard_words', 'the man at the bar is called Jonas'
+		             ))
+		           )
+		         ))
+		 RETURNING event_id::text`, dlWorldID, dlKadeID).Scan(&eventID); err != nil {
 		t.Fatalf("insert utterance: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -165,7 +178,7 @@ func TestNamingWall_AdmitsANameTheViewerJustLearned(t *testing.T) {
 // fn_unearned_names drops it from the unearned set entirely, so the wall stops rewriting it in every
 // channel at once — and speaker_label is read straight from fn_display_name with no belt of its own.
 //
-// Hearing teaches. Being described does not.
+// An accepted no-association judgment must not trigger teaching by scanning the account.
 func TestNamingWall_AnAccountThatNamesHimTeachesNobody(t *testing.T) {
 	pool := testPool(t)
 	defer pool.Close()
@@ -177,15 +190,23 @@ func TestNamingWall_AnAccountThatNamesHimTeachesNobody(t *testing.T) {
 	}
 	defer tx.Rollback(ctx)
 
-	// The account names Jonas outright. The WORDS never do — Jonas is being talked about, and what
-	// Mara actually says carries no name at all.
+	// Hand-authored application input, not evidence of model understanding: the listener heard
+	// these words but identified nobody. The account still names Jonas and must not teach him.
 	var eventID string
 	if err := tx.QueryRow(ctx,
 		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
 		 VALUES ($1, 'Communicated', 'Jonas plants himself between Kade and Mara.',
 		         921, 0, 'accepted', 'freeform',
-		         jsonb_build_object('spoken', 'you sit quiet, you leave quiet'))
-		 RETURNING event_id::text`, dlWorldID).Scan(&eventID); err != nil {
+		         jsonb_build_object(
+		           'spoken', 'you sit quiet, you leave quiet',
+		           'speech_perception', jsonb_build_object(
+		             'schema_version', 'speech_perception/1',
+		             'listeners', jsonb_build_array(jsonb_build_object(
+		               'listener_id', $2::text,
+		               'attention', jsonb_build_object('kind', 'abstain'),
+		               'name_associations', '[]'::jsonb,
+		               'heard_words', 'you sit quiet, you leave quiet')))))
+		 RETURNING event_id::text`, dlWorldID, dlKadeID).Scan(&eventID); err != nil {
 		t.Fatalf("insert utterance: %v", err)
 	}
 	if _, err := tx.Exec(ctx,
@@ -293,5 +314,101 @@ func TestNamingWall_GuardsTheHumanTokensOfAName(t *testing.T) {
 	// And a token never bites into a longer word.
 	if got := wall.Scrub("The silastic tube sat by the emmettite ore."); got != "The silastic tube sat by the emmettite ore." {
 		t.Errorf("a token matched inside a longer word: %q", got)
+	}
+}
+
+// The founder's ruling on shared speech perception: hearing a word is not learning whose it is. A
+// canonical name this viewer's own recorded perceived speech already contains, literally, is not a
+// leak merely for being quoted back — fn_unheard_names exempts exactly that word, and only that
+// word; a name nobody ever said in this viewer's hearing stays guarded. The viewer's LABEL for the
+// still-unidentified owner is untouched either way: fn_display_name has no knowledge path here, so
+// the owner renders as his descriptor, never the canonical name, if he ever appears.
+//
+// Hermetic world (fresh random ids): the DL fixture's Kade/Jonas pair never has a recorded spoken
+// perception for "Jonas" (the seed's Jonas backstory is authored fact, never a Communicated event),
+// so it cannot exercise the exemption — this test needs a viewer who genuinely HEARD the name.
+//
+// Perception rows are inserted directly, not through generate_perceptions/apply_event — this pins
+// the READ-side contract (fn_unheard_names/loadNamingWall) only; the write side (attention/
+// heard_words judgment application) belongs to the runtime/database owners.
+func TestNamingWall_QuotedHeardWordSurvivesUnidentified(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+
+	var wID, viewer, speaker, heardNPC, neverHeardNPC string
+	if err := pool.QueryRow(ctx,
+		`SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), gen_random_uuid()`,
+	).Scan(&wID, &viewer, &speaker, &heardNPC, &neverHeardNPC); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+	mustExecP := func(q string, args ...any) {
+		t.Helper()
+		if _, err := pool.Exec(ctx, q, args...); err != nil {
+			t.Fatalf("exec %s: %v", q, err)
+		}
+	}
+	mustExecP(`INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+		($1,$5,'actor','Rin Ashworth'), ($2,$5,'actor','Corvine'),
+		($3,$5,'actor','Dorian'), ($4,$5,'actor','Petra')`,
+		viewer, speaker, heardNPC, neverHeardNPC, wID)
+	mustExecP(`INSERT INTO actor_state (entity_id, world_id, attrs) VALUES
+		($1,$5,'{"descriptor":"a dockhand"}'), ($2,$5,'{"descriptor":"the barkeep"}'),
+		($3,$5,'{"descriptor":"a stranger nobody names"}'), ($4,$5,'{"descriptor":"a woman by the door"}')`,
+		viewer, speaker, heardNPC, neverHeardNPC, wID)
+
+	var eventID string
+	if err := pool.QueryRow(ctx,
+		`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
+		 VALUES ($1, 'Communicated', 'The barkeep mentions someone by name.', 10, 0, 'accepted', 'freeform',
+		         jsonb_build_object('spoken', 'Dorian left.'))
+		 RETURNING event_id::text`, wID).Scan(&eventID); err != nil {
+		t.Fatalf("insert utterance: %v", err)
+	}
+	mustExecP(`INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+		 VALUES ($1::uuid, $2::uuid, 'actor', 'speaker'), ($1::uuid, $3::uuid, 'actor', 'listener')`,
+		eventID, speaker, viewer)
+
+	// The viewer's own recorded perceived speech.
+	mustExecP(`INSERT INTO perception_record
+		 (world_id, holder_id, source_event_id, content, epistemic_type, acquired_tick, valid_tick, spoken)
+		 VALUES ($1, $2, $3::uuid, 'the barkeep says something about someone leaving', 'told', 10, 10, 'Dorian left.')`,
+		wID, viewer, eventID)
+
+	wall, err := loadNamingWall(ctx, pool, wID, viewer)
+	if err != nil {
+		t.Fatalf("loadNamingWall: %v", err)
+	}
+
+	// Heard, unidentified: the wall must not fire, in narration prose or in a quote.
+	if v := wall.Violations("Someone mentions Dorian in passing."); len(v) != 0 {
+		t.Fatalf("a genuinely heard name tripped the wall: %v", v)
+	}
+	if _, err := DecodeAndValidateNarration(
+		`[{"speaker_id":"`+speaker+`","kind":"speech","text":"she glances at the door","quote":"Dorian left."}]`,
+		NarrationBelts{
+			PresentIDs:  []string{speaker},
+			SpeechTexts: map[string][]string{speaker: {"Dorian left."}},
+			Wall:        wall,
+		},
+	); err != nil {
+		t.Fatalf("a quote carrying a genuinely heard name must pass the wall, got: %v", err)
+	}
+
+	// Never heard: the control name must still trip the wall — the exemption is literal-word-shaped,
+	// not "any canonical name eventually becomes sayable".
+	if v := wall.Violations("Petra was seen by the door."); len(v) == 0 {
+		t.Fatal("a name this viewer never heard must still trip the wall — the exemption leaked past the word it names")
+	}
+
+	// The label is untouched: hearing "Dorian" spoken teaches no identity, so fn_display_name for
+	// that entity must still be the descriptor, never the canonical name.
+	var label string
+	if err := pool.QueryRow(ctx, `SELECT fn_display_name($1, $2::uuid, $3::uuid)`,
+		wID, viewer, heardNPC).Scan(&label); err != nil {
+		t.Fatalf("fn_display_name: %v", err)
+	}
+	if label == "Dorian" {
+		t.Fatal("hearing the word taught identity — fn_display_name must still render the descriptor")
 	}
 }

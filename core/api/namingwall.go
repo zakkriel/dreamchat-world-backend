@@ -22,6 +22,14 @@ import (
 // per holder), and this is the belt: the world KNOWS which names a viewer has not earned, so a
 // player-facing string containing one is a checkable defect rather than a matter of trust.
 //
+// Hearing is not identification: a listener can genuinely hear a canonical name spoken without
+// learning who it belongs to (the shared speech-perception design's ruling). The guarded set is
+// therefore narrower than "every unearned name" — a name this viewer's own recorded perceived
+// speech already contains literally is not a leak merely for being quoted back. The LABEL a viewer
+// holds is untouched either way (fn_display_name, not this wall, decides it): a name surviving in
+// a quote unidentified never becomes an identity, so its owner still renders as his descriptor
+// everywhere else.
+//
 // Two uses, deliberately different:
 //   - Violations() during narration validation — a seat that leaks gets REJECTED and asked again,
 //     because a model can rewrite the sentence better than any substitution can.
@@ -32,20 +40,23 @@ type NamingWall struct {
 	labels map[string]string // lower(canonical) → the label this viewer actually holds
 }
 
-// loadNamingWall reads the unearned names for one viewer. Called once per beat: the set changes only
-// when the viewer learns a name, which is itself a canon event.
+// loadNamingWall reads the unheard names for one viewer. Called once per beat: the set changes when
+// the viewer learns a name (a canon event) or hears one spoken for the first time.
 //
-// "Unearned" is defined once, in SQL (fn_unearned_names): no knowledge path, not the viewer himself,
-// and the label he holds does not already contain the name. That last clause is why "the ballast
-// crate" is not a breach of "Ballast Crate" — see migration 20260809090006, which was written after
-// the belt rejected exactly that sentence in live play.
+// "Unheard" (fn_unheard_names) layers one exemption onto "unearned" (fn_unearned_names: no
+// knowledge path, not the viewer himself, and the label he holds does not already contain the name
+// — the "ballast crate" case, migration 20260809090006): a canonical name already present,
+// literally, in this viewer's own recorded perceived speech is removed from the guarded set. Hearing
+// a name is not learning whose it is, so fn_viewer_text (the perception-content rendering seam)
+// deliberately keeps the stricter fn_unearned_names — an ACCOUNT of an event is not a live quote of
+// it, and only the quote gets the hearing exemption.
 func loadNamingWall(ctx context.Context, pool *pgxpool.Pool, worldID, viewerID string) (*NamingWall, error) {
-	// fn_unearned_names is the SHARED definition — the same function the perception seam
-	// (fn_viewer_text) rewrites from. Restating the predicate here is what produced the "ballast
-	// crate" false positive in the first hour: the belt must check the seam against the seam's own
-	// rule, or it is checking something else.
+	// fn_unheard_names is built on fn_unearned_names, the SAME identity definition the perception
+	// seam (fn_viewer_text) rewrites from — restating that predicate here is what produced the
+	// "ballast crate" false positive in the first hour, so the belt checks the seam's own shared
+	// function rather than a second copy of the rule.
 	rows, err := pool.Query(ctx,
-		`SELECT canonical_name, label FROM fn_unearned_names($1, $2::uuid)`,
+		`SELECT canonical_name, label FROM fn_unheard_names($1, $2::uuid)`,
 		worldID, viewerID)
 	if err != nil {
 		return nil, err

@@ -49,15 +49,19 @@ write (WE-3's side of the seam).
 
 ## The call path
 
-`worldFirst` (`core/api/orchestrator.go:797`; grep `func (o *Orchestrator) worldFirst`) runs per
-attempt — **one cognition round per action, never per text and never per NPC**:
+`worldFirst` delegates to the shared `runCognition` in `core/api/orchestrator.go`.
+Ordinary speech retains pre-action interruption, but supplies only a speaking cue—not the unsaid
+content, stated text, or hidden references. After committed speech, `postCommittedCognition`
+invokes the same engine with only each holder's accepted perceptions (`ADR-038`). Their subject
+links select that holder's private memories and physical facts; the original intention does not.
 
-1. roster = `fn_actors_at(player's location)` minus the player; empty ⇒ skip entirely.
+1. Pre-action roster is the present NPCs. Post-perception roster is restricted to actual holders
+   of the committed source events. Distinct receiver words remain isolated.
 2. split: isolated = `fn_isolated_npcs`; batch = the rest. **≤1 batch call**, one isolated call per
    flagged NPC, uuid-ascending — deterministic order.
-3. prompts built by `core/api/cognitionprompt.go` — cache-native layout, section order pinned by
-   unit tests: header (`prompts/cognition.txt`) → SCENE → MINDS → *(isolated only)* WHAT ONLY YOU
-   KNOW → PUBLIC MOMENT → mutable tail (COMPUTED FACTS → IMMINENT/ATTEMPT → ADDRESSED → DECIDE FOR).
+3. `core/api/cognitionprompt.go` builds shared or isolated prompts. The explicit trigger selects
+   an imminent action or already-committed holder-specific records. Fact sheets remain
+   perception-scoped; no speech attempt or another receiver's words enter the latter trigger.
 4. output decoded by `DecodeAndValidateNPCDecisions` (`core/api/cognition.go`): each decision
    validated against exactly that call's allowed ids; NPCs act, never ask — `QUERY`/`UNRESOLVED`
    rejected.
@@ -68,8 +72,9 @@ The wall holds by construction at step 3: `buildBatchPrompt` is *fed* only the b
 and the public moment (`cognitionprompt.go`, grep `WALL INVARIANT`). There is no filter to get
 wrong, and *"'was this reaction influenced?' is undetectable after the fact"* — hence no filter.
 
-Invocation sites are exactly two, both event-driven (`B-11`): the beat loop's Stage 1
-(`orchestrator.go:251`) and the reaction beat (`orchestrator.go:722`). No ticker, no timer.
+The beat loop and reaction path invoke this machinery; no ticker or timer does.
+Post-reaction cognition includes non-speech outcomes, using committed perceptions, never interrupted
+intentions. NPC replies do not trigger another round (`ADR-038`).
 
 ## Technical decisions already made
 

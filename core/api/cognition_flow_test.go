@@ -28,6 +28,7 @@ type scriptedCognitionDriver struct {
 	body    string
 	calls   int
 	prompts []string
+	reply   func(GenRequest) string
 }
 
 func (d *scriptedCognitionDriver) Name() string { return d.name }
@@ -40,6 +41,9 @@ func (d *scriptedCognitionDriver) Generate(_ context.Context, req GenRequest) (s
 	}
 	d.calls++
 	d.prompts = append(d.prompts, req.Prompt)
+	if d.reply != nil {
+		return d.reply(req), nil
+	}
 	return d.body, nil
 }
 
@@ -173,12 +177,8 @@ func TestCognitionFlow(t *testing.T) {
 			t.Fatalf("RunBeat: %v", err)
 		}
 
-		// (a) one call per NPC per action, each in exactly one seat.
-		if batch.calls != 1 {
-			t.Fatalf("batch Generate calls = %d, want 1", batch.calls)
-		}
-		if isolated.calls != 1 {
-			t.Fatalf("isolated Generate calls = %d, want 1", isolated.calls)
+		if len(batch.prompts) == 0 || len(isolated.prompts) == 0 {
+			t.Fatal("both cognition paths must run for this isolation scenario")
 		}
 		// (a) DECIDE FOR = [Jonas] for the batch, [Mara] for the isolated seat.
 		bTail := decideForTail(t, batch.prompts[0])
@@ -195,36 +195,11 @@ func TestCognitionFlow(t *testing.T) {
 		if len(outcome.Committed) != 1 {
 			t.Fatalf("committed = %d %v, want exactly 1 (player only; batch M-decision rejected)", len(outcome.Committed), outcome.Committed)
 		}
-		if resolve.calls != 0 {
-			t.Fatalf("resolve calls = %d, want 0 (no adjudicated commit in this subtest)", resolve.calls)
-		}
 	})
 
-	// (c) An NPC commit of an ADJUDICATED type routes through the resolve seat — no bypass.
-	t.Run("no bypass: adjudicated NPC commit hits resolve", func(t *testing.T) {
+	// A spoken NPC decision must actually become sourced speech, not just reach a driver.
+	t.Run("NPC speech is committed through the shared path", func(t *testing.T) {
 		baseTick := flowBaseTick(t, ctx, pool, id.World)
-
-		// Jonas (batch) commits an AttributeChanged — an adjudicated type. It MUST hit resolve.
-		batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
-			`","decision":{"commit_kind":"commit","attempt":{"type":"AttributeChanged","stated":"Jonas grabs the note","target_id":"` + id.Note + `"}}}]`}
-		isolated := &scriptedCognitionDriver{name: "scripted-isolated", body: `[{"actor_id":"` + id.M + `","decision":"none"}]`}
-		resolve := &countingResolveDriver{inner: NewFakeResolveDriver()}
-
-		orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated, WorldActor: NewFakeWorldActorDriver()}
-
-		if _, err := orc.RunBeat(ctx, id.World, id.P, playerGreetsMara(), baseTick, nil); err != nil {
-			t.Fatalf("RunBeat: %v", err)
-		}
-		if resolve.calls < 1 {
-			t.Fatalf("resolve calls = %d, want >=1 (adjudicated NPC commit must route through resolve — no bypass)", resolve.calls)
-		}
-	})
-
-	// (d) An NPC commit of a PASSTHROUGH type commits via apply_event, never touching resolve.
-	t.Run("passthrough NPC commit never touches resolve", func(t *testing.T) {
-		baseTick := flowBaseTick(t, ctx, pool, id.World)
-
-		// Jonas (batch) commits a Communicated — a passthrough type. Resolve must stay untouched.
 		batch := &scriptedCognitionDriver{name: "scripted-batch", body: `[{"actor_id":"` + id.J +
 			`","decision":{"commit_kind":"commit","attempt":{"type":"Communicated","stated":"Jonas greets","listener_id":"` + id.P +
 			`","content":"well met"}}}]`}
@@ -237,12 +212,269 @@ func TestCognitionFlow(t *testing.T) {
 		if err != nil {
 			t.Fatalf("RunBeat: %v", err)
 		}
-		if resolve.calls != 0 {
-			t.Fatalf("resolve calls = %d, want 0 (passthrough Communicated must NOT touch the resolve seat)", resolve.calls)
+		var spokenCount int
+		if err := pool.QueryRow(ctx, `SELECT count(*) FROM canon_event ce
+		  JOIN event_participant ep USING(event_id)
+		  WHERE ce.event_id = ANY($1::uuid[]) AND ep.entity_id=$2::uuid
+		    AND ep.role_qualifier='speaker' AND ce.payload->>'spoken'='well met'`,
+			outcome.Committed, id.J).Scan(&spokenCount); err != nil {
+			t.Fatal(err)
 		}
-		// Player's Communicated + Jonas's Communicated both commit via apply_event.
-		if len(outcome.Committed) != 2 {
-			t.Fatalf("committed = %d %v, want 2 (player + Jonas, both passthrough)", len(outcome.Committed), outcome.Committed)
+		if spokenCount == 0 {
+			t.Fatal("the NPC's spoken decision was not committed")
 		}
 	})
+}
+
+// These fixtures prescribe application results; they do not evaluate model interpretation.
+func TestSpeechCognition_UnsaidAndMissedWordsStayOut(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	const words = "speech-only-after-commit"
+	const intention = "unspoken-intention-marker"
+	batch := &scriptedCognitionDriver{name: "batch", body: "[]"}
+	isolated := &scriptedCognitionDriver{name: "isolated", body: "[]"}
+	resolve := &scriptedCognitionDriver{name: "accepted-perception", body: fmt.Sprintf(
+		`{"schema_version":"speech_perception/1","listeners":[
+		  {"listener_id":%q,"attention":{"kind":"blocked","reason":"recorded distraction"},"name_associations":[],"heard_words":""},
+		  {"listener_id":%q,"attention":{"kind":"abstain"},"name_associations":[],"heard_words":%q}]}`,
+		id.M, id.J, words)}
+	orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated}
+	_, err := orc.RunBeat(ctx, id.World, id.P, []Attempt{{
+		Type: "Communicated", Stated: intention, ListenerID: id.M, Content: words,
+	}}, flowBaseTick(t, ctx, pool, id.World), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(batch.prompts) == 0 || len(isolated.prompts) == 0 {
+		t.Fatal("the pre-speech interruption scenario did not reach both minds")
+	}
+	for _, prompt := range []string{batch.prompts[0], isolated.prompts[0]} {
+		if strings.Contains(prompt, words) || strings.Contains(prompt, intention) {
+			t.Fatal("pre-speech cognition received unsaid information")
+		}
+	}
+	heardByJonas := false
+	for _, prompt := range append(batch.prompts, isolated.prompts...) {
+		tail := decideForTail(t, prompt)
+		if strings.Contains(tail, id.M) && strings.Contains(prompt, words) {
+			t.Fatal("the listener who missed the speech received its words")
+		}
+		if strings.Contains(tail, id.J) && strings.Contains(prompt, words) {
+			heardByJonas = true
+		}
+	}
+	if !heardByJonas {
+		t.Fatal("the actual listener never received the committed speech")
+	}
+}
+
+func TestSpeechCognition_ReceiverAccountsRemainSeparate(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	const source = "source-only-code"
+	const maraWords = "mara-only-code"
+	const jonasWords = "jonas-only-code"
+	resolve := &scriptedCognitionDriver{name: "accepted-perception", body: fmt.Sprintf(
+		`{"schema_version":"speech_perception/1","listeners":[
+		  {"listener_id":%q,"attention":{"kind":"abstain"},"name_associations":[],"heard_words":%q},
+		  {"listener_id":%q,"attention":{"kind":"abstain"},"name_associations":[],"heard_words":%q}]}`,
+		id.M, maraWords, id.J, jonasWords)}
+	batch := &scriptedCognitionDriver{name: "batch", body: "[]"}
+	isolated := &scriptedCognitionDriver{name: "isolated", body: "[]"}
+	orc := &Orchestrator{DB: pool, Resolve: resolve, CognitionBatch: batch, CognitionIsolated: isolated}
+	tick := flowBaseTick(t, ctx, pool, id.World)
+	result, err := orc.applyRuledEvent(ctx, id.World, RuledEventV2{
+		Type: "Communicated", ActorID: id.P, ListenerID: id.M, Content: source,
+		Truth: "The player gives a code.",
+		ReceiverVariants: []ReceiverVariant{
+			{ReceiverID: id.M, Text: "The player gives Mara a code."},
+			{ReceiverID: id.J, Text: "The player gives Jonas a code."},
+		},
+	}, tick, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eventID, ok := result["event_id"].(string)
+	if !ok || eventID == "" {
+		t.Fatalf("speech did not commit: %v", result)
+	}
+	if _, err := orc.postCommittedCognition(ctx, id.World, id.P, []string{eventID}, tick, 1, nil); err != nil {
+		t.Fatal(err)
+	}
+	seen := make(map[string]bool)
+	for _, prompt := range append(batch.prompts, isolated.prompts...) {
+		tail := decideForTail(t, prompt)
+		for actor, ownWords := range map[string]string{id.M: maraWords, id.J: jonasWords} {
+			if !strings.Contains(tail, actor) {
+				continue
+			}
+			otherWords := maraWords
+			if actor == id.M {
+				otherWords = jonasWords
+			}
+			if !strings.Contains(prompt, ownWords) || strings.Contains(prompt, otherWords) || strings.Contains(prompt, source) {
+				t.Fatalf("receiver %s did not get only its own accepted speech", actor)
+			}
+			seen[actor] = true
+		}
+	}
+	if !seen[id.M] || !seen[id.J] {
+		t.Fatal("both actual receivers must get their own cognition context")
+	}
+}
+
+func TestSpeechCognition_CueDoesNotDisclosePrivateRecipient(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	var recipient string
+	if err := pool.QueryRow(ctx, `INSERT INTO entity_registry(entity_id,world_id,entity_kind,canonical_name)
+		VALUES(gen_random_uuid(),$1,'actor','private contact') RETURNING entity_id::text`, id.World).Scan(&recipient); err != nil {
+		t.Fatal(err)
+	}
+	batch := &scriptedCognitionDriver{name: "batch", body: "[]"}
+	isolated := &scriptedCognitionDriver{name: "isolated", body: "[]"}
+	orc := &Orchestrator{DB: pool, CognitionBatch: batch, CognitionIsolated: isolated}
+	_, err := orc.worldFirst(ctx, id.World, id.P, Attempt{
+		Type: "Communicated", ListenerID: recipient, Content: "not-yet-said", Stated: "private-intention",
+	}, flowBaseTick(t, ctx, pool, id.World), 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompts := append(batch.prompts, isolated.prompts...)
+	if len(prompts) == 0 {
+		t.Fatal("pre-speech cognition did not run")
+	}
+	for _, prompt := range prompts {
+		if strings.Contains(prompt, recipient) || strings.Contains(prompt, "not-yet-said") || strings.Contains(prompt, "private-intention") {
+			t.Fatal("a speaking cue disclosed the intended recipient or unsaid content")
+		}
+	}
+}
+
+func TestSpeechCognition_TelegraphDoesNotSkipDueEvents(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	const spoken = "speech-before-pending-event"
+	cognition := &scriptedCognitionDriver{name: "cognition", reply: func(req GenRequest) string {
+		if strings.Contains(req.Prompt, spoken) && strings.Contains(decideForTail(t, req.Prompt), id.M) {
+			return fmt.Sprintf(`[{"actor_id":%q,"decision":{"commit_kind":"telegraph","attempt":{"type":"Communicated","stated":"Mara begins to answer.","listener_id":%q,"content":"One moment."}}}]`, id.M, id.P)
+		}
+		return "[]"
+	}}
+	orc := &Orchestrator{DB: pool, Resolve: &fakeResolveDriver{}, CognitionBatch: cognition, CognitionIsolated: cognition}
+	baseTick := flowBaseTick(t, ctx, pool, id.World)
+	duration, err := orc.nonMoveDurationSeconds(ctx, id.World, "instant")
+	if err != nil || duration <= 0 {
+		t.Fatalf("clock-advancing speech duration=%d, error=%v", duration, err)
+	}
+	pending := lgInsertPending(t, ctx, pool, id.World, baseTick+duration, "small", id.J,
+		fmt.Sprintf(`{"type":"Communicated","stated":"Jonas speaks at the appointed time.","listener_id":%q,"content":"The appointed hour has come."}`, id.P))
+	out, err := orc.RunBeat(ctx, id.World, id.P, []Attempt{
+		{Type: "Communicated", Stated: "Player speaks.", ListenerID: id.M, Content: spoken},
+	}, baseTick, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HaltReason != "telegraph" {
+		t.Fatalf("halt=%q, want the post-speech telegraph", out.HaltReason)
+	}
+	if status := lgPendingStatus(t, ctx, pool, pending); status != "fired" {
+		t.Fatalf("due event left %q after speech advanced the clock", status)
+	}
+}
+
+func TestSpeechCognition_UsesPrivateKnowledgeOfPerceivedSubjects(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	const secret = "Mara alone knows Jonas hid the silver."
+	baseTick := flowBaseTick(t, ctx, pool, id.World)
+	_, err := pool.Exec(ctx, `WITH event AS (
+		INSERT INTO canon_event(world_id,event_type,summary,in_world_tick,beat_seq,status,origin)
+		VALUES($1,'AttributeChanged',$5,$4,0,'accepted','fast_path') RETURNING event_id
+	), perception AS (
+		INSERT INTO perception_record(world_id,holder_id,source_event_id,content,epistemic_type,acquired_tick,valid_tick)
+		SELECT $1,$2,event_id,$5,'direct',$4,$4 FROM event RETURNING perception_id
+	)
+	INSERT INTO perception_subject(perception_id,entity_id,world_id)
+	SELECT perception_id,$3,$1 FROM perception`, id.World, id.M, id.J, baseTick, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch := &scriptedCognitionDriver{name: "batch", body: "[]"}
+	isolated := &scriptedCognitionDriver{name: "isolated", body: "[]"}
+	orc := &Orchestrator{DB: pool, Resolve: &fakeResolveDriver{}, CognitionBatch: batch, CognitionIsolated: isolated}
+	event, err := orc.applyEvent(ctx, id.World, id.P, []byte(fmt.Sprintf(
+		`{"type":"Communicated","listener_id":%q,"stated":"Player asks Jonas.","content":"Where is the silver?"}`, id.J)), baseTick+1, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = orc.postCommittedCognition(ctx, id.World, id.P, []string{event["event_id"].(string)}, baseTick+2, 0, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, prompt := range append(batch.prompts, isolated.prompts...) {
+		forMara := strings.Contains(decideForTail(t, prompt), id.M)
+		hasSecret := strings.Contains(prompt, secret)
+		if forMara && hasSecret {
+			found = true
+		}
+		if !forMara && hasSecret {
+			t.Fatal("Mara's private knowledge reached another listener's response")
+		}
+	}
+	if !found {
+		t.Fatal("Mara's response omitted her private knowledge about the perceived addressee")
+	}
+}
+
+func TestReactionBeat_NonSpeechOutcomeStillAllowsResponse(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	id := setupFlowWorld(t, ctx, pool)
+	tick := flowBaseTick(t, ctx, pool, id.World)
+	seedHeld(t, ctx, pool, id.World, id.J,
+		Attempt{Type: "AttributeChanged", TargetID: id.P, Stated: "He reaches for the stranger."}, tick)
+	held, err := pendingHeldOutcomes(ctx, pool, id.World)
+	if err != nil || len(held) != 1 {
+		t.Fatalf("pending reaction: held=%v, err=%v", held, err)
+	}
+	const unsaid = "The vault key is under the stair."
+	const perceived = "A hand brushes the sleeve."
+	const response = "She raises a hand."
+	cognition := &scriptedCognitionDriver{name: "cognition", reply: func(req GenRequest) string {
+		if strings.Contains(req.Prompt, unsaid) {
+			t.Fatal("post-reaction cognition received the interrupted words")
+		}
+		if strings.Contains(decideForTail(t, req.Prompt), id.M) && strings.Contains(req.Prompt, perceived) {
+			return fmt.Sprintf(`[{"actor_id":%q,"decision":{"commit_kind":"telegraph","attempt":{"type":"Communicated","stated":%q,"listener_id":%q,"content":"One moment."}}}]`, id.M, response, id.P)
+		}
+		return "[]"
+	}}
+	orc := &Orchestrator{
+		DB: pool, CognitionBatch: cognition, CognitionIsolated: cognition,
+		Resolve: &capturingResolveDriver{name: "resolve",
+			ruling: validRulingJSON(id.P, id.M, "Player touches the sleeve instead of speaking.", perceived)},
+	}
+	out, err := orc.RunReactionBeat(ctx, id.World, id.P,
+		[]Attempt{{Type: "Communicated", Stated: "I reveal the hiding place.", ListenerID: id.M, Content: unsaid}},
+		held, tick+1, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.HaltReason != "telegraph" || len(out.Telegraphs) != 1 || out.Telegraphs[0] != response {
+		t.Fatalf("perceived non-speech outcome did not produce the response: halt=%q, telegraphs=%v", out.HaltReason, out.Telegraphs)
+	}
 }

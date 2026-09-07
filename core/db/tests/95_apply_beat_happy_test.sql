@@ -43,7 +43,7 @@ SELECT lives_ok($$
   SELECT apply_beat(
     '11111111-1111-1111-1111-111111111111',
     'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-    '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"I saw the note"},
+    '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"I saw the note","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"I saw the note"}]}},
       {"type":"move","to":"e5ffffff-0000-0000-0000-000000000011"}]'::jsonb,
     500, 100, 'fast_path')
 $$, 'apply_beat runs a 2-step happy beat');
