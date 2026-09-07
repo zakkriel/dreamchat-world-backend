@@ -78,14 +78,17 @@ BEGIN
     SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
       WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
 
-    -- Build the attempt shape and compute duration for budget check.
     IF step->>'type' = 'say' THEN
       listener := (step->>'listener')::uuid;
       attempt := jsonb_build_object(
         'type',        'Communicated',
         'stated',      COALESCE(step->>'content', 'say'),
         'listener_id', listener,
-        'content',     step->>'content'
+        'content',     step->>'content',
+        -- Forwarded as-is: an accepted speech_perception the caller already attached to this step.
+        -- Absent (jsonb NULL when the key is missing) forwards as JSON null, which apply_event's
+        -- structural gate correctly refuses for speech — no scanner fallback resurrected here.
+        'speech_perception', step->'speech_perception'
       );
       dur := 0;
     ELSIF step->>'type' = 'move' THEN
@@ -96,15 +99,13 @@ BEGIN
       );
       dur := fn_move_duration(p_world_id, here, (step->>'to')::uuid);
     ELSE
-      halt := 'gate_reject'; EXIT;     -- out-of-vocabulary (closed set; ADR-009/D-1, SPEC-015)
+      halt := 'gate_reject'; EXIT;
     END IF;
 
-    -- turn-budget backstop (§9 third pushback face): would committing exceed the cap?
     IF (cur_tick + dur) - start_tick > p_tick_cap THEN
       halt := 'turn_budget'; EXIT;
     END IF;
 
-    -- Delegate to apply_event with p_legacy_types=true to preserve legacy event_type labels.
     result := apply_event(p_world_id, p_actor_id, attempt, cur_tick, cur_seq, p_origin, true);
 
     IF result->>'halt_reason' = 'gate_reject' THEN
@@ -113,19 +114,15 @@ BEGIN
 
     committed := committed || to_jsonb(result->>'event_id');
 
-    -- advance the clock by THIS committed event's duration (ADR-036).
     IF dur > 0 THEN cur_tick := cur_tick + dur; cur_seq := 0; ELSE cur_seq := cur_seq + 1; END IF;
 
-    -- (3d) STOP-CHECK — runs ONLY after a committed MOVE: a move is the only thing that changes the
-    -- actor's co-presence AND the only thing that generates a discovery perception. Gating on 'move'
-    -- keeps the two halts DISTINCT (§8): a committed SAY must never pre-empt a later step's own gate.
-    next_step := p_chain -> idx;   -- 0-based: element after the current 1-based idx
+    next_step := p_chain -> idx;
     IF step->>'type' = 'move' AND next_step IS NOT NULL AND next_step->>'type' = 'say' THEN
       SELECT (a.attrs->>'location_id')::uuid INTO here FROM actor_state a
         WHERE a.world_id = p_world_id AND a.entity_id = p_actor_id;
       next_ok := EXISTS (SELECT 1 FROM fn_actors_at(p_world_id, here)
                          WHERE entity_id = (next_step->>'listener')::uuid);
-      IF NOT next_ok THEN halt := 'stop_check'; EXIT; END IF;  -- prefix stands; remainder never runs
+      IF NOT next_ok THEN halt := 'stop_check'; EXIT; END IF;
     END IF;
   END LOOP;
 
@@ -145,17 +142,17 @@ DECLARE
   ev_type      text;
   ev_id        uuid;
   listener     uuid;
-  to_target    uuid;   -- the move's target: ANY positioned entity (location | object | actor)
-  v_scene      uuid;   -- resolved: the target's containing scene (a location resolves to itself)
-  v_coord      jsonb;  -- resolved: the target's position — the mover's new coordinate
+  to_target    uuid;
+  v_scene      uuid;
+  v_coord      jsonb;
   object_eid   uuid;
   dest_eid     uuid;
   target_eid   uuid;
   here         uuid;
   vis_scope    text;
   final_type   text;
-  v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
-  v_witness    uuid;   -- SPEC-035: each named witness, validated co-present before it is recorded
+  v_old_holder uuid;
+  v_witness    uuid;
 BEGIN
   ev_type := p_attempt->>'type';
 
@@ -180,6 +177,17 @@ BEGIN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
+    -- Ordinary speech has no hidden/visible distinction (that is a ruled-only concept) — every
+    -- ordinary Communicated attempt requires an already-judged speech_perception, structurally: a
+    -- jsonb object with a listeners array. Deep validation (candidate coverage, same-world ids,
+    -- player/NPC constraints) is Go's job before this call; this is the same class of presence
+    -- check as the witnesses gate below/20260825140000 — block malformed or absent input loudly,
+    -- never guess or fall back to the old scanner.
+    IF jsonb_typeof(p_attempt->'speech_perception') IS DISTINCT FROM 'object'
+       OR jsonb_typeof(p_attempt->'speech_perception'->'listeners') IS DISTINCT FROM 'array' THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
   ELSIF ev_type = 'ObjectRelocated' THEN
     object_eid := (p_attempt->>'object_id')::uuid;
     dest_eid   := (p_attempt->>'dest_id')::uuid;
@@ -189,22 +197,6 @@ BEGIN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
-    -- SPEC-035: a named witness must have been THERE. Co-presence is necessary but not sufficient -
-    -- the founder's ruling is "just because they were there doesn't mean they saw it" - so the caller
-    -- names who saw it and the gate refuses anyone who could not have. This is byte-for-byte the shape
-    -- of the 'Communicated' listener gate above (fn_actors_at against the instigator's location), and
-    -- it is deliberate: the engine BLOCKS impossibilities, it never awards perception
-    -- (FINAL-action-contracts.md - "deterministic machinery blocks impossibilities").
-    -- SPEC-035 amendment: PRESENT-BUT-MALFORMED IS A REFUSAL, NOT A SHRUG.
-    -- The first cut of this gate keyed on `= 'array'`, so `witnesses: "<uuid>"` — a bare string —
-    -- fell through every branch: committed, zero witness rows, zero perceptions, no halt_reason.
-    -- That is the EXACT defect class this SPEC was filed to remove, reintroduced by its own fix.
-    -- It is not a hypothetical shape either: the sibling field on 'Communicated' is `listener_id`,
-    -- a bare string, so a caller following the nearest precedent writes precisely this and is met
-    -- with silence. Absent is fine and means "nobody named"; present and not an array is a caller
-    -- bug, and the engine's job is to block it loudly rather than guess what was meant. Coercing a
-    -- string into a one-element array was rejected: coercion hides the caller's bug, which is how
-    -- the silence got here in the first place.
     IF p_attempt ? 'witnesses'
        AND jsonb_typeof(p_attempt->'witnesses') NOT IN ('array', 'null') THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
@@ -238,9 +230,6 @@ BEGIN
     END IF;
 
   ELSIF ev_type = 'EntityCreated' THEN
-    -- DESCRIPTOR MANDATORY (§8 / §7 provenance-guarded create): no descriptor ⇒ not a true introduction
-    -- ⇒ gate_reject. Blocker-only: the reality-check/adjudication already happened; this is the commit
-    -- clerk refusing an un-introduced create. (Twin of apply_ruled_event — the shared floor rule.)
     IF NULLIF(btrim(COALESCE(p_attempt->>'descriptor','')),'') IS NULL THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
@@ -267,15 +256,17 @@ BEGIN
                            status, accepted_at, visibility_scope, origin, payload)
   VALUES (ev_id, p_world_id, final_type, p_attempt->>'stated',
           p_tick, p_seq, 'accepted', now(), vis_scope, p_origin,
-          -- SPOKEN WORDS (SPEC-033 follow-up). `stated` is the referee's account of the utterance
-          -- ("tell her about the note"); `content` is what was actually SAID. Only the latter can back
-          -- a verbatim quote, and until now it was dropped on the floor here — so canon recorded that
-          -- someone spoke and never what they said, and every speech segment the narrator wrote was
-          -- correctly refused as unverifiable. Stored only when non-empty, and only for speech.
-          CASE WHEN ev_type = 'Communicated'
-                AND NULLIF(TRIM(COALESCE(p_attempt->>'content','')),'') IS NOT NULL
-               THEN jsonb_build_object('spoken', TRIM(p_attempt->>'content'))
-               ELSE '{}'::jsonb END);
+          -- payload.spoken: unchanged. payload.speech_perception: preserved verbatim, alongside it,
+          -- whenever the caller attached one — same durability, same "stored only when non-empty,
+          -- and only for speech" rule. Ordinary speech never carries payload.visible: it has no
+          -- hidden concept, and a missing key is correctly read downstream as "not hidden".
+          (CASE WHEN ev_type = 'Communicated'
+                 AND NULLIF(TRIM(COALESCE(p_attempt->>'content','')),'') IS NOT NULL
+                THEN jsonb_build_object('spoken', TRIM(p_attempt->>'content'))
+                ELSE '{}'::jsonb END)
+          || (CASE WHEN ev_type = 'Communicated' AND p_attempt ? 'speech_perception'
+                    THEN jsonb_build_object('speech_perception', p_attempt->'speech_perception')
+                    ELSE '{}'::jsonb END));
 
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
@@ -286,30 +277,12 @@ BEGIN
       VALUES (ev_id, p_actor_id, 'actor', 'instigator');
   END IF;
 
-  -- SPEC-035: THE EVENT NAMES WHO SAW IT. Measured before this was written: a caller could already
-  -- pass 'witnesses' and apply_event discarded it without a word - the payload came back {} and
-  -- event_participant held nothing but 'instigator', so the question "who watched this handover"
-  -- had no answer anywhere in the database. That is not a missing feature, it is a silent drop.
-  --
-  -- WHY A PARTICIPANT ROW AND NOT A PAYLOAD FIELD. 'Communicated' already records its recipients as
-  -- 'listener' participants and generate_perceptions reads them back by role_qualifier; this is the
-  -- same question with the same answer, so it takes the same shape (B-2: the event names its
-  -- participants). A payload field would have been a second mechanism for one meaning, and the
-  -- payload is exactly where SPEC-034 proved data goes to die: a committed ObjectRelocated's payload
-  -- is '{}'.
-  --
-  -- WHY IT CANNOT BE BACKFILLED, which is why this lands now rather than later: replay_0A() asserts
-  -- it reproduces domain-equivalent PROJECTION state, and perceptions are not projections - they are
-  -- not regenerated on replay (ADR-026). An event committed without its witnesses is unwitnessable
-  -- forever. Every handover accepted before this migration is already in that state.
   IF ev_type = 'ObjectRelocated' AND jsonb_typeof(p_attempt->'witnesses') = 'array' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
     SELECT ev_id, w.eid, 'actor', 'witness'
       FROM (SELECT DISTINCT (value #>> '{}')::uuid AS eid
               FROM jsonb_array_elements(p_attempt->'witnesses')) w
      WHERE w.eid IS NOT NULL
-       -- A holder is not a witness. Both already perceive as parties to the handover (SPEC-034), and
-       -- a duplicate row would mint them a second perception of one event.
        AND w.eid <> p_actor_id
        AND w.eid <> dest_eid
     ON CONFLICT DO NOTHING;
@@ -330,9 +303,6 @@ BEGIN
     PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
   END IF;
 
-  -- EntityCreated: persist the new instance (registry row + positioned state) via the shared helper.
-  -- Reuse-before-create is inside the helper. Provenance = ev_id (§8 net 3); one logged canon_event row
-  -- above (net 2); the ruling already passed the reality check (net 1).
   IF ev_type = 'EntityCreated' THEN
     PERFORM fn_apply_entity_created(ev_id, p_world_id,
       NULLIF(p_attempt->>'target_id','')::uuid,
@@ -468,9 +438,9 @@ DECLARE
   actor_id   uuid;
   ev_id      uuid;
   listener   uuid;
-  to_target  uuid;   -- the move's target: ANY positioned entity (location | object | actor)
-  v_scene    uuid;   -- resolved: the target's containing scene
-  v_coord    jsonb;  -- resolved: the target's position — the mover's new coordinate
+  to_target  uuid;
+  v_scene    uuid;
+  v_coord    jsonb;
   object_eid uuid;
   dest_eid   uuid;
   target_eid uuid;
@@ -484,7 +454,7 @@ DECLARE
   var_text   text;
   pid        uuid;
   participant_ids uuid[];
-  v_old_holder uuid;   -- object's current carrier, read before the move (eager rule, §4)
+  v_old_holder uuid;
 BEGIN
   ev_type  := p_ruled->>'type';
   actor_id := (p_ruled->>'actor_id')::uuid;
@@ -518,6 +488,17 @@ BEGIN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
 
+    -- Visible ruled speech requires an already-judged speech_perception, same structural check as
+    -- the ordinary door. Hidden speech (visible:false) is explicitly exempt: Go skips the model
+    -- entirely and sends no speech_perception field, and payload.visible=false (persisted below)
+    -- is what makes fn_apply_speech_perception itself refuse to require one.
+    IF visible AND (
+         jsonb_typeof(p_ruled->'speech_perception') IS DISTINCT FROM 'object'
+         OR jsonb_typeof(p_ruled->'speech_perception'->'listeners') IS DISTINCT FROM 'array'
+       ) THEN
+      RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
+    END IF;
+
   ELSIF ev_type = 'ObjectRelocated' THEN
     object_eid := (p_ruled->>'object_id')::uuid;
     dest_eid   := (p_ruled->>'dest_id')::uuid;
@@ -547,8 +528,6 @@ BEGIN
     END IF;
 
   ELSIF ev_type = 'EntityCreated' THEN
-    -- DESCRIPTOR MANDATORY (§8 / §7 provenance-guarded create): no descriptor ⇒ not a true introduction
-    -- ⇒ gate_reject. Blocker-only clerk (the adjudication already happened). Twin of apply_event.
     IF NULLIF(btrim(COALESCE(p_ruled->>'descriptor','')),'') IS NULL THEN
       RETURN jsonb_build_object('event_id', NULL, 'halt_reason', 'gate_reject');
     END IF;
@@ -565,11 +544,19 @@ BEGIN
                            status, accepted_at, visibility_scope, origin, payload)
   VALUES (ev_id, p_world_id, ev_type, truth_text,
           p_tick, p_seq, 'accepted', now(), vis_scope, p_origin,
-          -- Same rule on the ruled path: `truth` is the referee's account, `content` is the words.
-          CASE WHEN ev_type = 'Communicated'
-                AND NULLIF(TRIM(COALESCE(p_ruled->>'content','')),'') IS NOT NULL
-               THEN jsonb_build_object('spoken', TRIM(p_ruled->>'content'))
-               ELSE '{}'::jsonb END);
+          (CASE WHEN ev_type = 'Communicated'
+                 AND NULLIF(TRIM(COALESCE(p_ruled->>'content','')),'') IS NOT NULL
+                THEN jsonb_build_object('spoken', TRIM(p_ruled->>'content'))
+                ELSE '{}'::jsonb END)
+          || (CASE WHEN ev_type = 'Communicated' AND p_ruled ? 'speech_perception'
+                    THEN jsonb_build_object('speech_perception', p_ruled->'speech_perception')
+                    ELSE '{}'::jsonb END)
+          -- Persisted unconditionally for Communicated (true or false) so fn_apply_speech_perception
+          -- can decide hidden-vs-visible from the event itself, explicitly, rather than trusting
+          -- that it is only ever invoked when visible.
+          || (CASE WHEN ev_type = 'Communicated'
+                    THEN jsonb_build_object('visible', visible)
+                    ELSE '{}'::jsonb END));
 
   IF ev_type = 'Communicated' THEN
     INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
@@ -597,8 +584,6 @@ BEGIN
     PERFORM fn_apply_carry_change(ev_id, p_world_id, object_eid, v_old_holder, dest_eid);
   END IF;
 
-  -- EntityCreated: persist the new instance via the shared helper (reuse-before-create inside).
-  -- Provenance = ev_id (§8 net 3); one logged canon_event row (net 2); ruling passed reality-check (net 1).
   IF ev_type = 'EntityCreated' THEN
     PERFORM fn_apply_entity_created(ev_id, p_world_id,
       NULLIF(p_ruled->>'target_id','')::uuid,
@@ -616,38 +601,68 @@ BEGIN
     FROM actor_state a
     WHERE a.world_id = p_world_id AND a.entity_id = actor_id;
 
-  FOR receiver IN
-    SELECT entity_id FROM fn_actors_at(p_world_id, here)
-    UNION
-    SELECT actor_id
-  LOOP
-    var_text := NULL;
-    IF p_ruled ? 'receiver_variants' THEN
-      SELECT rv->>'text' INTO var_text
-        FROM jsonb_array_elements(p_ruled->'receiver_variants') AS rv
-        WHERE (rv->>'receiver_id')::uuid = receiver
-        LIMIT 1;
-    END IF;
-
-    -- NAMING WALL: rendered for THIS receiver. receiver_variants already differentiate when a
-    -- ruling bothered to supply them; this covers the far more common case where it did not and
-    -- every holder would otherwise share the referee's canonically-named account.
-    recv_text := fn_viewer_text(p_world_id, receiver, COALESCE(var_text, appear_txt, truth_text));
-
-    INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
-                                   acquired_tick, valid_tick)
-    VALUES (p_world_id, receiver, ev_id, recv_text, 'direct', p_tick, p_tick)
-    RETURNING perception_id INTO pid;
-
+  IF ev_type = 'Communicated' THEN
+    -- SHARED PERCEPTION APPLICATION (migration header): the ruled door no longer broadcasts flat
+    -- 'direct' text to every co-present actor for speech. Receiver_variants still differentiate
+    -- WHAT each listener's bare account looks like (resolved into a listener_id->text map here,
+    -- unchanged mechanism, never a pre-baked quote); WHO perceives at all, what she learns, and the
+    -- quote appended after walling are now the shared function's job — the same one the ordinary
+    -- door uses.
     DECLARE
-      part_id uuid;
+      v_listener_accounts jsonb := '{}'::jsonb;
+      v_speaker_txt        text;
+      v_recv_txt           text;
     BEGIN
-      FOREACH part_id IN ARRAY participant_ids LOOP
-        INSERT INTO perception_subject (perception_id, entity_id, world_id)
-          VALUES (pid, part_id, p_world_id);
+      FOR receiver IN SELECT entity_id FROM fn_actors_at(p_world_id, here) WHERE entity_id <> actor_id LOOP
+        v_recv_txt := NULL;
+        IF p_ruled ? 'receiver_variants' THEN
+          SELECT rv->>'text' INTO v_recv_txt FROM jsonb_array_elements(p_ruled->'receiver_variants') AS rv
+            WHERE (rv->>'receiver_id')::uuid = receiver LIMIT 1;
+        END IF;
+        v_listener_accounts := v_listener_accounts
+          || jsonb_build_object(receiver::text, COALESCE(v_recv_txt, appear_txt, truth_text));
       END LOOP;
+
+      v_speaker_txt := NULL;
+      IF p_ruled ? 'receiver_variants' THEN
+        SELECT rv->>'text' INTO v_speaker_txt FROM jsonb_array_elements(p_ruled->'receiver_variants') AS rv
+          WHERE (rv->>'receiver_id')::uuid = actor_id LIMIT 1;
+      END IF;
+
+      PERFORM fn_apply_speech_perception(
+        ev_id, COALESCE(v_speaker_txt, appear_txt, truth_text), v_listener_accounts);
     END;
-  END LOOP;
+  ELSE
+    FOR receiver IN
+      SELECT entity_id FROM fn_actors_at(p_world_id, here)
+      UNION
+      SELECT actor_id
+    LOOP
+      var_text := NULL;
+      IF p_ruled ? 'receiver_variants' THEN
+        SELECT rv->>'text' INTO var_text
+          FROM jsonb_array_elements(p_ruled->'receiver_variants') AS rv
+          WHERE (rv->>'receiver_id')::uuid = receiver
+          LIMIT 1;
+      END IF;
+
+      recv_text := fn_viewer_text(p_world_id, receiver, COALESCE(var_text, appear_txt, truth_text));
+
+      INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
+                                     acquired_tick, valid_tick)
+      VALUES (p_world_id, receiver, ev_id, recv_text, 'direct', p_tick, p_tick)
+      RETURNING perception_id INTO pid;
+
+      DECLARE
+        part_id uuid;
+      BEGIN
+        FOREACH part_id IN ARRAY participant_ids LOOP
+          INSERT INTO perception_subject (perception_id, entity_id, world_id)
+            VALUES (pid, part_id, p_world_id);
+        END LOOP;
+      END;
+    END LOOP;
+  END IF;
 
   RETURN jsonb_build_object('event_id', ev_id, 'halt_reason', 'committed');
 END $$;
@@ -1010,6 +1025,166 @@ END $$;
 
 
 --
+-- Name: fn_apply_speech_perception(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_apply_speech_perception(p_event_id uuid, p_account text, p_listener_accounts jsonb) RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  ev     canon_event;
+  sp     jsonb;
+  spk    uuid;
+  n      integer := 0;
+  pid    uuid;
+  lst_el jsonb;
+  lst_id uuid;
+  heard  text;
+  acct   text;
+  assoc  jsonb;
+  spoken_by_speaker text;
+  walled text;
+BEGIN
+  SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
+  IF NOT FOUND THEN RETURN 0; END IF;
+  IF ev.event_type NOT IN ('Communicated', 'private_disclosure') THEN RETURN 0; END IF;
+
+  -- Hidden ruled speech: an explicit, self-contained decision of THIS function, not merely
+  -- something a caller happens never to trigger. Both commit doors persist payload.visible on the
+  -- committed event (ordinary speech never sets the key at all — it has no hidden concept, and a
+  -- missing key here is correctly "not hidden"). Zero listeners, zero heard words, zero learning,
+  -- INCLUDING no speaker perception.
+  IF (ev.payload->>'visible') = 'false' THEN
+    RETURN 0;
+  END IF;
+
+  -- No silent fallback, for ANY caller: a visible Communicated event with no accepted judgment (or
+  -- a malformed one) is refused outright, never applied as a quieter "speaker learns nothing,
+  -- listener gets nothing" partial success. The commit doors already gate_reject this before
+  -- committing the event at all; this is the same requirement enforced one level down, so a direct
+  -- caller (a fixture, a future code path) that reaches this function without going through either
+  -- gate gets the identical refusal.
+  sp := ev.payload->'speech_perception';
+  IF jsonb_typeof(sp) IS DISTINCT FROM 'object' OR jsonb_typeof(sp->'listeners') IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION
+      'fn_apply_speech_perception: event % is visible Communicated speech with no accepted '
+      'speech_perception judgment (or it is malformed) — refusing to half-apply. Every caller, '
+      'including direct fixtures, must supply an accepted judgment; there is no scanner fallback '
+      'and no speaker-only partial success.', p_event_id;
+  END IF;
+
+  -- The speaker's own record is deterministic and unconditional: she authored the utterance, so she
+  -- always perceives it. No model judgment is consulted for her own words, and no name-learning
+  -- scan runs on them either. The account is walled for identity FIRST, and her own spoken words
+  -- (payload.spoken) are appended as a quote AFTER walling — never the other way around, so a name
+  -- inside the quote is never touched by the identity wall.
+  SELECT entity_id INTO spk FROM event_participant
+    WHERE event_id = p_event_id AND role_qualifier = 'speaker' LIMIT 1;
+
+  IF spk IS NOT NULL THEN
+    spoken_by_speaker := NULLIF(TRIM(COALESCE(ev.payload->>'spoken', '')), '');
+    walled := fn_viewer_text(ev.world_id, spk, p_account);
+    IF spoken_by_speaker IS NOT NULL AND position(spoken_by_speaker IN walled) = 0 THEN
+      walled := walled || ' — "' || spoken_by_speaker || '"';
+    END IF;
+    INSERT INTO perception_record (world_id, holder_id, source_event_id, content, spoken,
+                                   epistemic_type, acquired_tick, valid_tick)
+    VALUES (ev.world_id, spk, p_event_id, walled, spoken_by_speaker,
+            'shared', ev.in_world_tick, ev.in_world_tick)
+    RETURNING perception_id INTO pid;
+    INSERT INTO perception_subject (perception_id, entity_id, world_id)
+    SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
+    WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
+    n := n + 1;
+  END IF;
+
+  FOR lst_el IN SELECT value FROM jsonb_array_elements(sp->'listeners') LOOP
+    -- Blocked (or an absent/malformed attention field): no perception, no learning. The block
+    -- reason already lives in canon_event.payload.speech_perception verbatim (preserved by the
+    -- commit doors); nothing further is recorded here.
+    IF COALESCE(lst_el->'attention'->>'kind', '') <> 'abstain' THEN
+      CONTINUE;
+    END IF;
+
+    lst_id := NULLIF(lst_el->>'listener_id', '')::uuid;
+    IF lst_id IS NULL THEN CONTINUE; END IF;
+
+    -- Same account/quote split as the speaker, but with THIS listener's own account override
+    -- (ruled receiver variants) and THIS listener's own heard_words — never the speaker's canonical
+    -- words. A receiver-variant listener who heard something different from what was truly said
+    -- must see HER OWN words here, which a pre-baked shared quote could never express.
+    heard := NULLIF(TRIM(COALESCE(lst_el->>'heard_words', '')), '');
+    acct  := COALESCE(p_listener_accounts ->> (lst_id::text), p_account);
+    walled := fn_viewer_text(ev.world_id, lst_id, acct);
+    IF heard IS NOT NULL AND position(heard IN walled) = 0 THEN
+      walled := walled || ' — "' || heard || '"';
+    END IF;
+
+    -- Retain the holder's description even when the same association recognizes an actor,
+    -- so future facts reads do not have to re-derive it from the utterance.
+    FOR assoc IN SELECT value FROM jsonb_array_elements(COALESCE(lst_el->'name_associations', '[]'::jsonb)) LOOP
+      IF NULLIF(TRIM(COALESCE(assoc->'owner'->>'description', '')), '') IS NOT NULL
+         AND NULLIF(TRIM(COALESCE(assoc->>'name', '')), '') IS NOT NULL THEN
+        walled := walled || ' (' || (assoc->>'name') || ': '
+                  || TRIM(assoc->'owner'->>'description') || ')';
+      END IF;
+    END LOOP;
+
+    INSERT INTO perception_record (world_id, holder_id, source_event_id, content, spoken,
+                                   epistemic_type, acquired_tick, valid_tick)
+    VALUES (ev.world_id, lst_id, p_event_id, walled, heard, 'told', ev.in_world_tick, ev.in_world_tick)
+    RETURNING perception_id INTO pid;
+    INSERT INTO perception_subject (perception_id, entity_id, world_id)
+    SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
+    WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
+    n := n + 1;
+
+    -- Apply recognition and related-subject links independently. Go has already checked
+    -- reference membership and required a description for related actors.
+    FOR assoc IN SELECT value FROM jsonb_array_elements(COALESCE(lst_el->'name_associations', '[]'::jsonb)) LOOP
+      IF NULLIF(assoc->'owner'->>'actor_id', '') IS NOT NULL THEN
+        INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
+        VALUES (ev.world_id, lst_id, (assoc->'owner'->>'actor_id')::uuid,
+                assoc->>'name', ev.in_world_tick, p_event_id)
+        ON CONFLICT DO NOTHING;
+        INSERT INTO perception_subject (perception_id, entity_id, world_id)
+        VALUES (pid, (assoc->'owner'->>'actor_id')::uuid, ev.world_id)
+        ON CONFLICT DO NOTHING;
+      END IF;
+
+      -- Related actors make this knowledge discoverable through subject-keyed reads.
+      -- They are not the name's owner and gain no name_knowledge from this link.
+      INSERT INTO perception_subject (perception_id, entity_id, world_id)
+      SELECT pid, NULLIF(x.value #>> '{}', '')::uuid, ev.world_id
+      FROM jsonb_array_elements(COALESCE(assoc->'owner'->'about_actor_ids', '[]'::jsonb)) x
+      WHERE NULLIF(x.value #>> '{}', '') IS NOT NULL
+      ON CONFLICT DO NOTHING;
+    END LOOP;
+  END LOOP;
+
+  RETURN n;
+END $$;
+
+
+--
+-- Name: FUNCTION fn_apply_speech_perception(p_event_id uuid, p_account text, p_listener_accounts jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_apply_speech_perception(p_event_id uuid, p_account text, p_listener_accounts jsonb) IS 'The one Communicated perception writer for both commit doors. Hidden (payload.visible=false):
+  zero rows for anyone, no exception. Otherwise requires an accepted payload.speech_perception
+  (well-formed object with a listeners array) or RAISEs — no speaker-only fallback for a missing or
+  malformed judgment. Speaker: unconditional shared perception, account walled then her own spoken
+  words appended as a quote. Each attended (attention.kind=abstain) listener: a told perception,
+  account walled then HER OWN heard_words appended, then three independent per-association
+  consequences with no kind discriminator: a non-null owner.actor_id always teaches name_knowledge
+  and an extra perception_subject link (recognition); a non-null owner.description is always folded
+  into the stored content, even when the same association also recognizes an actor_id; a non-empty
+  owner.about_actor_ids always adds perception_subject links for the actors the description
+  concerns. Related links require a description, checked upstream in Go. A blocked listener gets no
+  row at all.';
+
+
+--
 -- Name: fn_area_around(jsonb, numeric); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1069,6 +1244,48 @@ CREATE FUNCTION public.fn_artifact_page(p_world_id uuid, p_viewer_id uuid, p_art
     )
   ) END;
 $$;
+
+
+--
+-- Name: fn_backfill_perception_spoken(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_backfill_perception_spoken() RETURNS integer
+    LANGUAGE plpgsql SECURITY DEFINER
+    AS $$
+DECLARE
+  n integer;
+BEGIN
+  WITH candidates AS (
+    SELECT pr.perception_id, TRIM(ce.payload->>'spoken') AS spoken_text
+    FROM perception_record pr
+    JOIN canon_event ce ON ce.event_id = pr.source_event_id
+    WHERE pr.spoken IS NULL
+      AND ce.event_type IN ('Communicated', 'private_disclosure')
+      AND NULLIF(TRIM(COALESCE(ce.payload->>'spoken', '')), '') IS NOT NULL
+      -- Demonstrably present as the COMPLETE utterance: exact content (the legacy say-step case,
+      -- summary=content, no quote ever appended) or an exact "..."-quoted substring (the
+      -- account+quote pattern generate_perceptions assembles). Nothing weaker — a paraphrase or a
+      -- ruled flavor-text rendering that merely mentions the topic is not a recoverable quote.
+      AND (
+        pr.content = TRIM(ce.payload->>'spoken')
+        OR position(('"' || TRIM(ce.payload->>'spoken') || '"') IN pr.content) > 0
+      )
+  )
+  UPDATE perception_record pr
+     SET spoken = c.spoken_text
+    FROM candidates c
+   WHERE pr.perception_id = c.perception_id;
+  GET DIAGNOSTICS n = ROW_COUNT;
+  RETURN n;
+END $$;
+
+
+--
+-- Name: FUNCTION fn_backfill_perception_spoken(); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_backfill_perception_spoken() IS 'One-time (but idempotent — only ever touches spoken IS NULL rows) historical backfill for perception_record.spoken. Conservative by design: exact content or exact quoted-utterance match only. Never run against payload-mention alone. See migration header for the receiver-variant case this deliberately leaves NULL.';
 
 
 --
@@ -2403,18 +2620,23 @@ CREATE FUNCTION public.fn_isolated_npcs(p_world_id uuid, p_action_ids uuid[], p_
     AS $$
   WITH held AS (
     -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
-    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick, ce.event_type
     FROM perception_record pr
+    JOIN canon_event ce ON ce.event_id = pr.source_event_id
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
       AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 5
   ), shared AS (
     SELECT h.source_event_id,
            mode() WITHIN GROUP (ORDER BY h.content) AS modal_content
     FROM held h
     GROUP BY h.source_event_id
     HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+       AND (
+         NOT bool_or(h.event_type IN ('Communicated', 'private_disclosure'))
+         OR count(DISTINCT h.content) = 1
+       )
   )
   -- an NPC is isolated iff she holds >=1 PRIVATE record whose about-ness intersects the action ids
   SELECT DISTINCT pr.holder_id AS actor_id
@@ -2540,29 +2762,6 @@ $$;
 
 
 --
--- Name: fn_names_in_text(uuid, text); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.fn_names_in_text(p_world_id uuid, p_text text) RETURNS TABLE(entity_id uuid, canonical_name text)
-    LANGUAGE sql STABLE
-    AS $$
-  SELECT er.entity_id, er.canonical_name
-  FROM entity_registry er
-  WHERE er.world_id = p_world_id
-    AND er.canonical_name IS NOT NULL
-    AND er.canonical_name <> ''
-    AND p_text ~ ('\m' || fn_regexp_quote(er.canonical_name) || '\M')
-$$;
-
-
---
--- Name: FUNCTION fn_names_in_text(p_world_id uuid, p_text text); Type: COMMENT; Schema: public; Owner: -
---
-
-COMMENT ON FUNCTION public.fn_names_in_text(p_world_id uuid, p_text text) IS 'The canonical names a piece of text SPEAKS, word-bounded and case-SENSITIVE. Read only by the hearing-teaches path (generate_perceptions), which must not grant name-knowledge because a sentence contained a common noun spelled like a proper name (SPEC-033).';
-
-
---
 -- Name: fn_nearest_common_parent(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2662,6 +2861,29 @@ $$;
 
 
 --
+-- Name: fn_perceived_speech(uuid, uuid, bigint); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_perceived_speech(p_world_id uuid, p_viewer uuid, p_since_tick bigint) RETURNS TABLE(speaker_id uuid, spoken text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT ep.entity_id AS speaker_id, vp.spoken
+  FROM fn_visible_perceptions(p_world_id, p_viewer) vp
+  JOIN event_participant ep ON ep.event_id = vp.source_event_id AND ep.role_qualifier = 'speaker'
+  WHERE vp.spoken IS NOT NULL
+    AND vp.acquired_tick >= p_since_tick
+  ORDER BY vp.acquired_tick, vp.perception_id;
+$$;
+
+
+--
+-- Name: FUNCTION fn_perceived_speech(p_world_id uuid, p_viewer uuid, p_since_tick bigint); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_perceived_speech(p_world_id uuid, p_viewer uuid, p_since_tick bigint) IS 'The heard words a viewer currently, validly holds (fn_visible_perceptions filtered to spoken IS NOT NULL), paired with the speaker of that perception''s source event, since a given tick. Backs beatHandler.speechTexts in place of treating any perception attached to a speech event as heard words — a blocked listener holds no row here at all, and an attended one with no recoverable words is correctly absent too.';
+
+
+--
 -- Name: fn_place_at(uuid, uuid, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -2740,18 +2962,23 @@ CREATE FUNCTION public.fn_private_records(p_world_id uuid, p_npc uuid, p_action_
     AS $$
   WITH held AS (
     -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
-    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick, ce.event_type
     FROM perception_record pr
+    JOIN canon_event ce ON ce.event_id = pr.source_event_id
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
       AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 5
   ), shared AS (
     SELECT h.source_event_id,
            mode() WITHIN GROUP (ORDER BY h.content) AS modal_content
     FROM held h
     GROUP BY h.source_event_id
     HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+       AND (
+         NOT bool_or(h.event_type IN ('Communicated', 'private_disclosure'))
+         OR count(DISTINCT h.content) = 1
+       )
   ), freshest AS (
     -- cap is a v1 dial; §10's retrieval assembly refines it in Station I. Keep the FRESHEST 20, not
     -- the oldest: a private cap must drop old records first, never the ones most likely to matter
@@ -2795,12 +3022,13 @@ CREATE FUNCTION public.fn_public_moment(p_world_id uuid, p_present uuid[], p_k i
     AS $$
   WITH held AS (
     -- cognition reads CURRENT knowledge only; a stale copy must never flip the modal face.
-    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick
+    SELECT pr.source_event_id, pr.holder_id, pr.content, min(pr.acquired_tick) AS tick, ce.event_type
     FROM perception_record pr
+    JOIN canon_event ce ON ce.event_id = pr.source_event_id
     WHERE pr.world_id = p_world_id AND pr.holder_id = ANY(p_present)
       AND pr.source_event_id IS NOT NULL
       AND pr.invalid_tick IS NULL AND pr.expired_at IS NULL
-    GROUP BY 1, 2, 3
+    GROUP BY 1, 2, 3, 5
   ), shared AS (
     SELECT h.source_event_id,
            mode() WITHIN GROUP (ORDER BY h.content) AS modal_content,
@@ -2808,6 +3036,10 @@ CREATE FUNCTION public.fn_public_moment(p_world_id uuid, p_present uuid[], p_k i
     FROM held h
     GROUP BY h.source_event_id
     HAVING count(DISTINCT h.holder_id) = cardinality(p_present)
+       AND (
+         NOT bool_or(h.event_type IN ('Communicated', 'private_disclosure'))
+         OR count(DISTINCT h.content) = 1
+       )
   ), recent AS (
     -- the LAST p_k shared source events by tick (most recent), deterministic tie-break by id
     SELECT s.source_event_id, s.tick, s.modal_content
@@ -2828,6 +3060,162 @@ $$;
 CREATE FUNCTION public.fn_regexp_quote(p_text text) RETURNS text
     LANGUAGE sql IMMUTABLE STRICT
     AS $_$ SELECT regexp_replace(p_text, '([.^$*+?()\[\]{}|\\-])', '\\\1', 'g') $_$;
+
+
+--
+-- Name: fn_speech_perception_candidates(uuid, uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_speech_perception_candidates(p_world_id uuid, p_speaker uuid, p_intended_listener uuid) RETURNS TABLE(actor_id uuid)
+    LANGUAGE sql STABLE
+    AS $$
+  -- Co-present actors except the speaker...
+  SELECT a.entity_id
+  FROM actor_state s
+  JOIN fn_actors_at(p_world_id, (s.attrs->>'location_id')::uuid) a ON true
+  WHERE s.world_id = p_world_id AND s.entity_id = p_speaker
+    AND a.entity_id <> p_speaker
+  UNION
+  -- ...including the addressed recipient when valid — a safety net for the addressee, independent
+  -- of whether fn_actors_at's read of the speaker's OWN location happens to already cover her (it
+  -- normally does; "when valid" means "is actually a registered actor in this world", not "is
+  -- co-located", which the commit-time gate enforces separately and unconditionally).
+  SELECT p_intended_listener
+  WHERE p_intended_listener IS NOT NULL
+    AND p_intended_listener <> p_speaker
+    AND EXISTS (
+      SELECT 1 FROM entity_registry er
+      WHERE er.world_id = p_world_id AND er.entity_id = p_intended_listener
+        AND er.entity_kind = 'actor'
+    )
+$$;
+
+
+--
+-- Name: FUNCTION fn_speech_perception_candidates(p_world_id uuid, p_speaker uuid, p_intended_listener uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_speech_perception_candidates(p_world_id uuid, p_speaker uuid, p_intended_listener uuid) IS 'The listener candidate set for one speech event: co-present actors except the speaker, plus the addressed recipient when she is a real actor in this world. Deliberately cheap (no fact assembly) so a commit-side coverage check never has to rebuild fn_speech_perception_facts to verify the model judged exactly this set.';
+
+
+--
+-- Name: fn_speech_perception_facts(uuid, uuid, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_speech_perception_facts(p_world_id uuid, p_speaker uuid, p_intended_listener uuid, p_recency_window bigint, p_recency_limit integer) RETURNS jsonb
+    LANGUAGE sql STABLE
+    AS $$
+  WITH speaker_loc AS (
+    SELECT (attrs->>'location_id')::uuid AS loc
+    FROM actor_state WHERE world_id = p_world_id AND entity_id = p_speaker
+  ),
+  cand AS (
+    SELECT actor_id FROM fn_speech_perception_candidates(p_world_id, p_speaker, p_intended_listener)
+  ),
+  sheet AS (
+    -- Computed ONCE for every candidate together (fn_fact_sheet's own targets array), then matched
+    -- per listener below by the target's own `id` key — never a positional targets[0] assumption,
+    -- and never one redundant fn_fact_sheet call per candidate re-deriving the same scene position.
+    SELECT fn_fact_sheet(p_world_id, p_speaker, ARRAY(SELECT actor_id FROM cand), true) AS fs
+  )
+  SELECT jsonb_build_object(
+    'schema_version', 'speech_perception_facts/1',
+    'listeners', COALESCE((
+      SELECT jsonb_agg(
+        jsonb_build_object(
+          'actor_id',  c.actor_id,
+          'is_player', c.actor_id = (SELECT player_entity_id FROM world WHERE world_id = p_world_id),
+          -- Identity metadata belongs to this listener's view, not the speaker's private knowledge.
+          'label', fn_display_name(p_world_id, c.actor_id, c.actor_id),
+          -- References are relative to THIS LISTENER, not the speaker: name understanding is
+          -- grounded in what each listener knows, not the referee's or speaker's truth. Present
+          -- actors (so a clear present gesture can ground a first-meeting recognition) UNION every
+          -- ACTOR this listener already has sourced perception knowledge of (so an ABSENT
+          -- previously-introduced person can still be recognized by description — the walkthrough's
+          -- "already knows Mara's brother personally" case). Filtered to entity_kind='actor': a
+          -- perception's subject can be a location or an artifact, and neither is a name reference.
+          'references', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                     'actor_id', r.actor_id,
+                     'label', fn_display_name(p_world_id, c.actor_id, r.actor_id)))
+            FROM (
+              SELECT entity_id AS actor_id
+              FROM fn_actors_at(p_world_id, (SELECT loc FROM speaker_loc))
+              UNION
+              SELECT ps.entity_id
+              FROM fn_visible_perceptions(p_world_id, c.actor_id) vp
+              JOIN perception_subject ps ON ps.perception_id = vp.perception_id
+              JOIN entity_registry er
+                ON er.world_id = p_world_id AND er.entity_id = ps.entity_id AND er.entity_kind = 'actor'
+            ) r
+          ), '[]'::jsonb),
+          -- Sourced perception contents this listener already holds — the SAME bounded recent
+          -- window beatHandler.payload() already uses (recencyTickWindow/recencyMaxRows), passed in
+          -- rather than re-invented (contract point 1): newest p_recency_limit rows within
+          -- p_recency_window ticks of her newest, presented oldest-first.
+          'knowledge', COALESCE((
+            SELECT jsonb_agg(k.content ORDER BY k.acquired_tick)
+            FROM (
+              SELECT vp.content, vp.acquired_tick
+              FROM fn_visible_perceptions(p_world_id, c.actor_id) vp
+              WHERE vp.acquired_tick >= (
+                      SELECT max(acquired_tick) FROM fn_visible_perceptions(p_world_id, c.actor_id)
+                    ) - p_recency_window
+              ORDER BY vp.acquired_tick DESC
+              LIMIT p_recency_limit
+            ) k
+          ), '[]'::jsonb),
+          -- Recorded activity, truth-side and unreduced: resolve is the referee reasoning over real
+          -- facts (fn_fact_sheet's own truth_side=true), not an NPC-cognition seat the wall must
+          -- protect a secret from. `held` carries the actual pending attempt (her full recorded
+          -- intention), `journey` carries the full recorded row, `statuses` carries whatever
+          -- actor_state.attrs.statuses already records (the same array fn_effective_speed reads) —
+          -- no invented mechanic, no curated subset.
+          'activities', jsonb_build_object(
+            'held', (
+              SELECT jsonb_build_object('attempt', ho.attempt, 'status', ho.status, 'created_tick', ho.created_tick)
+              FROM held_outcome ho
+              WHERE ho.world_id = p_world_id AND ho.actor_id = c.actor_id AND ho.status = 'pending'
+              LIMIT 1
+            ),
+            'journey', (
+              SELECT jsonb_build_object(
+                       'kind', j.kind, 'status', j.status, 'threshold', j.threshold,
+                       'span_seconds', j.span_seconds, 'legs_total', j.legs_total,
+                       'legs_done', j.legs_done, 'started_tick', j.started_tick,
+                       'current_tick', j.current_tick, 'goal_coord', j.goal_coord,
+                       'goal_target', j.goal_target
+                     )
+              FROM journey j
+              WHERE j.world_id = p_world_id AND j.actor_id = c.actor_id AND j.status = 'active'
+              LIMIT 1
+            ),
+            'statuses', COALESCE((
+              SELECT a.attrs->'statuses' FROM actor_state a
+              WHERE a.world_id = p_world_id AND a.entity_id = c.actor_id
+            ), '[]'::jsonb)
+          ),
+          -- Existing computed physics only (fn_fact_sheet's per-target object, looked up by its own
+          -- `id` field from the ONE shared call above) — no invented hearing range, no acoustic
+          -- attenuation, no facing rule. Registry names are not physical measurements.
+          'physics', (
+            SELECT t - 'name' FROM sheet, jsonb_array_elements(sheet.fs->'targets') t
+            WHERE t->>'id' = c.actor_id::text
+          )
+        )
+        ORDER BY c.actor_id
+      )
+      FROM cand c
+    ), '[]'::jsonb)
+  );
+$$;
+
+
+--
+-- Name: FUNCTION fn_speech_perception_facts(p_world_id uuid, p_speaker uuid, p_intended_listener uuid, p_recency_window bigint, p_recency_limit integer); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_speech_perception_facts(p_world_id uuid, p_speaker uuid, p_intended_listener uuid, p_recency_window bigint, p_recency_limit integer) IS 'Measurements for the speech_perception seat, one object per listener candidate (fn_speech_perception_candidates): label and actor references relative to the listener, her own recent sourced knowledge, truth-side recorded activity (full held attempt, full journey row, actor_state.attrs.statuses), and existing physics matched by target id from one shared fn_fact_sheet call. Supplies no attention judgment and no name association — that is the model''s job, applied by fn_apply_speech_perception.';
 
 
 --
@@ -3056,6 +3444,31 @@ COMMENT ON FUNCTION public.fn_unearned_names(p_world_id uuid, p_viewer uuid) IS 
 
 
 --
+-- Name: fn_unheard_names(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.fn_unheard_names(p_world_id uuid, p_viewer uuid) RETURNS TABLE(canonical_name text, label text)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT u.canonical_name, u.label
+  FROM fn_unearned_names(p_world_id, p_viewer) u
+  WHERE NOT EXISTS (
+    SELECT 1
+    FROM fn_visible_perceptions(p_world_id, p_viewer) vp
+    WHERE vp.spoken IS NOT NULL
+      AND vp.spoken ~ ('\m' || fn_regexp_quote(u.canonical_name) || '\M')
+  )
+$$;
+
+
+--
+-- Name: FUNCTION fn_unheard_names(p_world_id uuid, p_viewer uuid); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.fn_unheard_names(p_world_id uuid, p_viewer uuid) IS 'fn_unearned_names, minus any name/token the viewer LITERALLY heard spoken (verbatim in her own visible perception_record.spoken) — case-SENSITIVE, word-bounded, same strictness as the hearing-teaches path this migration retires. A lexical fact only: never writes name_knowledge, never claims to prove the prose interpreted the word correctly. fn_viewer_text (the account wall) is unaffected and keeps using fn_unearned_names unchanged — this is a separate, more permissive guard for the Go-side heard-words belt only.';
+
+
+--
 -- Name: fn_viewer_text(uuid, uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -3122,8 +3535,16 @@ CREATE TABLE public.perception_record (
     visibility_scope text DEFAULT 'private'::text NOT NULL,
     dirty boolean DEFAULT false NOT NULL,
     importance real DEFAULT 5.0 NOT NULL,
+    spoken text,
     CONSTRAINT perception_record_epistemic_type_check CHECK ((epistemic_type = ANY (ARRAY['direct'::text, 'indirect'::text, 'shared'::text, 'told'::text, 'overheard'::text, 'public'::text, 'rumor'::text, 'inference'::text, 'mistaken'::text, 'confirmed'::text, 'disputed'::text])))
 );
+
+
+--
+-- Name: COLUMN perception_record.spoken; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.perception_record.spoken IS 'The words THIS HOLDER perceived as spoken, when the source was Communicated speech she attended (fn_apply_speech_perception). NULL for a non-speech perception, for an attended listener whose judged heard_words were empty, and for every perception predating this column that could not be conservatively backfilled (fn_backfill_perception_spoken). Never populated for a blocked listener — she holds no perception row from that event at all. Read by fn_perceived_speech and guarded, more permissively than canonical-name identity, by fn_unheard_names.';
 
 
 --
@@ -3416,72 +3837,21 @@ CREATE FUNCTION public.generate_perceptions(p_event_id uuid) RETURNS integer
     LANGUAGE plpgsql SECURITY DEFINER
     AS $$
 DECLARE
-  ev   canon_event;
-  n    integer := 0;
-  spk  uuid;
-  lst  uuid;
-  pid  uuid;
-  -- said = the utterance as a holder PERCEIVES it: the referee's account plus the words themselves.
-  said text;
-  -- spoken = the words THEMSELVES, and the only thing that can teach a name. NULL when the event
-  -- carries no utterance (a nod, a shove, an ambient noise), and a NULL text teaches nothing because
-  -- fn_names_in_text's regex match over NULL yields no rows.
-  spoken text;
+  ev canon_event;
+  n  integer := 0;
 BEGIN
   SELECT * INTO ev FROM canon_event WHERE event_id = p_event_id AND status = 'accepted';
   IF NOT FOUND THEN RETURN 0; END IF;
 
   IF ev.event_type IN ('private_disclosure', 'Communicated') THEN
-    spoken := NULLIF(TRIM(COALESCE(ev.payload->>'spoken','')),'');
-    said := ev.summary;
-    IF spoken IS NOT NULL
-       -- ...unless the account ALREADY is the words. The legacy `say` step commits with summary =
-       -- content, so appending would render 'I saw the note — "I saw the note"'.
-       AND position(spoken IN ev.summary) = 0 THEN
-      said := ev.summary || ' — "' || spoken || '"';
-    END IF;
-    -- speaker → 'shared'; each listener → 'told' (B-7).
-    SELECT entity_id INTO spk FROM event_participant
-      WHERE event_id = p_event_id AND role_qualifier = 'speaker' LIMIT 1;
-    IF spk IS NOT NULL THEN
-      -- SPEC-033: a name in what was SAID OUT LOUD is earned by whoever heard it said.
-      INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
-      SELECT ev.world_id, spk, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, spoken) t
-       WHERE t.entity_id <> spk
-      ON CONFLICT DO NOTHING;
-
-      INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
-                                     acquired_tick, valid_tick)
-      VALUES (ev.world_id, spk, p_event_id, fn_viewer_text(ev.world_id, spk, said), 'shared',
-              ev.in_world_tick, ev.in_world_tick)
-      RETURNING perception_id INTO pid;
-      INSERT INTO perception_subject (perception_id, entity_id, world_id)
-      SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
-      WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
-      n := n + 1;
-    END IF;
-    FOR lst IN SELECT entity_id FROM event_participant
-                 WHERE event_id = p_event_id AND role_qualifier = 'listener' LOOP
-      -- SPEC-033, the reported case: Mara SAYS "Jonas" where Kade can hear it, and Kade learns it.
-      -- The case the founder caught: Mara nods at Jonas, the account says "Jonas", and Kade learns
-      -- nothing — because nobody said it.
-      INSERT INTO name_knowledge (world_id, holder_id, entity_id, name, learned_tick, source_event_id)
-      SELECT ev.world_id, lst, t.entity_id, t.canonical_name, ev.in_world_tick, p_event_id
-        FROM fn_names_in_text(ev.world_id, spoken) t
-       WHERE t.entity_id <> lst
-      ON CONFLICT DO NOTHING;
-
-      INSERT INTO perception_record (world_id, holder_id, source_event_id, content, epistemic_type,
-                                     acquired_tick, valid_tick)
-      VALUES (ev.world_id, lst, p_event_id, fn_viewer_text(ev.world_id, lst, said), 'told',
-              ev.in_world_tick, ev.in_world_tick)
-      RETURNING perception_id INTO pid;
-      INSERT INTO perception_subject (perception_id, entity_id, world_id)
-      SELECT pid, ep.entity_id, ev.world_id FROM event_participant ep
-      WHERE ep.event_id = p_event_id ON CONFLICT DO NOTHING;
-      n := n + 1;
-    END LOOP;
+    -- The bare account only (ev.summary, no quote baked in) — fn_apply_speech_perception walls it
+    -- and appends each holder's own words (the speaker's payload.spoken; each listener's own
+    -- judged heard_words) AFTER walling, exactly once, so an ambiguous name inside a quote is never
+    -- scrubbed by the identity wall and a receiver's own differing heard words are never silently
+    -- replaced by the canonical ones. Ordinary speech has one account for everyone (no
+    -- receiver-variant concept on this door), so the listener-account map is empty and every
+    -- listener falls back to the same bare account.
+    n := n + fn_apply_speech_perception(p_event_id, ev.summary, '{}'::jsonb);
   END IF;
 
   IF ev.event_type IN ('move', 'ActorMoved') THEN
@@ -3523,38 +3893,7 @@ BEGIN
     END;
   END IF;
 
-  -- ── SPEC-035 amends this arm: witnesses perceive too. See the perceiver set below and the
-  -- gate + participant recording in the same migration. The arm's shape is unchanged.
-  --
-  -- ── SPEC-034: ObjectRelocated ─────────────────────────────────────────────────────────────────
-  -- Reproduced on the seeded world before this was written: Kade carries the Sealed Note
-  -- (fn_carrying lists it) and fn_entity_visible(DL,Kade,note) is FALSE, fn_artifact_page returns
-  -- NULL => 404, and Kade holds ZERO perceptions about a thing in his hands. There was no
-  -- ObjectRelocated arm at all, so a handover recorded nothing for anybody — not even the new holder.
-  -- Possession without knowledge is not a lawful epistemic state (B-2; I-2 provenance).
-  --
-  -- THE SUBJECT IS THE POINT. fn_entity_visible asks "does this holder hold a perception whose
-  -- SUBJECT is this entity". The two arms above take subjects from event_participant, and
-  -- ObjectRelocated records only an `instigator` (apply_event: "Communicated -> speaker + listener;
-  -- all others -> instigator") — the object and destination live in the PAYLOAD. So a perception
-  -- alone would not lift the 404; the object must be named as a subject explicitly. That is the
-  -- defect, and it is why this arm reads the payload instead of copying the participant pattern.
-  --
-  -- WHO PERCEIVES (founder ruling 2026-08-25): "holders and co-present as long as they can see it".
-  -- The second half cannot be honoured today and the reason is recorded rather than worked around:
-  -- no concealment signal exists (ObjectRelocated's two founder-locked dimensions are volume, which
-  -- blocks, and weight, which consequences — neither epistemic); actors are AT a place, not
-  -- positioned within it, so there is no sub-place geometry to answer "could they see it"; and this
-  -- world's pattern for who perceived something is that the EVENT SAYS SO — Communicated carries a
-  -- required singular listener_id, ObjectRelocated carries no witness field. SPEC-033's correction is
-  -- the precedent: stop inferring from the referee's account, read what the payload actually states.
-  -- So this arm records only what the event names. Witnesses are SPEC-035, and that is the urgent
-  -- half: no rule can recover who was watching if the event never recorded it.
-  --
-  -- SCOPE, measured: the play world holds ZERO ObjectRelocated events — the seeded carry edges were
-  -- authored as state, never as events. This arm cannot repair the seeded row; it prevents every
-  -- FUTURE handover from creating the same hole. Converting seeded state to events is a stated
-  -- non-goal of the plan.
+  -- ── SPEC-034/035: ObjectRelocated (unchanged; carried forward verbatim) ─────────────────────────
   IF ev.event_type = 'ObjectRelocated' THEN
     DECLARE
       or_obj  uuid;
@@ -3563,16 +3902,6 @@ BEGIN
       or_who  uuid;
       or_pid  uuid;
     BEGIN
-      -- WHERE THE RELOCATION ACTUALLY LIVES. Measured: apply_event commits an ObjectRelocated with an
-      -- EMPTY canon_event.payload — `{}`. The object and destination are not in the event at all; they
-      -- are in the state_mutation the commit writes:
-      --
-      --     entity_id = <the object>   attribute_path = 'attrs.contained_by'   new_value = <destination>
-      --
-      -- So this arm reads state_mutation, exactly as the move/ActorMoved arm above reads
-      -- `attrs.location_id` for its destination. The first draft of this arm read ev.payload and
-      -- silently produced zero perceptions, because a NULL object_id makes the whole arm a no-op — a
-      -- fix that looked applied, passed `make migrate`, and changed nothing. Found by running it.
       SELECT sm.entity_id, (sm.new_value #>> '{}')::uuid
         INTO or_obj, or_dest
         FROM state_mutation sm
@@ -3581,25 +3910,9 @@ BEGIN
        LIMIT 1;
 
       IF or_obj IS NOT NULL THEN
-        -- The destination's kind comes from entity_registry, never from a payload field: the payload
-        -- is empty here, and even where beat_chain.v2 marks `dest_kind` required, apply_event's gate
-        -- only verifies the ids EXIST (20260723100004_apply_event.sql:149-155).
         SELECT entity_kind INTO or_kind FROM entity_registry
           WHERE entity_id = or_dest AND world_id = ev.world_id;
 
-        -- Whoever the event names, deduplicated: the actor who did it, and the destination when the
-        -- destination is a person. A location or container destination names no perceiver — "the
-        -- packet is now in the back room" is not knowledge anybody acquired.
-        --
-        -- SPEC-035: and whoever the event names as a WITNESS. They take the same branch as the
-        -- holders on purpose, because the founder's ruling is that they are in the same epistemic
-        -- position: they saw it happen, so 'direct', and the same subjects. What separates a witness
-        -- from a co-present bystander is not the perception rule, it is that apply_event only records
-        -- the ones the caller NAMED and could prove were there — "just because they were there
-        -- doesn't mean they saw it" is enforced at the gate, not re-litigated here. This is the same
-        -- division 'Communicated' already makes: addressed listeners get 'told', and the comment on
-        -- that arm says co-present overhearers defer. Concealment, when it lands, shortens the list
-        -- the caller passes; it needs no change on this side.
         FOR or_who IN
           SELECT DISTINCT h FROM (
             SELECT entity_id AS h FROM event_participant
@@ -3615,10 +3928,6 @@ BEGIN
                   ev.in_world_tick, ev.in_world_tick)
           RETURNING perception_id INTO or_pid;
 
-          -- THE FIX. fn_entity_visible asks "does this holder hold a perception whose SUBJECT is this
-          -- entity". The two arms above take subjects from event_participant, and ObjectRelocated
-          -- records only an `instigator` — so without naming the OBJECT here, a perception exists and
-          -- the 404 survives it. That is the defect.
           INSERT INTO perception_subject (perception_id, entity_id, world_id)
           SELECT or_pid, e, ev.world_id FROM (
             SELECT or_obj AS e
@@ -5157,4 +5466,5 @@ INSERT INTO public.schema_migrations (version) VALUES
     ('20260825140000'),
     ('20260828090000'),
     ('20260828120000'),
-    ('20260904230000');
+    ('20260904230000'),
+    ('20260906184826');

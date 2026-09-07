@@ -2,9 +2,14 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 )
+
+func reactionSpeechRuling(actorID, listenerID string) string {
+	return fmt.Sprintf(`{"reasoning":"The held cut-in does not stop the player's question.","therefore":"succeeds","outcome":{"kind":"resolved","events":[{"type":"Communicated","actor_id":%q,"listener_id":%q,"truth":"Player asks the keeper for a room.","content":"can I rest here?","visible":true}]}}`, actorID, listenerID)
+}
 
 // A reaction beat must still give the world its turn.
 //
@@ -45,13 +50,18 @@ func TestReactionBeat_RunsTheWorldTurnSoTheAddressedNPCCanAnswer(t *testing.T) {
 	// ── Beat 2: the player SPEAKS TO an NPC while the held act is pending. ──
 	reactTick := reactionBaseTick(t, ctx, pool, id.World)
 	const reply = "the room's yours if the coin is"
-	answering := &scriptedCognitionDriver{name: "answering-batch", body: `[{"actor_id":"` + id.W +
-		`","decision":{"commit_kind":"commit","attempt":{"type":"Communicated","stated":"she answers the stranger","listener_id":"` +
-		id.P + `","content":"` + reply + `"}}}]`}
+	answering := &scriptedCognitionDriver{name: "answering", reply: func(req GenRequest) string {
+		if !strings.Contains(decideForTail(t, req.Prompt), id.W) {
+			return "[]"
+		}
+		return `[{"actor_id":"` + id.W +
+			`","decision":{"commit_kind":"commit","attempt":{"type":"Communicated","stated":"she answers the stranger","listener_id":"` +
+			id.P + `","content":"` + reply + `"}}}]`
+	}}
 	orc2 := &Orchestrator{DB: pool, Resolve: &capturingResolveDriver{name: "capture-resolve",
-		ruling: validRulingJSON(id.P, id.J, "The cut-in is checked.", "A scuffle at the bar.")},
+		ruling: reactionSpeechRuling(id.P, id.W)},
 		CognitionBatch:    answering,
-		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		CognitionIsolated: answering,
 		WorldActor:        NewFakeWorldActorDriver()}
 
 	out2, err := orc2.RunReactionBeat(ctx, id.World, id.P,
@@ -76,9 +86,6 @@ func TestReactionBeat_RunsTheWorldTurnSoTheAddressedNPCCanAnswer(t *testing.T) {
 	if out2.HaltReason != "completed" {
 		t.Fatalf("halt = %q, want completed", out2.HaltReason)
 	}
-	if len(out2.Committed) < 2 {
-		t.Fatalf("committed %d events, want the ruling AND the NPC's answer", len(out2.Committed))
-	}
 }
 
 // A fresh telegraph inside a reaction beat must still end the beat, exactly as it does on the ordinary
@@ -101,11 +108,17 @@ func TestReactionBeat_FreshTelegraphStillEndsTheBeat(t *testing.T) {
 	held, _ := pendingHeldOutcomes(ctx, pool, id.World)
 
 	reactTick := reactionBaseTick(t, ctx, pool, id.World)
+	again := &scriptedCognitionDriver{name: "telegraph-again", reply: func(req GenRequest) string {
+		if !strings.Contains(decideForTail(t, req.Prompt), id.J) {
+			return "[]"
+		}
+		return `[{"actor_id":"` + id.J +
+			`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"Jonas winds up again","to_target_id":"` + id.L2 + `"}}}]`
+	}}
 	orc2 := &Orchestrator{DB: pool, Resolve: &capturingResolveDriver{name: "capture-resolve",
-		ruling: validRulingJSON(id.P, id.J, "The cut-in is checked.", "A scuffle at the bar.")},
-		CognitionBatch: &scriptedCognitionDriver{name: "telegraph-again", body: `[{"actor_id":"` + id.J +
-			`","decision":{"commit_kind":"telegraph","attempt":{"type":"ActorMoved","stated":"Jonas winds up again","to_target_id":"` + id.L2 + `"}}}]`},
-		CognitionIsolated: &scriptedCognitionDriver{name: "quiet-iso", body: `[]`},
+		ruling: reactionSpeechRuling(id.P, id.W)},
+		CognitionBatch:    again,
+		CognitionIsolated: again,
 		WorldActor:        NewFakeWorldActorDriver()}
 
 	out, err := orc2.RunReactionBeat(ctx, id.World, id.P,

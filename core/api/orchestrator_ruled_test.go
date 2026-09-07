@@ -24,6 +24,12 @@ func (d *inlineRulingDriver) Generate(_ context.Context, req GenRequest) (string
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without schema", d.name)
 	}
+	// The bound "resolve" driver now also answers speech_perception/1 requests (ADR-038) for any
+	// Communicated event this ruling's own JSON contains — answer them without touching callCount,
+	// which counts RULING calls, not the speech judgment that follows a Communicated one.
+	if isSpeechPerceptionSchema(req.Schema) {
+		return fakeSpeechPerceptionReply(req.Prompt), nil
+	}
 	d.callCount++
 	return d.ruling, nil
 }
@@ -42,6 +48,12 @@ func (d *countingRulingDriver) Capabilities() CapabilitySet {
 func (d *countingRulingDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: used without schema", d.name)
+	}
+	// Speech perception requests (ADR-038) never advance the rulings index — they are a DIFFERENT
+	// schema than the ruling this driver scripts, and counting them here would skip a scripted
+	// ruling on the NEXT real ruling call.
+	if isSpeechPerceptionSchema(req.Schema) {
+		return fakeSpeechPerceptionReply(req.Prompt), nil
 	}
 	idx := d.callCount
 	d.callCount++

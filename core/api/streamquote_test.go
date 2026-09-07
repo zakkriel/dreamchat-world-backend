@@ -41,8 +41,9 @@ func TestNarrateStream_SpeechFrameCarriesItsQuote(t *testing.T) {
 
 	belts := NarrationBelts{
 		PresentIDs: []string{speaker},
-		// The verbatim belt is backed by canon spoken words (payload.spoken); here it stands in for the
-		// utterance the speaker was perceived to make.
+		// The verbatim belt is backed by THIS viewer's own perceived speech (fn_perceived_speech /
+		// perception_record.spoken, beatHandler.speechTexts); here it stands in directly for that
+		// per-holder heard-words map.
 		SpeechTexts: map[string][]string{speaker: {spoken}},
 	}
 	segs, err := narrateStream(context.Background(), sd, GenRequest{}, belts,

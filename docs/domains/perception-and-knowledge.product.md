@@ -67,6 +67,7 @@ Ids only; the law lives where the id resolves. Cite it, never restate it.
 | `B-4` | Player interiority: the system never authors the player character's inner state. | A surface that tells the player what they believe overwrites the one reading that is theirs. |
 | `B-6` | Contradiction lives in perception, never in canon. | "Resolving" a contradiction in canon destroys the fiction's memory. |
 | `B-7` | Knowledge transfer never copies memory — a propagated perception is a new record with its own epistemic type. | Copying the row makes hearsay indistinguishable from witness. |
+| `ADR-038` | Speech separates heard words, descriptions of owners, and recognition of actors. Resolve interprets supplied activities and physical facts; code records the accepted judgment. | Guessing ownership from a canonical-name match invents knowledge; discarding an unidentified word destroys knowledge. |
 | `B-9` | Syntheses derive deterministically from stored versions. | Regeneration on reload is drift, and it is a bug. |
 | `C-4` | Play mode shows the perceived world; only creator/debug may show authoritative state. | A debug surface leaking into play is a `B-1` breach with extra steps. |
 

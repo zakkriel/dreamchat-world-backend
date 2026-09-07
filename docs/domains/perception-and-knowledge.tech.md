@@ -21,6 +21,8 @@ grep before relying on one.
   `grep -n 'CREATE TABLE public.perception_record' core/db/schema.sql`.
 - **`perception_subject`** — `perception_id · entity_id · world_id`, the join that makes visibility
   work. **This is the table SPEC-034 was about.**
+- `perception_record.spoken` stores this holder's heard words, separately from account prose.
+  `fn_perceived_speech` reads only current visible records, including receiver-specific speech.
 - `name_knowledge` is **not** this domain's table; it is WE-4's (see `seams.md`).
 
 ## The write path
@@ -34,30 +36,34 @@ names*, and *what epistemic type it carries*.
 them: `grep -n 'ev\.event_type' core/db/schema.sql` (the dispatch lines inside
 `generate_perceptions`).
 
-`generate_perceptions` reads **`state_mutation`** for WHAT CHANGED — never the payload for state,
-which is `{}` on commit; the payload carries only `spoken` words (SPEC-033), read by the
-Communicated arm of `generate_perceptions` (`schema.sql:3435`) AND by `fn_unearned_names` (the
-wall's vocabulary source, `schema.sql:3013`). Getting the state half wrong produces a fix that
+`generate_perceptions` reads **`state_mutation`** for WHAT CHANGED, not the payload for state.
+Speech payloads carry source words and the accepted per-listener judgment (`ADR-038`); their
+Communicated branch delegates to `fn_apply_speech_perception`.
+Getting the state half wrong produces a fix that
 applies cleanly and does nothing (SPEC-034's receipt, recorded in the migration's own comments:
 `core/db/migrations/20260825120000_object_relocated_perceptions.sql`). This paragraph is the one
 home for the payload-on-commit fact; the trap row and the seams row point here.
 
-## The second door, and it disagrees
+## Shared speech; remaining non-speech difference
 
-`apply_ruled_event` writes perceptions itself, without `generate_perceptions`:
+Ordinary and ruled Communicated now share `fn_apply_speech_perception` (`ADR-038`).
+`speechperception.go` supplies final event facts to the existing resolve driver and validates
+structure, candidate coverage, references, and contradictions. SQL applies the accepted result
+atomically with the event. Missing judgments reject new visible speech; there is no scanner fallback.
+Hidden ruled speech yields no perception. Each association carries nullable owner recognition and
+description independently: descriptions stay in sourced knowledge even when recognition also grants
+the actor-specific public read. Related actor references add subject links only, never name knowledge.
 
-- receivers are `fn_actors_at(p_world_id, here) UNION actor` (`schema.sql:619-623`);
-- subjects are written from `participant_ids` (`:645-648`), which is `ARRAY[actor_id, listener]` on
-  the Communicated branch (`:578`) and `ARRAY[actor_id]` otherwise (`:582`).
+Other ruled event types retain their existing perception path. The following handover observation
+is historical evidence, not a fresh production measurement:
 
 Consequence, plainly: **on a ruled handover the object is never a subject**, so `fn_entity_visible`
 is false for everyone including the new holder — and perception is granted by presence alone, which
 contradicts the named-witness ruling behind SPEC-035. Reproduced 2026-08-27. It has no traffic yet:
 every event in the dev database came through `fast_path`.
 
-**This round does not fix it.** The founder ruled `apply_ruled_event` should get the same treatment
-as `apply_event`, and the *shape* of that fix depends on SPEC-038 (see `docs/open-spec-items.md`
-§SPEC-038 "Related"). Listed in Open questions below.
+The speech change does not fix that non-speech handover path or implement general attention,
+concealment, or physical overrides. Those remaining questions stay in `SPEC-038`.
 
 ## The read path
 
@@ -136,13 +142,12 @@ domain.
 | **An invariant maintained by the harness is not an invariant.** The Go suite backfilled missing subject rows before pgTAP looked. | `docs/00_workspace/failure-log.md` row 16. If you add a repair helper, you may be deleting a guard. |
 | **The Go suite poisons pgTAP.** `pressure_test.go` asserts against an empty `world_eruption` and drains it for tests that follow. | Cost two false regression reports in one day (draft dossier receipt, re-verified: `core/api/pressure_test.go` asserts the empty-table precondition). |
 | **A 100%-caught mutation table means nothing about malformed input.** | `docs/00_workspace/failure-log.md` row 45: the silent-drop defect recurred inside its own mutation-tested fix. |
-| **The ruled path disagrees with the attempt path on who perceives.** | This file, "The second door"; `docs/open-spec-items.md` §SPEC-038 "Related". |
+| **Non-speech ruled perception still differs from the attempt path.** | “Shared speech; remaining non-speech difference” above. `ADR-038` closes only Communicated. |
 | **Counts go stale in days.** State no assertion, consumer or arm counts; point at the file or the grep. | `123_object_relocated_witnesses_test.sql` changed its plan while `docs/areas/perception.md` stated the old "(10 assertions)" — the stale count was deleted 2026-08-27 (`digest/03_TIMESERIES.md` row S10a\|9). |
 
 ## Open questions
 
-1. **The shape of the `apply_ruled_event` fix** — see "The second door" above (the one home for
-   this fact); the shape depends on SPEC-038.
+1. **Non-speech ruled perception** — see “Shared speech; remaining non-speech difference.”
 2. **`participant_ids` drift between contract and code.** `core/api/schema/ruling.v2.schema.json:73`
    still carries `participant_ids` (marked "v1 compat — removed when the v1 decode path retires");
    the Go `RuledEventV2` struct (`core/api/ruling.go:83`) does not decode it —

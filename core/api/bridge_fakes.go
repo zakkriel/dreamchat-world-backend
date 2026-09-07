@@ -174,6 +174,12 @@ func (f *fakeResolveDriver) Generate(_ context.Context, req GenRequest) (string,
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: resolve driver used without a schema", f.name)
 	}
+	// The SAME "resolve" driver now answers TWO distinct schemas (ADR-038: "handled by the EXISTING
+	// resolve driver, not a new seat") — a ruling/2 request and a speech_perception/1 request. Sniff
+	// which one this call is before falling into the ruling-shaped canned reply below.
+	if isSpeechPerceptionSchema(req.Schema) {
+		return fakeSpeechPerceptionReply(req.Prompt), nil
+	}
 	// Extract UUID from prompt using regex: [0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}
 	uuidRegex := regexp.MustCompile(`[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}`)
 	matches := uuidRegex.FindStringSubmatch(req.Prompt)
@@ -190,6 +196,63 @@ func (f *fakeResolveDriver) Generate(_ context.Context, req GenRequest) (string,
 		jsonStr(actorID), jsonStr(actorID), jsonStr(truthText), jsonStr(truthText), jsonStr(actorID),
 	)
 	return out, nil
+}
+
+// fakeSpeechPerceptionCandidateRe extracts the bare uuids listed under buildSpeechPerceptionPrompt's
+// own "CANDIDATE LISTENERS" marker — the exact set the model (or this stand-in) must answer for, no
+// more, no fewer.
+var fakeSpeechPerceptionCandidateRe = regexp.MustCompile(`[0-9a-fA-F-]{36}`)
+
+// Test/dev schema dispatch only; the coordinator never synthesizes a listener's interpretation.
+func isSpeechPerceptionSchema(schema json.RawMessage) bool {
+	return string(schema) == speechPerceptionSchemaJSON
+}
+
+// fakeSpeechPerceptionReply is the CI/dev stand-in for a speech_perception/1 request through
+// whichever driver is bound to the resolve seat: every listener the prompt names under CANDIDATE
+// LISTENERS abstains (nothing blocks them) and hears the SPOKEN words verbatim, with no name
+// associations — a safe, structurally-valid default that never guesses at recognition, matching this
+// fake's own governing rule (a fake must be at least as strict as production, never smarter than it).
+// Real judgment (blocking, name association) is resolve's job; no fake here claims to model it.
+func fakeSpeechPerceptionReply(prompt string) string {
+	marker := "\n\nCANDIDATE LISTENERS ("
+	idx := strings.LastIndex(prompt, marker)
+	if idx < 0 {
+		return "{}" // malformed fixture input must fail structural validation
+	}
+	ids := fakeSpeechPerceptionCandidateRe.FindAllString(prompt[idx:], -1)
+
+	spoken := ""
+	if idx := strings.Index(prompt, "SPOKEN: "); idx >= 0 {
+		rest := prompt[idx+len("SPOKEN: "):]
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			rest = rest[:nl]
+		}
+		_ = json.Unmarshal([]byte(rest), &spoken) // best-effort; "" on any malformed capture
+	}
+
+	type listener struct {
+		ListenerID string `json:"listener_id"`
+		Attention  struct {
+			Kind string `json:"kind"`
+		} `json:"attention"`
+		NameAssociations []struct{} `json:"name_associations"`
+		HeardWords       string     `json:"heard_words"`
+	}
+	listeners := make([]listener, 0, len(ids))
+	for _, id := range ids {
+		var l listener
+		l.ListenerID = id
+		l.Attention.Kind = "abstain"
+		l.NameAssociations = []struct{}{}
+		l.HeardWords = spoken
+		listeners = append(listeners, l)
+	}
+	out, _ := json.Marshal(struct {
+		SchemaVersion string     `json:"schema_version"`
+		Listeners     []listener `json:"listeners"`
+	}{SchemaVersion: "speech_perception/1", Listeners: listeners})
+	return string(out)
 }
 
 // jsonStr returns a JSON-quoted string literal.

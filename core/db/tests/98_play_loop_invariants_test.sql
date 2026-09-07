@@ -33,7 +33,7 @@ INSERT INTO state_mutation (world_id, event_id, entity_id, entity_kind, attribut
  ('11111111-1111-1111-1111-111111111111','e5000000-0000-0000-0000-0000000000c0','e5ffffff-0000-0000-0000-0000000000c1','artifact','attrs.connects',jsonb_build_array('e5ffffff-0000-0000-0000-000000000010','e5ffffff-0000-0000-0000-000000000011'),1050,2);
 
 SELECT apply_beat('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-  '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"the note"},
+  '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"the note","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"the note"}]}},
     {"type":"move","to":"e5ffffff-0000-0000-0000-000000000011"}]'::jsonb, 1100, 100, 'fast_path');
 
 -- I-1: replay rebuilds PROJECTIONS to the same domain state (the beat's move is replayed). Perceptions

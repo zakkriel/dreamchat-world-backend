@@ -54,8 +54,7 @@ type postCommitFn func(ctx context.Context, tx pgx.Tx, eventIDs []string) error
 func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID string, attempt Attempt, tick int64, seq int, postCommit postCommitFn, outcome *BeatOutcome, trace *BeatTrace) (eventIDs []string, seqAdvance int, halt string, err error) {
 	switch attempt.Type {
 	case "ActorMoved", "Communicated", "ObjectRelocated":
-		// Passthrough — the same routing runChain's Stage 3 uses for these three types, now inside a tx
-		// so postCommit's bookkeeping row lands with the commit or not at all.
+		// The same speech-aware commit helper shares this transaction with the bookkeeping row.
 		attemptJSON, marshalErr := json.Marshal(attempt)
 		if marshalErr != nil {
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: marshal attempt: %w", marshalErr)
@@ -64,7 +63,7 @@ func (o *Orchestrator) commitWorldPayload(ctx context.Context, worldID, actorID 
 		if beginErr != nil {
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: begin tx: %w", beginErr)
 		}
-		result, applyErr := applyEventOnQuerier(ctx, tx, worldID, actorID, attemptJSON, tick, seq)
+		result, applyErr := o.applyEventOnQuerier(ctx, tx, worldID, actorID, attemptJSON, tick, seq)
 		if applyErr != nil {
 			_ = tx.Rollback(ctx)
 			return nil, 1, "", fmt.Errorf("commitWorldPayload: apply_event: %w", applyErr)

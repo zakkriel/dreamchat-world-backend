@@ -81,6 +81,22 @@ const cognitionSpeechIsOwnAttemptMarker = "OWN Communicated attempt"
 // to prove the rule reaches the minds. Kept consistent with the referee's header (resolve.txt).
 const cognitionFactsRuleMarker = "COMPUTED FACTS ARE ENGINE TRUTH"
 
+// cognitionTrigger distinguishes WHY a cognition call is happening — the founder's explicit
+// pre-action/post-perception distinction (ADR-038 "Interruption order"), reusing the SAME prompt
+// layout and the SAME commit pipeline rather than a second cognition engine. Only the mutable
+// tail's IMMINENT rendering differs (buildCognitionPrompt's switch below).
+type cognitionTrigger int
+
+const (
+	// triggerPreAction is the existing world-first round: a mind decides before the player's
+	// attempt resolves. A Communicated imminent attempt renders as a bare speaking cue only —
+	// never its Stated/Content — because a mind cannot react to words it has not yet heard.
+	triggerPreAction cognitionTrigger = iota
+	// triggerPostPerception is the founder-approved round that follows a committed Communicated
+	// event: the mind reads its OWN accepted perception of what was actually said.
+	triggerPostPerception
+)
+
 // buildBatchPrompt renders the SHARED batch payload — one call for every NPC whose read of the
 // moment needs nothing beyond what everyone perceived.
 //
@@ -98,7 +114,7 @@ const cognitionFactsRuleMarker = "COMPUTED FACTS ARE ENGINE TRUTH"
 // the room sees the distances (perception-scoped only in that a closed container's contents stay
 // withheld). Rendered in the MUTABLE tail (it is per-action). Empty ⇒ omitted.
 func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
-	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent, factSheet, addressed)
+	return buildCognitionPrompt(scene, minds, nil, false, moment, imminentActor, imminent, factSheet, addressed, triggerPreAction)
 }
 
 // buildIsolatedPrompt renders one flagged NPC's ISOLATED payload: the same public frame plus her
@@ -107,12 +123,12 @@ func buildBatchPrompt(scene sceneInfo, minds []npcMind, moment []momentLine, imm
 // factSheet is THIS NPC's perception-scoped fact sheet — computed for HER as viewer (her spatial read of
 // the moment), not the player's — rendered in the MUTABLE tail. Empty ⇒ omitted.
 func buildIsolatedPrompt(scene sceneInfo, mind npcMind, private []privateLine, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
-	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent, factSheet, addressed)
+	return buildCognitionPrompt(scene, []npcMind{mind}, private, true, moment, imminentActor, imminent, factSheet, addressed, triggerPreAction)
 }
 
 // buildCognitionPrompt is the shared layout. isolated=true inserts the (3b) private block between
 // the minds and the public moment; the batch seat passes isolated=false and never carries it.
-func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string) string {
+func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLine, isolated bool, moment []momentLine, imminentActor string, imminent Attempt, factSheet, addressed string, trigger cognitionTrigger) string {
 	var sb strings.Builder
 	sb.WriteString(cognitionSystemHeader)
 
@@ -175,13 +191,27 @@ func buildCognitionPrompt(scene sceneInfo, minds []npcMind, private []privateLin
 		sb.WriteString("\nCOMPUTED FACTS (engine-computed truth about this moment — reason from these):\n")
 		sb.WriteString(factSheet)
 	}
-	sb.WriteString("\nIMMINENT: ")
-	sb.WriteString(imminentActor)
-	sb.WriteString(" is about to: ")
-	sb.WriteString(imminent.Stated)
-	attJSON, _ := json.Marshal(imminent)
-	sb.WriteString("\nATTEMPT: ")
-	sb.Write(attJSON)
+	switch {
+	case trigger == triggerPostPerception:
+		// Committed, holder-specific records, never an intention or another holder's version.
+		sb.WriteString("\nRECENT PERCEPTIONS (already happened; respond from your own knowledge):\n")
+		sb.WriteString(imminent.Content)
+	case imminent.Type == "Communicated":
+		sb.WriteString("\nIMMINENT: ")
+		sb.WriteString(imminentActor)
+		// ADR-038 "Interruption order": pre-action cognition sees ONLY a speaking cue for a
+		// Communicated attempt — never its Stated or Content, and never the raw ATTEMPT json (which
+		// would leak Content verbatim) — a mind cannot react to words it has not yet heard.
+		sb.WriteString(" is about to speak.")
+	default:
+		sb.WriteString("\nIMMINENT: ")
+		sb.WriteString(imminentActor)
+		sb.WriteString(" is about to: ")
+		sb.WriteString(imminent.Stated)
+		attJSON, _ := json.Marshal(imminent)
+		sb.WriteString("\nATTEMPT: ")
+		sb.Write(attJSON)
+	}
 	// ADDRESSED — who the player is speaking TO. The id was always here, buried in the ATTEMPT json as
 	// a bare uuid among nine other fields, with no rule attached to it. Live symptom, reported by the
 	// founder: "Mara, I want to rest here" bound listener_id to Mara correctly, and JONAS answered —

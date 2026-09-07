@@ -4,9 +4,10 @@ SELECT plan(6);
 -- A SAY event (private_disclosure) P→M with both at tavern; J elsewhere. generate_perceptions writes
 -- speaker 'shared' + listener 'told' (B-7), nothing for J. acquired_tick = event tick (I-9).
 INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
-                         status, accepted_at, visibility_scope, origin)
+                         status, accepted_at, visibility_scope, origin, payload)
 VALUES ('e5000000-0000-0000-0000-000000000020','11111111-1111-1111-1111-111111111111',
-        'private_disclosure','P tells M a secret',300,0,'accepted',now(),'private','fast_path');
+        'private_disclosure','P tells M a secret',300,0,'accepted',now(),'private','fast_path',
+        '{"speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","attention":{"kind":"abstain"},"name_associations":[],"heard_words":""}]}}'::jsonb);
 INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier) VALUES
  ('e5000000-0000-0000-0000-000000000020','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa','actor','speaker'),
  ('e5000000-0000-0000-0000-000000000020','bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb','actor','listener');

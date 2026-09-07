@@ -1,5 +1,5 @@
 BEGIN;
-SELECT plan(9);
+SELECT plan(12);
 
 -- The mechanical cognition lookups (RULINGS-2026-07-23 §5-§6): public moment (modal face),
 -- isolation split, private records. Fresh, self-contained fixture in its own world (d7070000-
@@ -232,6 +232,66 @@ SELECT results_eq(
      FROM generate_series(801,820) AS t
      ORDER BY t ASC $$,
   '(i) freshest-20 cap: oldest tick (800) excluded, remaining 20 presented ascending starting at the second-oldest tick (801)');
+
+-- ---------------------------------------------------------------------------------------------
+-- (j) Speech-source unanimity (shared speech migration fix pass). A receiver-variant Communicated
+-- event where present holders P and M hold GENUINELY DIFFERENT content must never be treated as a
+-- shared/public moment, even though every present id technically holds a perception of it — the
+-- old modal-majority rule would have let whichever content happened to be more common (trivial with
+-- only two holders, but real with three or more) stand in for "what was publicly said", which is
+-- exactly the receiver-variant leak this closes. Speech sources (Communicated/private_disclosure)
+-- now require every present holder to hold the SAME content to count as shared at all; anything
+-- else stays private to each holder. Non-speech keeps the modal rule unchanged — case (b) above,
+-- 'observation', is that regression and it still passes.
+INSERT INTO entity_registry (entity_id, world_id, entity_kind, canonical_name) VALUES
+ ('d7070000-0000-0000-0000-000000000008','d7070000-ffff-0000-0000-000000000000','actor','test-Ren-107-action');
+
+INSERT INTO canon_event (event_id, world_id, event_type, summary, in_world_tick, beat_seq,
+                         status, accepted_at, visibility_scope, origin) VALUES
+ ('d7070000-0000-0000-0000-0000000000e5','d7070000-ffff-0000-0000-000000000000','Communicated','Ren is mentioned to both P and M',750,0,'accepted',now(),'private','fast_path');
+
+-- P and M each hold a genuinely different perceived account of the SAME speech event (a receiver
+-- variant, or two independently-judged heard_words) — never unanimous, so it must not be "shared".
+INSERT INTO perception_record (perception_id, world_id, holder_id, source_event_id, content, epistemic_type, acquired_tick, valid_tick) VALUES
+ ('d7070000-0000-0001-0000-0000000000e5','d7070000-ffff-0000-0000-000000000000','d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-0000000000e5','Ren says the ship sails at dawn.','told',750,750),
+ ('d7070000-0000-0002-0000-0000000000e5','d7070000-ffff-0000-0000-000000000000','d7070000-0000-0000-0000-000000000002','d7070000-0000-0000-0000-0000000000e5','Ren mutters something about the tide.','told',750,750);
+
+INSERT INTO perception_subject (perception_id, entity_id, world_id) VALUES
+ ('d7070000-0000-0001-0000-0000000000e5','d7070000-0000-0000-0000-000000000008','d7070000-ffff-0000-0000-000000000000'),
+ ('d7070000-0000-0002-0000-0000000000e5','d7070000-0000-0000-0000-000000000008','d7070000-ffff-0000-0000-000000000000');
+
+SELECT ok(
+  NOT EXISTS (SELECT 1 FROM fn_public_moment(
+            'd7070000-ffff-0000-0000-000000000000',
+            ARRAY['d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-000000000002']::uuid[],
+            10)
+          WHERE source_event_id = 'd7070000-0000-0000-0000-0000000000e5'),
+  '(j) a speech event with two DIFFERENT held contents never appears in the public moment — no majority stand-in'
+);
+
+SELECT set_eq(
+  $$ SELECT actor_id FROM fn_isolated_npcs(
+       'd7070000-ffff-0000-0000-000000000000',
+       ARRAY['d7070000-0000-0000-0000-000000000008']::uuid[],
+       ARRAY['d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-000000000002']::uuid[],
+       ARRAY['d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-000000000002']::uuid[]) $$,
+  $$ VALUES ('d7070000-0000-0000-0000-000000000001'::uuid), ('d7070000-0000-0000-0000-000000000002'::uuid) $$,
+  '(k) BOTH holders isolate for the speech subject — neither variant is folded into a shared batch face'
+);
+
+SELECT ok(
+  EXISTS (SELECT 1 FROM fn_private_records(
+       'd7070000-ffff-0000-0000-000000000000','d7070000-0000-0000-0000-000000000001',
+       ARRAY['d7070000-0000-0000-0000-000000000008']::uuid[],
+       ARRAY['d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-000000000002']::uuid[])
+       WHERE content = 'Ren says the ship sails at dawn.')
+  AND EXISTS (SELECT 1 FROM fn_private_records(
+       'd7070000-ffff-0000-0000-000000000000','d7070000-0000-0000-0000-000000000002',
+       ARRAY['d7070000-0000-0000-0000-000000000008']::uuid[],
+       ARRAY['d7070000-0000-0000-0000-000000000001','d7070000-0000-0000-0000-000000000002']::uuid[])
+       WHERE content = 'Ren mutters something about the tide.'),
+  '(l) each holder''s own divergent account is HER private record — never the other''s, never a merged one'
+);
 
 SELECT * FROM finish();
 ROLLBACK;

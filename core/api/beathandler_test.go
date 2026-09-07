@@ -514,3 +514,81 @@ func TestBeat_OutOfVocabularyRejectedByBelt(t *testing.T) {
 		t.Fatalf("canon grew %d→%d — an out-of-vocabulary chain reached the world", before, after)
 	}
 }
+
+// speechTexts now reads fn_perceived_speech (perception_record.spoken — the per-holder heard words
+// the shared speech-perception application records for THIS viewer) rather than
+// canon_event.payload->>'spoken' (the single canonical utterance every listener used to be handed
+// regardless of what they actually perceived). Perception rows are inserted directly here, not
+// through generate_perceptions/apply_event — this pins the READ-side contract only; the write side
+// (attention/heard_words judgment application) belongs to the runtime/database owners.
+func TestBeatHandler_SpeechTexts_ReadsPerHolderHeardWords(t *testing.T) {
+	pool := testPool(t)
+	defer pool.Close()
+	ctx := context.Background()
+	h := &beatHandler{pool: pool}
+
+	var wID, viewer, speaker string
+	if err := pool.QueryRow(ctx,
+		`SELECT gen_random_uuid(), gen_random_uuid(), gen_random_uuid()`,
+	).Scan(&wID, &viewer, &speaker); err != nil {
+		t.Fatalf("mint ids: %v", err)
+	}
+
+	newEvent := func(tick int64, canonSpoken string) string {
+		t.Helper()
+		var eventID string
+		if err := pool.QueryRow(ctx,
+			`INSERT INTO canon_event (world_id, event_type, summary, in_world_tick, beat_seq, status, origin, payload)
+			 VALUES ($1, 'Communicated', 'She says something.', $2, 0, 'accepted', 'freeform',
+			         jsonb_build_object('spoken', $3::text))
+			 RETURNING event_id::text`, wID, tick, canonSpoken).Scan(&eventID); err != nil {
+			t.Fatalf("insert event: %v", err)
+		}
+		if _, err := pool.Exec(ctx,
+			`INSERT INTO event_participant (event_id, entity_id, entity_kind, role_qualifier)
+			 VALUES ($1::uuid, $2::uuid, 'actor', 'speaker'), ($1::uuid, $3::uuid, 'actor', 'listener')`,
+			eventID, speaker, viewer); err != nil {
+			t.Fatalf("insert participants: %v", err)
+		}
+		return eventID
+	}
+
+	// Heard: this viewer's OWN recorded words, deliberately different from the canonical payload —
+	// this fails if speechTexts ever falls back to canon truth instead of what this holder perceived.
+	heardEvent := newEvent(900, "a name only canon knows")
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO perception_record
+		   (world_id, holder_id, source_event_id, content, epistemic_type, acquired_tick, valid_tick, spoken)
+		 VALUES ($1, $2, $3::uuid, 'she says something about a ledger', 'told', 900, 900,
+		         'the ledger is not yours')`,
+		wID, viewer, heardEvent); err != nil {
+		t.Fatalf("insert heard perception: %v", err)
+	}
+
+	// Missed/unrecoverable: no spoken words recorded for this holder at all.
+	missedEvent := newEvent(901, "a second name only canon knows")
+	if _, err := pool.Exec(ctx,
+		`INSERT INTO perception_record
+		   (world_id, holder_id, source_event_id, content, epistemic_type, acquired_tick, valid_tick)
+		 VALUES ($1, $2, $3::uuid, 'she says something, too far to make out', 'told', 901, 901)`,
+		wID, viewer, missedEvent); err != nil {
+		t.Fatalf("insert missed perception: %v", err)
+	}
+
+	got, err := h.speechTexts(ctx, wID, viewer, 0)
+	if err != nil {
+		t.Fatalf("speechTexts: %v", err)
+	}
+	texts := got[speaker]
+	if len(texts) != 1 || texts[0] != "the ledger is not yours" {
+		t.Fatalf("speechTexts[speaker] = %v, want exactly [%q] — either the wrong column backed it, canon truth leaked through, or the unheard row was not silently skipped",
+			texts, "the ledger is not yours")
+	}
+
+	// sinceTick still excludes what came before it — unchanged v1 recency contract.
+	if got2, err := h.speechTexts(ctx, wID, viewer, 901); err != nil {
+		t.Fatalf("speechTexts (sinceTick): %v", err)
+	} else if len(got2[speaker]) != 0 {
+		t.Fatalf("speechTexts ignored sinceTick — got %v at sinceTick=901", got2[speaker])
+	}
+}

@@ -37,6 +37,6 @@ holds how it is built.
   (`tech.md` §Open questions 1). An agent needing the distinction is deciding something new.
 - **No module seam.** A module may propose, never write (`D-1`, `workspace:ADR-W005`) — but module
   architecture is B3 and does not exist. Do not improvise a plugin API here.
-- **No autonomous cognition engine.** `SPEC-012` is deferred; NPC minds act only inside the beat's
-  one-call-per-action flow (`B-11`). A scheduler feeding NPC turns outside a beat has no seam to
-  plug into, on purpose.
+- **No autonomous cognition engine.** `SPEC-012` is deferred; NPC minds act only inside a beat
+  (`B-11`). Speech retains a pre-action cue and adds a response from committed perceptions
+  (`ADR-038`); neither starts a scheduler outside the beat.

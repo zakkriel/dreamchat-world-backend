@@ -123,6 +123,11 @@ type Attempt struct {
 	// Sustain is the "until/for <condition>" parse-shape (design §4.4, R13) carried by non-move
 	// attempts only — a move's length is physics, never a stated span. See type Sustain.
 	Sustain *Sustain `json:"sustain,omitempty"`
+	// SpeechPerception is the accepted speech_perception/1 judgment (speechperception.go), attached
+	// by the commit path — never by decompose/cognition — for a Communicated attempt only, right
+	// before it is marshaled for apply_event. ADR-038: every visible Communicated commit carries one;
+	// never populated by anything upstream of that attach point.
+	SpeechPerception json.RawMessage `json:"speech_perception,omitempty"`
 }
 
 // DecodeAndValidateChainV2 is the belt behind the leash: valid JSON, every

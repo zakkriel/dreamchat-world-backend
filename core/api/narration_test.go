@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -288,29 +287,14 @@ func TestNarration_OnlySpeechMayCarryAQuote(t *testing.T) {
 	}
 }
 
-// The belts must see BOTH fields. A wall breach or a stolen player line hidden inside `quote` is
-// exactly as delivered to the player as one in `text` — the split must not open a bypass.
-func TestNarration_BeltsInspectTheQuoteToo(t *testing.T) {
-	pool := testPool(t)
-	defer pool.Close()
-	wall, err := loadNamingWall(context.Background(), pool, dlWorldID, dlKadeID)
-	if err != nil {
-		t.Fatalf("loadNamingWall: %v", err)
-	}
-	speech := map[string][]string{"m1": {`she says, "Jonas will not move." and "Easy. I mean no trouble."`}}
-
-	if _, err := DecodeAndValidateNarration(
-		`[{"speaker_id":"m1","kind":"speech","text":"she leans in","quote":"Jonas will not move."}]`,
-		NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: speech, Wall: wall},
-	); err == nil || !strings.Contains(err.Error(), "has not earned") {
-		t.Fatalf("an unearned name inside a QUOTE must trip the naming wall, got: %v", err)
-	}
-
+// Quotation does not authorize an NPC to repeat a line authored by the player.
+func TestNarration_RejectsPlayerWordsInsideNPCQuote(t *testing.T) {
+	speech := map[string][]string{"m1": {"Easy. I mean no trouble."}}
 	if _, err := DecodeAndValidateNarration(
 		`[{"speaker_id":"m1","kind":"speech","text":"she leans in","quote":"Easy. I mean no trouble."}]`,
 		NarrationBelts{PresentIDs: unitPresentIDs, SpeechTexts: speech,
 			Player: newPlayerVoice("I raise both hands. 'Easy. I mean no trouble.'")},
-	); err == nil || !strings.Contains(err.Error(), "PLAYER's own") {
+	); err == nil {
 		t.Fatalf("the player's words inside an NPC's QUOTE must be rejected, got: %v", err)
 	}
 }

@@ -85,6 +85,9 @@ perception
   core/api/indexhandler*
   core/api/namingwall*
   core/api/pagehandler*
+  core/api/speechperception*
+  core/api/prompts/speech_perception.txt
+  core/api/schema/speech_perception*
   core/api/schema/actor_page*
   core/api/schema/artifact_page*
   core/api/schema/carrying*
@@ -100,6 +103,8 @@ perception
   core/db/tests/121_name_token_wall*
   core/db/tests/122_object_relocated_perceptions*
   core/db/tests/123_object_relocated_witnesses*
+  core/db/tests/124_speech_perception*
+  core/db/tests/125_speech_perception_facts*
   core/db/tests/16_chunk4_seed*
   core/db/tests/17_entity_visible*
   core/db/tests/18_compendium_index*

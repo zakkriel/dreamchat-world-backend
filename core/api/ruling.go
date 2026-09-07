@@ -105,6 +105,11 @@ type RuledEventV2 struct {
 	Descriptor    string          `json:"descriptor,omitempty"`
 	CanonicalName string          `json:"canonical_name,omitempty"` // display name; falls back to descriptor
 	NewAttrs      json.RawMessage `json:"new_attrs,omitempty"`
+	// SpeechPerception is the accepted speech_perception/1 judgment (speechperception.go), attached
+	// inside commitRulingTx for a Communicated event only, right before it is marshaled for
+	// apply_ruled_event. ADR-038: absent exactly when the event is Communicated and visible:false
+	// (hidden speech skips the model); every OTHER visible Communicated event carries one.
+	SpeechPerception json.RawMessage `json:"speech_perception,omitempty"`
 }
 
 // entityKindSet is the closed set of instance kinds an EntityCreated may mint — exactly the kinds

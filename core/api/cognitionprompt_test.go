@@ -104,27 +104,3 @@ func TestBuildBatchPrompt_NameOnlyMind(t *testing.T) {
 		t.Fatalf("name-only mind must NOT render a malleability line")
 	}
 }
-
-// (d) The imminent attempt is the LAST section (the mutable tail): every earlier marker
-// precedes it, and the stated wind-up + the attempt JSON + DECIDE FOR ride at the very end.
-func TestBuildBatchPrompt_ImminentIsLast(t *testing.T) {
-	minds := []npcMind{{ID: jonasID, Name: "Jonas", Traits: json.RawMessage(`{"wary":0.7}`), Malleability: 0.4}}
-	moment := []momentLine{{Content: "a torch flares in the doorway", Tick: 700}}
-	imm := sampleImminent()
-	p := buildBatchPrompt(sampleScene(), minds, moment, "Player", imm, "", "")
-
-	for _, earlier := range []string{"SCENE", "THE MINDS YOU SPEAK FOR", "PUBLIC MOMENT"} {
-		assertOrder(t, p, earlier, "IMMINENT:")
-	}
-	// The wind-up stated text and the attempt JSON both live in the tail (after IMMINENT).
-	assertOrder(t, p, "IMMINENT:", imm.Stated)
-	assertOrder(t, p, "IMMINENT:", "DECIDE FOR:")
-	// The DECIDE FOR line closes the prompt (nothing structural follows the mutable tail).
-	tail := p[strings.Index(p, "DECIDE FOR:"):]
-	if strings.Contains(tail, "SCENE") || strings.Contains(tail, "PUBLIC MOMENT") {
-		t.Fatalf("no section may follow the mutable tail; DECIDE FOR closes the prompt")
-	}
-	if !strings.Contains(tail, jonasID) {
-		t.Fatalf("DECIDE FOR must list the decided-for id(s)")
-	}
-}

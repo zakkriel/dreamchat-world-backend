@@ -3,15 +3,22 @@
 -- Before this, canon_event.payload was {} for every Communicated event and the summary was the
 -- referee's ACCOUNT of the utterance. The world knew someone spoke and never what they said, so every
 -- speech segment the narrator wrote was refused as unverifiable and kind:"speech" was unreachable.
+--
+-- Since the shared speech perception migration, every visible Communicated apply_event call also
+-- requires an already-judged `speech_perception` object (missing/malformed -> gate_reject, never a
+-- runtime fallback) — see 124_speech_perception_test.sql for that contract's own coverage. This file
+-- stays focused on its original concern: payload.spoken persistence, the listener actually receiving
+-- the verbatim words, and the naming wall's account-level rendering being unaffected by any of it.
 BEGIN;
-SELECT plan(7);
+SELECT plan(6);
 
 \set w '22222222-2222-2222-2222-222222222222'
 \set kade '2ac70000-0000-0000-0000-0000000000a1'
 \set mara '2ac70000-0000-0000-0000-0000000000a2'
 \set jonas '2ac70000-0000-0000-0000-0000000000a3'
 
--- Mara speaks to Kade. `stated` is the account; `content` is the utterance.
+-- Mara speaks to Kade. `stated` is the account; `content` is the utterance. Kade's judgment: attended,
+-- no name association (nobody is named in the words), heard the words verbatim.
 SELECT apply_event(
   :'w'::uuid,
   :'mara'::uuid,
@@ -19,7 +26,16 @@ SELECT apply_event(
     'type', 'Communicated',
     'stated', 'Mara answers the stranger with a dry remark',
     'listener_id', :'kade',
-    'content', 'You are at my bar, not in his way.'),
+    'content', 'You are at my bar, not in his way.',
+    'speech_perception', jsonb_build_object(
+      'schema_version', 'speech_perception/1',
+      'listeners', jsonb_build_array(jsonb_build_object(
+        'listener_id', :'kade',
+        'attention', jsonb_build_object('kind', 'abstain'),
+        'name_associations', '[]'::jsonb,
+        'heard_words', 'You are at my bar, not in his way.'
+      ))
+    )),
   800, 0, 'freeform'
 ) INTO TEMP applied;
 
@@ -46,19 +62,30 @@ SELECT ok(
   '(c) the listener''s perception carries the spoken words, not just the account'
 );
 
--- (d) ...and still through the naming wall, per holder. The hooded woman did not hear this at all.
+-- (d) ...and still through the naming wall, per holder. The hooded woman was never a candidate in
+--     this judgment at all (absent from speech_perception.listeners) — she perceives nothing.
 SELECT is(
   (SELECT count(*) FROM perception_record
     WHERE world_id = :'w'::uuid AND holder_id = '2ac70000-0000-0000-0000-0000000000a4' AND acquired_tick = 800),
   0::bigint,
-  '(d) someone who was not addressed perceives nothing — the fan-out still decides who heard it'
+  '(d) someone who was not a judged candidate perceives nothing — the fan-out still decides who heard it'
 );
 
 -- (e) an utterance with no words recorded backs no quote: the honest answer is "nobody knows what was
---     said", never a paraphrase promoted to dialogue
+--     said", never a paraphrase promoted to dialogue. Kade is still attended (he heard SOMETHING, a
+--     mutter) but heard_words is empty — there is nothing to quote.
 SELECT apply_event(
   :'w'::uuid, :'mara'::uuid,
-  jsonb_build_object('type','Communicated','stated','Mara mutters something','listener_id', :'kade'),
+  jsonb_build_object('type','Communicated','stated','Mara mutters something','listener_id', :'kade',
+    'speech_perception', jsonb_build_object(
+      'schema_version', 'speech_perception/1',
+      'listeners', jsonb_build_array(jsonb_build_object(
+        'listener_id', :'kade',
+        'attention', jsonb_build_object('kind', 'abstain'),
+        'name_associations', '[]'::jsonb,
+        'heard_words', ''
+      ))
+    )),
   801, 0, 'freeform'
 ) INTO TEMP applied2;
 
@@ -74,18 +101,9 @@ SELECT is(
   '(f) ...and its perception is the bare account, with no invented quotation'
 );
 
--- (g) SPEC-033 now reads what was SAID: a name spoken aloud is exactly the case the founder ruled on.
-SELECT apply_event(
-  :'w'::uuid, :'mara'::uuid,
-  jsonb_build_object('type','Communicated','stated','Mara names the man at the bar',
-                     'listener_id', :'kade', 'content','That is Jonas, and he is not moving.'),
-  802, 0, 'freeform'
-) INTO TEMP applied3;
-
-SELECT is(
-  fn_display_name(:'w'::uuid, :'kade'::uuid, :'jonas'::uuid), 'Jonas',
-  '(g) hearing the name INSIDE the spoken words teaches it — the ruling''s central case'
-);
+-- Recognized-actor-teaches-a-name coverage (the model-driven replacement for the old regex scanner)
+-- lives in 124_speech_perception_test.sql, which exercises it directly against name_knowledge and
+-- fn_display_name rather than duplicating it here.
 
 SELECT * FROM finish();
 ROLLBACK;

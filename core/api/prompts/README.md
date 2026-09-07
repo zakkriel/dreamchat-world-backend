@@ -47,6 +47,9 @@ each var's declaration) and is byte-identical to the const it replaced.
 - `resolve.txt` — the resolve (referee) seat. Injected as the STABLE HEADER (prompt-prefix) at the
   top of `buildResolvePrompt` (`resolveprompt.go`), before the FACTS/ATTEMPT(S)/PLAYER ANSWER/repair
   sections.
+- `speech_perception.txt` — a specialized task for the existing resolve driver, not a new seat.
+  `buildSpeechPerceptionPrompt` supplies final speech and holder-specific database facts; the
+  result distinguishes attention, heard words, and name ownership (`ADR-038`).
 - `world_actor.txt` — the world_actor seat (Living World / Task 8, the station's only LLM boundary).
   Injected as the STABLE HEADER (prompt-prefix) at the top of `buildWorldActorPrompt`
   (`worldactorprompt.go`), before the WORLD/CURRENT SCENE/DRAWN SIZE sections. World-omniscient,

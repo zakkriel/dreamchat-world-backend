@@ -86,6 +86,20 @@ artifact). Not built yet: no positions, no grade, nobody holds a concept yet —
 
 ---
 
+## Speech perception and response
+
+`speechperception.go` supplies database facts to the existing resolve driver using
+`prompts/speech_perception.txt` and `schema/speech_perception.v1.schema.json`; it is not a new seat.
+Both ordinary and ruled speech call SQL `fn_apply_speech_perception` inside their commit.
+Heard words live per holder. An explicit owner actor gains sourced name knowledge and a subject
+link; its description is retained independently, even alongside recognition. Related actor IDs add
+subject links only, never a guessed owner. `fn_perceived_speech` supplies quote evidence and
+`fn_unheard_names` supplies the output word guard (`ADR-038`).
+
+The common cognition engine preserves pre-speech interruption using only a speaking cue, then
+responds to committed holder-specific records without recursively reacting to its own reply.
+No non-speech attention system, concealment mechanic, or frontend contract change is included.
+
 ## 3. The art pipeline
 
 ```mermaid
@@ -136,7 +150,7 @@ There are exactly two kinds, and both are enumerated.
 
 | Surface | Where | Count |
 |---|---|---|
-| Seat rulebooks | `core/api/prompts/*.txt`, `//go:embed` into each builder | 9 seats + `system-anthropic.txt` |
+| Seat rulebooks and specialized tasks | `core/api/prompts/*.txt`, `//go:embed` into each builder | Enumerated in `prompts/README.md`; speech perception uses resolve, not an additional seat |
 | The image style | `core/api/artstyle.go` — look + latitude + negatives | 1 module |
 
 `system-anthropic.txt` is a driver-level system injection, not a D-13 seat (see `prompts/README.md`).

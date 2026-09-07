@@ -46,8 +46,8 @@ INSERT INTO artifact_state (entity_id, world_id, attrs) VALUES
 -- HALT WAY 1 — gate-reject: [say to Mara (ok), say to Jonas (Jonas not co-present → reject), move].
 -- Expect: step 1 commits; step 2 rejected pre-apply; step 3 never runs.
 SELECT is( (apply_beat('11111111-1111-1111-1111-111111111111','aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa',
-            '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"hi Mara"},
-              {"type":"say","listener":"cccccccc-cccc-cccc-cccc-cccccccccccc","content":"hi Jonas"},
+            '[{"type":"say","listener":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","content":"hi Mara","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"hi Mara"}]}},
+              {"type":"say","listener":"cccccccc-cccc-cccc-cccc-cccccccccccc","content":"hi Jonas","speech_perception":{"schema_version":"speech_perception/1","listeners":[{"listener_id":"cccccccc-cccc-cccc-cccc-cccccccccccc","attention":{"kind":"abstain"},"name_associations":[],"heard_words":"hi Jonas"}]}},
               {"type":"move","to":"e5ffffff-0000-0000-0000-000000000011"}]'::jsonb, 700, 100, 'fast_path') ->> 'halt_reason'),
            'gate_reject', 'chain halts pre-apply on the impossible SAY');
 SELECT is( (SELECT count(*) FROM canon_event WHERE in_world_tick>=700 AND in_world_tick<800)::int,

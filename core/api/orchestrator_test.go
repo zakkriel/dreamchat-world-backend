@@ -352,16 +352,18 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 	if outcome.HaltReason != "completed" {
 		t.Fatalf("halt_reason = %q, want %q", outcome.HaltReason, "completed")
 	}
-	if len(outcome.Committed) != 2 {
-		t.Fatalf("expected 2 committed events (NPC + player), got %d: %v", len(outcome.Committed), outcome.Committed)
+	// This driver speaks both before and after the player's words. No third cognition round
+	// may respond to its own reply.
+	if len(outcome.Committed) != 3 {
+		t.Fatalf("expected pre-speech NPC, player, and post-speech NPC events, got %d: %v", len(outcome.Committed), outcome.Committed)
 	}
 
-	// Assert (in_world_tick, beat_seq) pairs are DISTINCT for both committed events.
+	// Every committed event must have its own (tick, sequence).
 	type tickSeq struct {
 		tick int64
 		seq  int
 	}
-	pairs := make([]tickSeq, 0, 2)
+	seen := make(map[tickSeq]bool)
 	for _, evID := range outcome.Committed {
 		var ts tickSeq
 		if err := pool.QueryRow(ctx,
@@ -369,11 +371,10 @@ func TestRunBeatNPCCommitDistinctSeq(t *testing.T) {
 			evID).Scan(&ts.tick, &ts.seq); err != nil {
 			t.Fatalf("query canon_event %s: %v", evID, err)
 		}
-		pairs = append(pairs, ts)
-	}
-	if pairs[0] == pairs[1] {
-		t.Fatalf("seq collision: both events at tick=%d seq=%d — NPC commit must advance curSeq",
-			pairs[0].tick, pairs[0].seq)
+		if seen[ts] {
+			t.Fatalf("seq collision at tick=%d seq=%d", ts.tick, ts.seq)
+		}
+		seen[ts] = true
 	}
 
 	perceptionSubjectBackfill(t, ctx, pool, int(baseTick))
@@ -494,6 +495,9 @@ func (f *inlineRulingResolveDriver) Capabilities() CapabilitySet {
 func (f *inlineRulingResolveDriver) Generate(_ context.Context, req GenRequest) (string, error) {
 	if req.Schema == nil {
 		return "", fmt.Errorf("inline-ruling-resolve: used without schema")
+	}
+	if isSpeechPerceptionSchema(req.Schema) {
+		return fakeSpeechPerceptionReply(req.Prompt), nil
 	}
 	return f.json, nil
 }

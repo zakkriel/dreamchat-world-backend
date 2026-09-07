@@ -403,9 +403,18 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 				// The clock advanced to a fresh tick — seq restarts at 0.
 				curSeq = 0
 			} else {
-				// Zero-duration (same-location) move: the tick did NOT advance, so seq must keep
-				// incrementing or the next event collides with the move on (tick,seq).
 				curSeq++
+			}
+			speechHeld := false
+			if evID != "" && attempt.Type == "Communicated" {
+				response, err := o.postCommittedCognition(ctx, worldID, actorID, []string{evID}, curTick, curSeq, trace)
+				if err != nil {
+					return fmt.Errorf("post-speech cognition: %w", err)
+				}
+				curSeq += response.SeqAdvance
+				outcome.Committed = append(outcome.Committed, response.Committed...)
+				outcome.Telegraphs = append(outcome.Telegraphs, response.TelegraphedStated...)
+				speechHeld = response.HeldWritten
 			}
 
 			// Living World / Task 9: the world's turn — fires due scheduled events, then (if nothing
@@ -424,6 +433,11 @@ func (o *Orchestrator) runChain(ctx context.Context, worldID, actorID string, ch
 			curSeq = newSeq
 			if cutBeat {
 				outcome.HaltReason = "world_eruption"
+				outcome.TicksAdvanced = curTick - startTick
+				return nil
+			}
+			if speechHeld {
+				outcome.HaltReason = "telegraph"
 				outcome.TicksAdvanced = curTick - startTick
 				return nil
 			}
@@ -709,6 +723,19 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 		return outcome, nil
 	}
 
+	// React to the committed outcome, not the original intention that the ruling may have changed.
+	response, err := o.postCommittedCognition(ctx, worldID, playerID, ar.Committed, startTick, ar.SeqAdvance, trace)
+	if err != nil {
+		return outcome, err
+	}
+	ar.SeqAdvance += response.SeqAdvance
+	outcome.Committed = append(outcome.Committed, response.Committed...)
+	outcome.Telegraphs = append(outcome.Telegraphs, response.TelegraphedStated...)
+	if response.HeldWritten {
+		outcome.HaltReason = "telegraph"
+		return outcome, nil
+	}
+
 	// (3) The remainder runs as a normal chain against the post-collision world — under the same §6
 	// beat budget, read from the scene's current tension at the reaction player's location. The
 	// combined ruling advanced seq only (tick unchanged), so the remainder shares the beat's budget.
@@ -721,41 +748,6 @@ func (o *Orchestrator) RunReactionBeat(ctx context.Context, worldID, playerID st
 			return outcome, err
 		}
 		return outcome, nil
-	}
-
-	// (4) THE WORLD'S TURN — the piece that was missing.
-	//
-	// Reported from live play: "Mara, I want to rest here" bound Mara as the listener, and Mara never
-	// answered. Not silence-in-character — she was never ASKED. This path runs when a held telegraph is
-	// pending, and it went ruling → return, so no cognition seat ran for anybody: no batch call, no
-	// ADDRESSED line, no decision for any NPC. The only NPC motion the player saw was the held act
-	// resolving (canon tick 69 seq 0: the muscle's wind-up from the previous beat landing), which reads
-	// exactly like the world ignoring him. #83 fixed who answers when the world gets a turn; it could
-	// not help in a beat that never took one.
-	//
-	// AFTER the ruling, not before, and that ordering is the doctrine rather than convenience: the
-	// world moves FIRST in an ordinary beat because the player's act is still imminent (§ world-first).
-	// Here the world already moved — that is what the held act IS — and the ruling has just resolved the
-	// collision. Reacting again beforehand would be a second pre-emption of the same moment.
-	//
-	// Only the single-attempt shape needs this: a remainder chain (len(chain) > 1) is handled above by
-	// runChain, which runs worldFirst per attempt. The empty-chain branch (the player answered without
-	// acting) is deliberately left alone — there is no attempt for the seats to read as IMMINENT, and
-	// inventing one would put words in his mouth.
-	if len(chain) == 1 {
-		wf, wfErr := o.worldFirst(ctx, worldID, playerID, chain[0], startTick, ar.SeqAdvance, trace)
-		if wfErr != nil {
-			return outcome, fmt.Errorf("reaction worldFirst: %w", wfErr)
-		}
-		outcome.Committed = append(outcome.Committed, wf.Committed...)
-		outcome.Telegraphs = append(outcome.Telegraphs, wf.TelegraphedStated...)
-		// A fresh telegraph legally ends the reaction beat on its own wind-up, exactly as it does in
-		// the ordinary path (RULINGS-2026-07-24 §1, §3).
-		if wf.HeldWritten {
-			outcome.HaltReason = "telegraph"
-			outcome.TicksAdvanced = 0
-			return outcome, nil
-		}
 	}
 
 	outcome.HaltReason = "completed"
@@ -819,10 +811,19 @@ func addressedLabel(a Attempt, labels map[string]string, present []string) strin
 }
 
 func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string, attempt Attempt, tick int64, seq int, trace *BeatTrace) (worldFirstResult, error) {
+	if attempt.Type == "Communicated" {
+		attempt = Attempt{Type: "Communicated"}
+	}
+	return o.runCognition(ctx, worldID, playerID, playerID, attempt, nil, tick, seq, trace)
+}
+
+// Pre-action cues and post-perception responses share the same split, prompts and commit machinery.
+// A non-nil perceived map restricts this round to holders of the committed speech.
+func (o *Orchestrator) runCognition(ctx context.Context, worldID, playerID, speakerID string, attempt Attempt, perceived map[string]cognitionPerception, tick int64, seq int, trace *BeatTrace) (worldFirstResult, error) {
 	var res worldFirstResult
 
-	// present roster on the player's location; npcs = present − player.
-	loc, err := o.actorLocation(ctx, worldID, playerID)
+	// The source actor anchors the scene; only the player is excluded from authored decisions.
+	loc, err := o.actorLocation(ctx, worldID, speakerID)
 	if err != nil {
 		return res, fmt.Errorf("player location: %w", err)
 	}
@@ -832,7 +833,8 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	}
 	npcs := make([]string, 0, len(present))
 	for _, id := range present {
-		if id != playerID {
+		_, heard := perceived[id]
+		if id != playerID && (perceived == nil || heard) {
 			npcs = append(npcs, id)
 		}
 	}
@@ -844,6 +846,9 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	// action ids = the attempt's bound ids + the player. The isolation lookup intersects these
 	// with each NPC's private about-ness links, one hop (RULINGS-2026-07-23 §5).
 	actionIDs := append(o.collectParticipantIDs(attempt), playerID)
+	if speakerID != playerID {
+		actionIDs = append(actionIDs, speakerID)
+	}
 
 	// THE ROSTER IS THE NPCs, NOT THE ROOM — this one argument decides whether the batch path can ever
 	// fire. Both fn_isolated_npcs and fn_public_moment call a record "shared" only when EVERY holder in
@@ -856,9 +861,25 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	// Shared-among-the-minds-we-are-batching is what the §5 invariant actually requires: a record every
 	// batch mind already holds is not a secret from any of them, and the prompt still carries nothing
 	// else. The player is not a reader of this prompt and never was.
-	isolated, err := o.isolatedNPCs(ctx, worldID, actionIDs, npcs, npcs)
-	if err != nil {
-		return res, fmt.Errorf("fn_isolated_npcs: %w", err)
+	var isolated []string
+	var privateByNPC map[string][]privateLine
+	if perceived == nil {
+		isolated, err = o.isolatedNPCs(ctx, worldID, actionIDs, npcs, npcs)
+		if err != nil {
+			return res, fmt.Errorf("fn_isolated_npcs: %w", err)
+		}
+	} else {
+		privateByNPC = make(map[string][]privateLine, len(npcs))
+		for _, id := range npcs {
+			private, err := o.privateRecords(ctx, worldID, id, perceived[id].SubjectIDs, npcs)
+			if err != nil {
+				return res, fmt.Errorf("fn_private_records %s: %w", id, err)
+			}
+			privateByNPC[id] = private
+			if len(private) > 0 {
+				isolated = append(isolated, id)
+			}
+		}
 	}
 	isoSet := make(map[string]bool, len(isolated))
 	for _, id := range isolated {
@@ -872,6 +893,30 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 	}
 	sort.Strings(batchIDs) // stable, cache-native DECIDE FOR list
 	sort.Strings(isolated) // isolated NPCs processed by uuid asc (deterministic intra-tick order)
+	trigger := triggerPreAction
+	var sheets map[string]string
+	if perceived != nil {
+		trigger = triggerPostPerception
+		sheets = make(map[string]string, len(batchIDs))
+		// Batch only genuinely identical heard accounts and viewer-scoped physical facts.
+		// Different readings remain isolated; no majority listener speaks for another.
+		same := true
+		for i, id := range batchIDs {
+			sheet, err := o.factSheetJSON(ctx, worldID, id, perceived[id].SubjectIDs, false)
+			if err != nil {
+				return res, err
+			}
+			sheets[id] = sheet
+			if i > 0 && (perceived[id].Content != perceived[batchIDs[0]].Content || sheet != sheets[batchIDs[0]]) {
+				same = false
+			}
+		}
+		if !same {
+			isolated = append(isolated, batchIDs...)
+			sort.Strings(isolated)
+			batchIDs = nil
+		}
+	}
 
 	// The public moment (modal face of every event shared by ALL present holders) and the scene
 	// frame are shared by both seats. The isolated seat adds the flagged NPC's private records.
@@ -909,18 +954,26 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 		if err != nil {
 			return res, fmt.Errorf("batch display labels: %w", err)
 		}
-		bImminent := imminentLabel(bLabels, playerID)
+		bImminent := imminentLabel(bLabels, speakerID)
 		// PERCEIVED fact sheet (Grounded Reasoning / Unit 1 → cognition), computed ONCE for the acting
 		// PLAYER as viewer: spatial facts are public — everyone in the room shares the distances — so the
 		// batch (every non-flagged mind) reads the same player-viewer sheet. truth_side=FALSE: the minds
 		// are perception-walled (§5/§9); the ONLY gate in v1 is a closed container's withheld contents
 		// (physics facts, never perception records — so the sheet cannot carry a secret into the batch).
-		batchSheet, fsErr := o.factSheetJSON(ctx, worldID, playerID, actionIDs, false)
-		if fsErr != nil {
-			return res, fmt.Errorf("batch fact sheet: %w", fsErr)
+		batchSheet := sheets[batchIDs[0]]
+		if perceived == nil {
+			var fsErr error
+			batchSheet, fsErr = o.factSheetJSON(ctx, worldID, playerID, actionIDs, false)
+			if fsErr != nil {
+				return res, fmt.Errorf("batch fact sheet: %w", fsErr)
+			}
 		}
-		prompt := buildBatchPrompt(relabelScene(scene, bLabels), minds, moment, bImminent, attempt, batchSheet,
-			addressedLabel(attempt, bLabels, present))
+		heard := attempt
+		if perceived != nil {
+			heard.Content = perceived[batchIDs[0]].Content
+		}
+		prompt := buildCognitionPrompt(relabelScene(scene, bLabels), minds, nil, false, moment, bImminent, heard, batchSheet,
+			addressedLabel(heard, bLabels, present), trigger)
 		raw, genErr := o.CognitionBatch.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 		// A Generate or decode failure degrades DULL (the batch minds do nothing this moment) but is
 		// no longer silent: log it so a mute room is diagnosable. Behavior unchanged — still skipped.
@@ -951,25 +1004,39 @@ func (o *Orchestrator) worldFirst(ctx context.Context, worldID, playerID string,
 			if len(minds) == 0 {
 				continue
 			}
-			private, err := o.privateRecords(ctx, worldID, npcID, actionIDs, present)
-			if err != nil {
-				return res, fmt.Errorf("fn_private_records %s: %w", npcID, err)
+			subjectIDs := actionIDs
+			private := privateByNPC[npcID]
+			if perceived != nil {
+				subjectIDs = perceived[npcID].SubjectIDs
+			} else {
+				private, err = o.privateRecords(ctx, worldID, npcID, actionIDs, present)
+				if err != nil {
+					return res, fmt.Errorf("fn_private_records %s: %w", npcID, err)
+				}
 			}
 			// Relabel the scene + imminent line as THIS NPC knows it (§3): her own display names.
 			iLabels, err := o.displayLabels(ctx, worldID, npcID, present)
 			if err != nil {
 				return res, fmt.Errorf("isolated display labels %s: %w", npcID, err)
 			}
-			iImminent := imminentLabel(iLabels, playerID)
+			iImminent := imminentLabel(iLabels, speakerID)
 			// This flagged NPC's OWN perceived fact sheet: viewer = HER, so the spatial facts read as SHE
 			// sees the moment (her own distances/reachability), truth_side=FALSE (walled). Computed per
 			// isolated NPC, as needed — the batch's player-viewer sheet is not hers to reuse.
-			isoSheet, fsErr := o.factSheetJSON(ctx, worldID, npcID, actionIDs, false)
-			if fsErr != nil {
-				return res, fmt.Errorf("isolated fact sheet %s: %w", npcID, fsErr)
+			isoSheet, cached := sheets[npcID]
+			if !cached {
+				var fsErr error
+				isoSheet, fsErr = o.factSheetJSON(ctx, worldID, npcID, subjectIDs, false)
+				if fsErr != nil {
+					return res, fmt.Errorf("isolated fact sheet %s: %w", npcID, fsErr)
+				}
 			}
-			prompt := buildIsolatedPrompt(relabelScene(scene, iLabels), minds[0], private, moment, iImminent, attempt, isoSheet,
-				addressedLabel(attempt, iLabels, present))
+			heard := attempt
+			if perceived != nil {
+				heard.Content = perceived[npcID].Content
+			}
+			prompt := buildCognitionPrompt(relabelScene(scene, iLabels), []npcMind{minds[0]}, private, true, moment, iImminent, heard, isoSheet,
+				addressedLabel(heard, iLabels, present), trigger)
 			raw, genErr := o.CognitionIsolated.Generate(ctx, GenRequest{Schema: json.RawMessage(npcAttemptsSchemaJSON), Prompt: prompt})
 			// Degrade DULL (this secret-holder does nothing this moment) but observable — log the
 			// swallowed failure. Behavior unchanged: still a continue.
@@ -1027,7 +1094,7 @@ func (o *Orchestrator) applyNPCDecisions(ctx context.Context, worldID string, de
 		case "commit":
 			switch dec.Reaction.Attempt.Type {
 			case "ActorMoved", "Communicated", "ObjectRelocated":
-				// Passthrough: the structural floor is the gate; no ruling needed.
+				// The shared commit helper judges speech. NPC replies do not recursively trigger cognition.
 				attemptJSON, _ := json.Marshal(dec.Reaction.Attempt)
 				result, err := o.applyEvent(ctx, worldID, dec.ActorID, attemptJSON, tick, localSeq)
 				if err != nil {
@@ -1336,15 +1403,44 @@ func (o *Orchestrator) existingMovementTypes(ctx context.Context, worldID string
 	return out, rows.Err()
 }
 
-// applyEvent calls apply_event on the pool and returns the result as a map.
+// Speech facts, judgment and application share the committing transaction.
 func (o *Orchestrator) applyEvent(ctx context.Context, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
-	return applyEventOnQuerier(ctx, o.DB, worldID, actorID, attemptJSON, tick, seq)
+	tx, err := o.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := o.applyEventOnQuerier(ctx, tx, worldID, actorID, attemptJSON, tick, seq)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // applyEventOnQuerier is the shared implementation used by both the pool and tx paths — the twin of
 // applyRuledEventOnQuerier, so a world-sourced passthrough commit can share a transaction with the
 // bookkeeping row that records it.
-func applyEventOnQuerier(ctx context.Context, q dbQuerier, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
+func (o *Orchestrator) applyEventOnQuerier(ctx context.Context, q dbQuerier, worldID, actorID string, attemptJSON []byte, tick int64, seq int) (map[string]any, error) {
+	var attempt Attempt
+	if err := json.Unmarshal(attemptJSON, &attempt); err != nil {
+		return nil, err
+	}
+	if attempt.Type == "Communicated" {
+		judgment, err := o.judgeSpeechPerception(ctx, q, worldID, speechPerceptionInput{
+			SpeakerID: actorID, ListenerID: attempt.ListenerID, Content: attempt.Content, Account: attempt.Stated,
+		})
+		if err != nil {
+			return nil, err
+		}
+		attempt.SpeechPerception = judgment
+		attemptJSON, err = json.Marshal(attempt)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var resultJSON []byte
 	err := q.QueryRow(ctx,
 		`SELECT apply_event($1::uuid, $2::uuid, $3::jsonb, $4, $5, 'freeform', false)`,
@@ -1624,9 +1720,8 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 	return adjResult{Committed: committed, SeqAdvance: seqAdvance}, nil
 }
 
-// commitRulingTx executes all apply_ruled_event + apply_attribute_writes calls inside
-// the provided transaction, then marks any resolveHeldIDs held_outcome rows 'resolved' in
-// that same transaction. Returns (nil, 0, nil) on gate_reject (caller rolls back),
+// commitRulingTx resolves consumed holds first, applies events in order, then ruling-wide writes.
+// Every operation uses the supplied transaction. Returns (nil, 0, nil) on gate_reject,
 // (nil, 0, err) on hard error, or (committedIDs, seqAdvance, nil) on success.
 //
 // resolveHeldIDs are the pending holds a reaction ruling resolves (empty for a normal ruling); the
@@ -1639,6 +1734,21 @@ func (o *Orchestrator) adjudicate(ctx context.Context, worldID string, set []Act
 func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID string, ruling RulingV2, resolveHeldIDs []string, tick int64, curSeq int, postCommit postCommitFn) ([]string, int, error) {
 	localSeq := curSeq
 	var committed []string
+
+	// Held-outcome resolution MOVED to the start of this transaction (ADR-038 "Transaction order":
+	// "Consumed held intentions become resolved at the start of that transaction, with rollback
+	// restoring them") — a ruling that consumes a pending hold must stop presenting it as pending
+	// BEFORE any speech judgment later in this SAME transaction reads activities (fn_speech_perception_facts
+	// reads held_outcome live), or a hold this very ruling is about to resolve would still show up as
+	// an unresolved intention. Still inside the ruling's own tx, so a rollback (gate_reject, hard
+	// error) restores the holds exactly as it always did — this is a reorder, not a new statement.
+	if len(resolveHeldIDs) > 0 {
+		if _, err := tx.Exec(ctx,
+			`UPDATE held_outcome SET status = 'resolved' WHERE held_id = ANY($1)`,
+			resolveHeldIDs); err != nil {
+			return nil, 0, fmt.Errorf("resolve held_outcome: %w", err)
+		}
+	}
 
 	for _, evt := range ruling.Outcome.Events {
 		result, err := o.applyRuledEventTx(ctx, tx, worldID, evt, tick, localSeq)
@@ -1686,17 +1796,6 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 		}
 	}
 
-	// Held-outcome resolution: mark the named held_outcome rows 'resolved' inside this tx so the
-	// resolution lands atomically with the ruling (RunReactionBeat's combined ruling). Skipped when
-	// empty — a normal ruling resolves no holds, so the UPDATE never runs with no ids.
-	if len(resolveHeldIDs) > 0 {
-		if _, err := tx.Exec(ctx,
-			`UPDATE held_outcome SET status = 'resolved' WHERE held_id = ANY($1)`,
-			resolveHeldIDs); err != nil {
-			return nil, 0, fmt.Errorf("resolve held_outcome: %w", err)
-		}
-	}
-
 	if postCommit != nil {
 		if hookErr := postCommit(ctx, tx, committed); hookErr != nil {
 			return nil, 0, fmt.Errorf("post-commit hook: %w", hookErr)
@@ -1708,11 +1807,27 @@ func (o *Orchestrator) commitRulingTx(ctx context.Context, tx pgx.Tx, worldID st
 
 // applyRuledEvent calls apply_ruled_event (p_origin='ruling') and returns the result as a map.
 func (o *Orchestrator) applyRuledEvent(ctx context.Context, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
-	return applyRuledEventOnQuerier(ctx, o.DB, worldID, evt, tick, seq, "ruling")
+	tx, err := o.DB.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback(ctx)
+	result, err := o.applyRuledEventTx(ctx, tx, worldID, evt, tick, seq)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // applyRuledEventTx calls apply_ruled_event (p_origin='ruling') inside a transaction.
 func (o *Orchestrator) applyRuledEventTx(ctx context.Context, tx pgx.Tx, worldID string, evt RuledEventV2, tick int64, seq int) (map[string]any, error) {
+	evt, err := o.attachSpeechPerceptionRuled(ctx, tx, worldID, evt)
+	if err != nil {
+		return nil, err
+	}
 	return applyRuledEventOnQuerier(ctx, tx, worldID, evt, tick, seq, "ruling")
 }
 

@@ -1133,6 +1133,8 @@ content-policy prose about writing explicit fiction, carried by a seat that emit
 writes narration. Removing it: 36/36 unchanged, p50 2640→2484 ms, p95 4713→3969 ms, cost −2%.
 
 ## SPEC-033 — Learning a name by earshot
+**Current decision (2026-09-06): superseded by ADR-038, “Heard words, described owners, and recognized people are different knowledge.”** Implemented locally, not deployed. The final prompt emits heard words before associations and requires both a conveyed person's name and an identifiable or meaningfully described owner before adding an association. All nine saved scenes passed with application-built requests on the unchanged production Flash binding, and their responses passed the real decoder. Each scene has one successful response; provider overloads required delayed diagnostic retries, so this does not establish production availability or whole-turn affordability. Both speech commit doors apply the same accepted resolve judgment. Recognition and description can coexist; related actor links never identify the name's owner. Ambiguous words remain audible without relabeling a person. The historical scanner implementation and its original ruling follow below.
+
 **Status: LANDED (2026-08-09).** Founder ruling: **hearing teaches, if present.** A name spoken in
 the viewer's perceived scene becomes earned — direct address and introduction included; overhearing
 across the room counts only when the world says the viewer could hear it. Implemented in migration
@@ -1351,6 +1353,8 @@ This is the inverse of the ruled behaviour, not a degraded version of it.
   2026-08-27 harness trim, both of which deliberately changed no product behaviour.
 
 ## SPEC-038 — Attention: a bounded, modifiable distribution that decides who perceives an event
+**Current speech decision (2026-09-06): ADR-038 supersedes the numeric distribution, attention roll, and ambient floor below for speech.** Implemented locally, not deployed; live interpretation is not fully verified. Code supplies recorded activities and existing physical facts; resolve judges attention without invented scores. Shared application covers ordinary and ruled `Communicated` events. This does not implement attention for other event types, the concealed-handover path, or module overrides. The historical design and those remaining questions follow below.
+
 
 **Raised by:** founder, in conversation 2026-08-27. **Status:** DESIGNED, NOT BUILT. **Blocks:** nothing
 today; unblocks `attentional` blocks in `ADR-P025`, which currently name a category with no mechanism.

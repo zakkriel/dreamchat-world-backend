@@ -119,6 +119,13 @@ func (d *capturingResolveDriver) Generate(_ context.Context, req GenRequest) (st
 	if req.Schema == nil {
 		return "", fmt.Errorf("%s: resolve driver used without a schema", d.name)
 	}
+	// The bound "resolve" driver now also answers speech_perception/1 requests (ADR-038) whenever an
+	// ordinary/NPC Communicated attempt commits in the same beat — answered without touching
+	// calls/prompts, which every caller of this driver uses to capture THE combined ruling
+	// specifically (this file's own doc comment above).
+	if isSpeechPerceptionSchema(req.Schema) {
+		return fakeSpeechPerceptionReply(req.Prompt), nil
+	}
 	d.calls++
 	d.prompts = append(d.prompts, req.Prompt)
 	return d.ruling, nil

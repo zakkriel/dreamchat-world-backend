@@ -15,9 +15,10 @@ what crosses its boundary.
 
 A name is knowledge, not a label. Canon knows everything as its canonical name; a viewer knows a
 thing by the name someone gave them, or by a descriptor ("the muscle by the bar") until then. This
-domain decides, per viewer, which canonical names are **unearned**, substitutes the viewer's own
-label everywhere prose could carry one, and records the moment a name becomes earned — hearing it
-spoken teaches it (`SPEC-033`).
+domain distinguishes hearing a word from recognizing its owner. A viewer may hear “Jonas left”
+without identifying any present actor as Jonas. Display labels change only when a sourced
+perception recognizes an actor. A description may accompany recognition; describing someone
+the listener cannot identify grants no identity, whether that person is present or absent (`ADR-038`).
 
 The product reason it is its own domain: perception (WE-3) decides *whether you noticed*; the wall
 decides *what you would call it*. The founder caught the difference failing in play — narration
@@ -29,13 +30,13 @@ would have saved it"* (migration `20260809090005`).
 
 | Term | Means, precisely |
 |---|---|
-| **Canonical name** | The registry's viewer-agnostic name (`entity_registry.canonical_name`). Reaching it in a player-facing string means a viewer read a name nobody gave them. |
+| **Canonical name** | The registry's viewer-agnostic name. Hearing the same word does not grant recognition of the registered actor. |
 | **Label / display name** | What ONE viewer calls a thing: `fn_display_name` — perceived name, else descriptor, else canonical as last resort. |
 | **Earned / unearned** | A name is earned when a knowledge path delivered it; unearned otherwise. Defined once, in SQL (`fn_unearned_names`) — see `tech.md` §The definition. |
 | **The seam** | `fn_viewer_text` applied at every perception write: content is rendered per holder before it is stored. The source fix. |
-| **The belt** | `NamingWall` (`core/api/namingwall.go`): the API-boundary check for what a seat invents on its own. Checks the seam's own SQL definition, never a second predicate. |
-| **Teaching** | `payload.spoken` → `fn_names_in_text` → `name_knowledge`. Only words actually said teach; *"A nod is not an introduction"* (migration `20260814170000:42`). |
-| **Token guarding** | For unearned **actor** names only, each distinctive word is also guarded (the Ironmoor fix, migration `20260821120000`). |
+| **The belt** | `NamingWall` (`core/api/namingwall.go`): the API-boundary word guard, sourced from SQL `fn_unheard_names`. |
+| **Teaching** | An accepted non-null owner `actor_id` writes sourced `name_knowledge` and a perception subject. A description may coexist; related actor links never teach that name. No canonical-name scanner decides recognition (`ADR-038`). |
+| **Token guarding** | Each distinctive word of an unearned actor name is guarded unless that word is already in the viewer's stored heard speech. |
 
 ## What this domain is not
 
@@ -57,14 +58,13 @@ Ids only; the law lives where the id resolves.
 | Id | What it settles | What breaks if you ignore it |
 |---|---|---|
 | `B-1` | Surfaces render from the holder's perception; the canonical name is hidden truth like any other. | A name in a payload the viewer never earned is a leak, however the UI masks it. |
-| `B-2` | Names enter a viewer's knowledge only through valid in-world paths. | Passing a raw name through "just for speech" grants knowledge without recording it — the same breach with a nicer story (migration `20260809090005:44`). |
-| `SPEC-033` | Hearing teaches, if present; teaching reads `payload.spoken` only; first hearing wins. | Teaching from the referee's account taught four names from one ordinary sentence — a nod taught "Kade". |
+| `B-2` | Knowledge enters through valid in-world paths. | A heard word must not silently identify a registered actor. |
+| `ADR-038` | Heard words, described owners, and recognized people are distinct knowledge; ordinary and ruled speech share one application path. | Erasing an ambiguous word or guessing its owner both change what the listener perceived. |
 | `GA-2` | Wall vocabulary is genre-agnostic: name, label, descriptor — no genre terms in the mechanism. | A genre-flavored term in core vocabulary fails the three-genre test. |
 
-**The strictness asymmetry is law**, stated in migration `20260814170000`: rewriting
-(`fn_viewer_text`) is case-INSENSITIVE — over-catching only hides a name already unearned; teaching
-(`fn_names_in_text`) is case-SENSITIVE — over-teaching is a wall breach, under-teaching costs one
-beat of "the muscle by the bar".
+Account text is identity-walled before accepted heard words are appended. Stored heard words may
+pass the lexical guard without granting an actor label or a target identity. This guard checks
+words, not whether generated prose interpreted those words correctly (`ADR-038`).
 
 ## What is deliberately not built here
 
@@ -76,8 +76,6 @@ beat of "the muscle by the bar".
 - **No aliases.** `name_knowledge`'s PK is one name per (holder, subject); a later different name
   *"is the alias question, which nothing in the thin slice can answer honestly — it stays out rather
   than being guessed at"* (migration `20260809090007:43-45`).
-- **No speech exemption.** Deliberately refused; see `B-2` row above — one home, migration
-  `20260809090005:44`.
 - **No case preservation in Scrub.** The label is world data, written as stored; *"the wall is worth
   a lowercase article"* (`core/api/namingwall.go:105-107`).
 - **No token guarding for places and objects.** Actors only: their names are proper nouns; place and

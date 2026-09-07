@@ -118,6 +118,7 @@ func TestEveryEmbeddedPromptCarriesTheLatitude(t *testing.T) {
 		"narrate":             narrateSystemHeader,
 		"cognition":           cognitionSystemHeader,
 		"resolve":             resolveSystemHeader,
+		"speech_perception":   speechPerceptionSystemHeader,
 		"world_actor":         worldActorSystemHeader,
 		"decompose":           decomposeSystemHeader,
 		"place_author":        placeAuthorSystemHeader,

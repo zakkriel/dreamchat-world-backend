@@ -45,14 +45,17 @@ type NarrationSegment struct {
 //
 //   - GHOST SPEAKER: every non-null speaker_id must be a present entity this beat (presentIDs — the
 //     narrate PRESENT roster the model saw). A segment attributed to someone not in the room is rejected.
-//   - VERBATIM SPEECH: a kind=speech segment's text must appear (exact or substring) within one of that
-//     speaker's speech perception contents this beat (speechTexts: speaker id → the perception contents
-//     the viewer holds from that speaker's Communicated events this beat). NPC speech must be the mind's
-//     exact words — never narrator paraphrase. See the extraction note in beatHandler.speechTexts: the
-//     perception content is the resolve/attempt-authored line for a Communicated event (COALESCE of
-//     receiver-variant, appearance, then truth), so the words may ride inside scaffolding; a SUBSTRING
-//     match on the quoted words is therefore the honest belt (a paraphrase is not a substring, and is
-//     rejected). action segments carry no verbatim requirement (a viewer-relative act, not spoken words).
+//   - VERBATIM SPEECH: a kind=speech segment's quote must appear (exact or substring) within one of
+//     that speaker's HEARD words this beat (speechTexts: speaker id → the words THIS VIEWER actually
+//     perceived that speaker say — beatHandler.speechTexts / fn_perceived_speech,
+//     perception_record.spoken, never canon_event.payload's single canonical utterance). NPC speech
+//     must be the mind's exact words — never narrator paraphrase, and never a word this viewer did
+//     not himself perceive: attention is judged per listener, so a missed or blocked utterance backs
+//     no quote for THIS viewer even when another listener heard it in full. SUBSTRING (not equality)
+//     stays the honest belt: a receiver-variant or partially-heard rendering can be a genuine
+//     fragment of the fuller utterance, and quoting exactly the words that rode in it must still
+//     pass; a paraphrase is not a substring and is rejected. action segments carry no verbatim
+//     requirement (a viewer-relative act, not spoken words).
 //
 // Plus the schema's structural rules, restated so a rogue/misbound driver still trips them: kind in the
 // closed set, text non-empty, and the speaker_id↔kind correlation (null ⇔ narration; non-null ⇔
@@ -150,8 +153,11 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 			return nil, fmt.Errorf("segment %d: kind %q outside {narration,speech,action}", i, s.Kind)
 		}
 		// THE NAMING WALL. Runs on every kind: narration prose is the reported case, and speech is no
-		// safer — an NPC who says a name the player has not earned teaches it without a knowledge path,
-		// which is the same breach wearing quotation marks (see SPEC-033 for learning-by-earshot).
+		// safer — an NPC quoting a canonical name this viewer never actually perceived teaches it
+		// without a knowledge path, the same breach wearing quotation marks (SPEC-033,
+		// learning-by-earshot). The wall itself draws the finer line now (fn_unheard_names,
+		// namingwall.go): a name this viewer's own perceived speech genuinely contains is not a
+		// breach merely for being quoted — hearing a word is not learning whose it is.
 		if v := wall.Violations(s.Text + " " + quoteOf(s)); len(v) > 0 {
 			return nil, namingWallError(i, v)
 		}
@@ -163,10 +169,12 @@ func DecodeAndValidateNarration(raw string, b NarrationBelts) ([]NarrationSegmen
 	return kept, nil
 }
 
-// speechIsVerbatim passes when text is an exact or substring match of one of the speaker's speech
-// perception contents this beat. Substring (not equality) is deliberate: the perception content can wrap
-// the spoken words in scaffolding (see the extraction note above), so the model quoting exactly the
-// words is a substring of the fuller line. A paraphrase is not a substring and fails.
+// speechIsVerbatim passes when text is an exact or substring match of one of the speaker's HEARD
+// words this viewer perceived this beat (speechTexts, sourced from fn_perceived_speech —
+// perception_record.spoken; see the extraction note above). Substring (not equality) is deliberate:
+// a receiver-variant or partially-heard rendering can still be a genuine fragment of the fuller
+// utterance, and quoting exactly the words that rode in it must pass. A paraphrase is not a
+// substring and fails.
 
 func isAllowedNarrationEmotion(v string) bool {
 	switch v {
