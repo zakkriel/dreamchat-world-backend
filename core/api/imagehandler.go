@@ -238,13 +238,38 @@ func spriteVariantKey(emotion string) string {
 // pack cells verbatim — it stores, anchors, and reuses variants without knowing what a key means —
 // so what a "happy" bust looks like is this repo's decision, changeable without touching their API.
 const (
-	// spriteFramingPrompt is the visual-novel staging contract: a bust the frontend layers over a
-	// backdrop, so never a full body and never a scene.
-	spriteFramingPrompt = "bust portrait, head and chest only, subject centered, facing viewer, plain uniform background"
+	// spriteFramingPrompt is the visual-novel staging contract: a THREE-QUARTER-LENGTH standing figure
+	// the frontend layers over a backdrop, so never a scene and never a landscape.
+	//
+	// It was a bust — head and chest only — and a bust cannot be staged like a visual novel. Founder,
+	// 2026-09-01, with five reference screenshots: every one of them frames its characters from the head
+	// to about mid-thigh, and the hands are doing half the acting. A hand clasped at the chest, a fist
+	// half-raised, gloved fingers laced — a bust crops all of that away.
+	//
+	// THE SHAPE IS A DECLARED CONTRACT, not a local choice: workspace
+	// `docs/00_workspace/contracts.md`, Edge B, "What a character sprite IS". Read it before changing this
+	// line — the frontend's staging depends on the same sentence and cannot see this file.
+	//
+	// A COMPLETE FIGURE, never a pre-cropped one, for a reason that belongs to this side of the seam: the
+	// image platform requires the subject not to touch the frame edges, because its chroma key needs a
+	// clean border (`jobs.ChromaBackdropInstruction`). What the frontend then does with a complete figure
+	// is the frontend's business and is written in the contract, not here.
+	//
+	// The BACKGROUND is deliberately not mentioned. The platform owns it: this repo sends
+	// `background: "transparent"` and the platform appends its own flat-magenta backdrop instruction and
+	// keys it out. Saying "plain uniform background" here was a second, weaker instruction for something
+	// across the seam (D-3), and two background instructions can disagree.
+	spriteFramingPrompt = "three-quarter length standing figure, framed from the top of the head to mid-thigh, " +
+		"both hands visible and unobscured, the whole outfit and its accessories legible, " +
+		"subject centered, standing, facing the viewer at a slight angle"
 	// spriteConsistencyPrompt holds the outfit constant across the four renders of one anchored
 	// identity — the whole reason the variants are one pack against one anchor.
 	spriteConsistencyPrompt = "same character, same outfit, same hairstyle as the reference"
-	// spriteAspectRatio is portrait orientation for a bust.
+	// spriteAspectRatio is part of the declared sprite contract (contracts.md, Edge B), so it does not
+	// move without the frontend. It stays 3:4 even though the framing changed from a bust to a figure:
+	// the ratio decides the box, the framing prompt decides how much body is in it, and 3:4 holds a
+	// figure to mid-thigh. A taller 2:3 was tried and reverted — it buys a little room and costs a
+	// cross-repo question, because the platform's mock provider maps unknown ratios to a square.
 	spriteAspectRatio = "3:4"
 )
 
